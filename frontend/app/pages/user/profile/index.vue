@@ -116,6 +116,21 @@
             </UserProfileLinkCard>
           </v-col>
         </AdvancedOnly>
+        <v-col
+          cols="12"
+          sm="12"
+          md="6"
+        >
+          <UserProfileLinkCard
+            :link="{ text: $t('settings.mcp.manage-connections'), to: `/user/connections` }"
+            image="/svgs/manage-api-tokens.svg"
+          >
+            <template #title>
+              {{ $t('settings.mcp.title') }}
+            </template>
+            {{ $t('settings.mcp.profile-description') }}
+          </UserProfileLinkCard>
+        </v-col>
       </v-row>
     </section>
     <v-divider class="my-7" />
