@@ -2,12 +2,12 @@ import uuid
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from functools import lru_cache
-from typing import cast
 
 from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
     AuthorizationParams,
+    AuthorizeError,
     OAuthAuthorizationServerProvider,
     RefreshToken,
     TokenError,
@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 
 from mealie.core.config import get_app_settings
 from mealie.db.db_setup import session_context
-from mealie.db.models._model_utils.guid import GUID
 from mealie.mcp.oauth import tokens
 from mealie.mcp.oauth.store import OAuthStore
 from mealie.mcp.scopes import ALL_SCOPES
@@ -53,6 +52,8 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         if not params.scopes:
             params = params.model_copy(update={"scopes": list(ALL_SCOPES)})
+        if any(scope not in ALL_SCOPES for scope in params.scopes or []):
+            raise AuthorizeError(error="invalid_scope", error_description="unknown scope requested")
         if client.client_id is None:
             raise ValueError("client_id is required")
 
@@ -69,6 +70,7 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
         Raises:
             KeyError: if the request is unknown, expired or already completed.
         """
+        owner = uuid.UUID(user_id)  # parsed first so a malformed id does not burn the pending request
         with self._session_factory() as session:
             store = OAuthStore(session)
             pending = store.pop_pending(request_id)
@@ -80,7 +82,7 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
             if not approve:
                 return construct_redirect_uri(redirect_uri, error="access_denied", state=params.state)
 
-            code = store.create_code(client_id=client_id, user_id=cast(GUID, uuid.UUID(user_id)), params=params)
+            code = store.create_code(client_id=client_id, user_id=owner, params=params)
             return construct_redirect_uri(redirect_uri, code=code, state=params.state)
 
     async def load_authorization_code(
@@ -130,6 +132,9 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: McpAuthCode
     ) -> OAuthToken:
+        if authorization_code.client_id != client.client_id:
+            raise TokenError(error="invalid_grant", error_description="authorization code is invalid or used")
+
         with self._session_factory() as session:
             store = OAuthStore(session)
             # atomic claim: a code that was already used (or expired meanwhile) yields nothing
@@ -155,7 +160,12 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
         with self._session_factory() as session:
             store = OAuthStore(session)
             row = store.peek_refresh_token(refresh_token)
-            if row is None or row.client_id != client.client_id:
+            if row is None:
+                # the SDK never calls exchange for a token we return None for, so replay of a
+                # rotated token has to be caught here: consuming a used token revokes its grant
+                store.consume_refresh_token(refresh_token)
+                return None
+            if row.client_id != client.client_id:
                 return None
 
             grant = store.get_grant(row.grant_id)
@@ -183,7 +193,7 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
             if current is None:
                 store.consume_refresh_token(refresh_token.token)
                 raise TokenError(error="invalid_grant", error_description="refresh token is invalid or used")
-            if grant is None:
+            if grant is None:  # defensive: load_refresh_token already filters revoked grants
                 raise TokenError(error="invalid_grant", error_description="grant has been revoked")
 
             requested = scopes or list(grant.scopes)

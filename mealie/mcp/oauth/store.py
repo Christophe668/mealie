@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from mcp.server.auth.provider import AuthorizationParams
@@ -7,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from mealie.db.models._model_base import SqlAlchemyBase
 from mealie.db.models._model_utils.datetime import get_utc_now
-from mealie.db.models._model_utils.guid import GUID
 from mealie.db.models.mcp.oauth import (
     McpOAuthClient,
     McpOAuthCode,
@@ -99,13 +99,13 @@ class OAuthStore:
 
     # authorization codes
 
-    def create_code(self, *, client_id: str, user_id: GUID, params: AuthorizationParams) -> str:
+    def create_code(self, *, client_id: str, user_id: uuid.UUID, params: AuthorizationParams) -> str:
         code = tokens.new_opaque_token()
         self._save(
             McpOAuthCode(
                 code=code,
                 client_id=client_id,
-                user_id=user_id,
+                user_id=user_id,  # type: ignore[arg-type]  # model init is annotated with the GUID column type
                 scopes=list(params.scopes or []),
                 code_challenge=params.code_challenge,
                 redirect_uri=str(params.redirect_uri),
@@ -134,9 +134,12 @@ class OAuthStore:
 
     # grants
 
-    def create_grant(self, *, user_id: GUID, client_id: str, scopes: list[str]) -> McpOAuthGrant:
+    def create_grant(self, *, user_id: uuid.UUID, client_id: str, scopes: list[str]) -> McpOAuthGrant:
         grant = McpOAuthGrant(
-            grant_id=tokens.new_opaque_token(), user_id=user_id, client_id=client_id, scopes=list(scopes)
+            grant_id=tokens.new_opaque_token(),
+            user_id=user_id,  # type: ignore[arg-type]  # model init is annotated with the GUID column type
+            client_id=client_id,
+            scopes=list(scopes),
         )
         return self._save(grant)
 
@@ -145,7 +148,7 @@ class OAuthStore:
             select(McpOAuthGrant).where(McpOAuthGrant.grant_id == grant_id, McpOAuthGrant.revoked_at.is_(None))
         ).first()
 
-    def list_grants(self, user_id: GUID) -> list[McpOAuthGrant]:
+    def list_grants(self, user_id: uuid.UUID) -> list[McpOAuthGrant]:
         return list(
             self.session.scalars(
                 select(McpOAuthGrant)
@@ -154,7 +157,7 @@ class OAuthStore:
             )
         )
 
-    def revoke_grant(self, grant_id: str, user_id: GUID) -> bool:
+    def revoke_grant(self, grant_id: str, user_id: uuid.UUID) -> bool:
         grant = self.get_grant(grant_id)
         if grant is None or grant.user_id != user_id:
             return False

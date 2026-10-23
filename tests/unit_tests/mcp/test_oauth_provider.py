@@ -3,7 +3,7 @@ import contextlib
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from mcp.server.auth.provider import AccessToken, AuthorizationParams, TokenError
+from mcp.server.auth.provider import AccessToken, AuthorizationParams, AuthorizeError, TokenError
 from mcp.shared.auth import OAuthClientInformationFull
 from sqlalchemy.orm import Session
 
@@ -150,11 +150,10 @@ def test_refresh_rotation_and_replay_revokes(session: Session, unique_user):
         assert second.scope == "recipes:read recipes:write"
         assert await provider.load_access_token(second.access_token) is not None
 
-        # replaying the rotated token kills the whole grant
-        with pytest.raises(TokenError) as exc:
-            await provider.exchange_refresh_token(client, old, [])
-        assert exc.value.error == "invalid_grant"
+        # the SDK handler loads before exchanging: a rotated token is refused there and kills the grant
+        assert await provider.load_refresh_token(client, first.refresh_token) is None
         assert await provider.load_access_token(second.access_token) is None
+        assert await provider.load_refresh_token(client, second.refresh_token) is None
 
     asyncio.run(run())
 
@@ -201,5 +200,38 @@ def test_register_and_get_client(session: Session):
         assert await provider.get_client(client.client_id) is None
         await provider.register_client(client)
         assert await provider.get_client(client.client_id) == client
+
+    asyncio.run(run())
+
+
+def test_authorize_rejects_unknown_scope(session: Session):
+    with pytest.raises(AuthorizeError) as exc:
+        asyncio.run(_provider(session).authorize(_client(), _params(["bogus:scope"])))
+    assert exc.value.error == "invalid_scope"
+
+
+def test_malformed_user_id_does_not_burn_pending(session: Session):
+    provider = _provider(session)
+    url = asyncio.run(provider.authorize(_client(), _params(["recipes:read"])))
+    request_id = _query(url)["request_id"]
+
+    with pytest.raises(ValueError):
+        provider.complete_authorization(request_id, "not-a-uuid", approve=True)
+
+    assert OAuthStore(session).peek_pending(request_id) is not None
+
+
+def test_code_client_mismatch_does_not_burn_code(session: Session, unique_user):
+    provider = _provider(session)
+    client = _client()
+
+    async def run():
+        url = await provider.authorize(client, _params(["recipes:read"]))
+        redirect = provider.complete_authorization(_query(url)["request_id"], str(unique_user.user_id), approve=True)
+        code = await provider.load_authorization_code(client, _query(redirect)["code"])
+        assert code is not None
+        with pytest.raises(TokenError):
+            await provider.exchange_authorization_code(_client(), code)
+        assert await provider.load_authorization_code(client, code.code) is not None
 
     asyncio.run(run())
