@@ -209,3 +209,34 @@ def test_purge_expired(session: Session, unique_user, monkeypatch):
 
     assert has_pending(live_pending) and not has_pending(dead_pending)
     assert has_code(live_code) and not has_code(dead_code)
+
+
+def test_peek_code_does_not_consume(session: Session, unique_user):
+    store = OAuthStore(session)
+    code = store.create_code(client_id="c1", user_id=unique_user.user_id, params=_params())
+
+    assert store.peek_code(code) is not None
+    assert store.peek_code(code) is not None
+    assert store.pop_code(code) is not None
+    assert store.peek_code(code) is None
+
+
+def test_peek_refresh_token_is_read_only(session: Session, unique_user):
+    store = OAuthStore(session)
+    _, raw = _grant_and_token(store, unique_user)
+
+    assert store.peek_refresh_token(raw) is not None
+    assert store.peek_refresh_token("nope") is None
+    assert store.consume_refresh_token(raw) is not None
+    assert store.peek_refresh_token(raw) is None
+
+
+def test_revoke_grant_by_id(session: Session, unique_user):
+    store = OAuthStore(session)
+    grant_id, raw = _grant_and_token(store, unique_user)
+
+    store.revoke_grant_by_id(grant_id)
+    store.revoke_grant_by_id("missing")
+
+    assert store.get_grant(grant_id) is None
+    assert store.peek_refresh_token(raw) is None

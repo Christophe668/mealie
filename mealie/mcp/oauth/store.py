@@ -116,6 +116,10 @@ class OAuthStore:
         )
         return code
 
+    def peek_code(self, code: str) -> McpOAuthCode | None:
+        row = self.session.scalars(select(McpOAuthCode).where(McpOAuthCode.code == code)).first()
+        return row if row and row.expires_at > _now() else None
+
     def pop_code(self, code: str) -> McpOAuthCode | None:
         row = self.session.scalars(select(McpOAuthCode).where(McpOAuthCode.code == code)).first()
         if row is None:
@@ -158,6 +162,12 @@ class OAuthStore:
         self._revoke(grant)
         return True
 
+    def revoke_grant_by_id(self, grant_id: str) -> None:
+        """Revokes a grant regardless of owner (the caller proved possession of one of its tokens)."""
+        grant = self.get_grant(grant_id)
+        if grant is not None:
+            self._revoke(grant)
+
     def touch_grant(self, grant_id: str) -> None:
         grant = self.get_grant(grant_id)
         if grant is not None:
@@ -184,6 +194,13 @@ class OAuthStore:
             )
         )
         return raw
+
+    def peek_refresh_token(self, raw: str) -> McpOAuthRefreshToken | None:
+        """Read-only lookup of a refresh token that is still usable (unused and unexpired)."""
+        row = self.session.scalars(
+            select(McpOAuthRefreshToken).where(McpOAuthRefreshToken.token_hash == tokens.hash_token(raw))
+        ).first()
+        return row if row and row.used_at is None and row.expires_at > _now() else None
 
     def consume_refresh_token(self, raw: str) -> McpOAuthRefreshToken | None:
         token_hash = tokens.hash_token(raw)
