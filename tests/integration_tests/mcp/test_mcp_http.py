@@ -3,6 +3,7 @@ import hashlib
 import secrets
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from fastapi.testclient import TestClient
 
 from mealie.core.config import get_app_settings
@@ -64,6 +65,13 @@ def test_mcp_without_token_is_401_with_resource_metadata(mcp_client: TestClient)
     assert f'resource_metadata="{_base_url()}/.well-known/oauth-protected-resource/mcp"' in www_authenticate
 
 
+@pytest.mark.parametrize("method", ["GET", "DELETE"])
+def test_mcp_other_methods_without_token_are_401(mcp_client: TestClient, method: str):
+    response = mcp_client.request(method, "/mcp")
+
+    assert response.status_code == 401
+
+
 def test_mcp_rejects_session_token(mcp_client: TestClient, unique_user: TestUser):
     response = mcp_client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"}, headers=unique_user.token)
 
@@ -83,14 +91,11 @@ def test_mcp_call_after_initialize(mcp_client: TestClient, mcp_bearer: dict[str,
     assert "tools" in body["result"]
 
 
-def test_full_oauth_flow_via_http(mcp_client: TestClient, unique_user: TestUser):
-    client_info = _register(mcp_client)
-    client_id = client_info["client_id"]
-
-    verifier = secrets.token_urlsafe(48)
+def _authorize_code(client: TestClient, user: TestUser, client_id: str, verifier: str) -> str:
+    """Runs /authorize and the consent step; returns the authorization code."""
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
 
-    response = mcp_client.get(
+    response = client.get(
         "/authorize",
         params={
             "response_type": "code",
@@ -109,27 +114,38 @@ def test_full_oauth_flow_via_http(mcp_client: TestClient, unique_user: TestUser)
     assert location.startswith(f"{_base_url()}/user/connections/authorize?request_id=")
     request_id = _query(location)["request_id"]
 
-    response = mcp_client.post(
+    response = client.post(
         api_routes.users_mcp_authorize,
         json={"requestId": request_id, "approve": True},
-        headers=unique_user.token,
+        headers=user.token,
     )
     assert response.status_code == 200, response.text
     redirect = response.json()["redirectUrl"]
     assert redirect.startswith(CALLBACK)
     query = _query(redirect)
     assert query["state"] == "xyz"
+    return query["code"]
 
+
+def _token_form(client_info: dict, code: str, verifier: str) -> dict[str, str]:
     form = {
         "grant_type": "authorization_code",
-        "code": query["code"],
+        "code": code,
         "redirect_uri": CALLBACK,
-        "client_id": client_id,
+        "client_id": client_info["client_id"],
         "code_verifier": verifier,
     }
     if client_info.get("client_secret"):
         form["client_secret"] = client_info["client_secret"]
-    response = mcp_client.post("/token", data=form)
+    return form
+
+
+def test_full_oauth_flow_via_http(mcp_client: TestClient, unique_user: TestUser):
+    client_info = _register(mcp_client)
+    verifier = secrets.token_urlsafe(48)
+    code = _authorize_code(mcp_client, unique_user, client_info["client_id"], verifier)
+
+    response = mcp_client.post("/token", data=_token_form(client_info, code, verifier))
     assert response.status_code == 200, response.text
     token = response.json()
     assert token["access_token"]
@@ -137,6 +153,17 @@ def test_full_oauth_flow_via_http(mcp_client: TestClient, unique_user: TestUser)
 
     result, _ = mcp_initialize(mcp_client, {"Authorization": f"Bearer {token['access_token']}"})
     assert result["serverInfo"]["name"] == "Mealie"
+
+
+def test_token_with_wrong_code_verifier_is_rejected(mcp_client: TestClient, unique_user: TestUser):
+    client_info = _register(mcp_client)
+    verifier = secrets.token_urlsafe(48)
+    code = _authorize_code(mcp_client, unique_user, client_info["client_id"], verifier)
+
+    response = mcp_client.post("/token", data=_token_form(client_info, code, secrets.token_urlsafe(48)))
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_grant"
 
 
 def test_register_rate_limited(mcp_client: TestClient):
