@@ -49,3 +49,6 @@ mcp_server = MCPServer(
     auth=build_auth_settings(),
     token_verifier=MealieTokenVerifier(),
 )
+
+# Registers the tools on `mcp_server`; imported last because the tool modules import `mcp_server` from here.
+import mealie.mcp.tools  # noqa: E402,F401

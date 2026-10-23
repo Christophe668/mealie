@@ -88,7 +88,8 @@ def test_mcp_initialize_with_mcp_token(mcp_client: TestClient, mcp_bearer: dict[
 def test_mcp_call_after_initialize(mcp_client: TestClient, mcp_bearer: dict[str, str]):
     body = mcp_call(mcp_client, mcp_bearer, "tools/list")
 
-    assert "tools" in body["result"]
+    names = {tool["name"] for tool in body["result"]["tools"]}
+    assert {"get_household_context", "search_recipes", "get_recipe"} <= names
 
 
 def _authorize_code(client: TestClient, user: TestUser, client_id: str, verifier: str) -> str:
