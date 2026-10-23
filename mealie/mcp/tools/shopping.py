@@ -8,7 +8,7 @@ from mealie.mcp.context import McpContext, cross_household_repos
 from mealie.mcp.errors import not_found
 from mealie.mcp.server import mcp_server
 from mealie.mcp.tools import run_in_context
-from mealie.mcp.tools.mealplan import _day_bounds
+from mealie.mcp.tools.mealplan import day_bounds
 from mealie.schema.household.group_shopping_list import (
     ShoppingListAddRecipeParamsBulk,
     ShoppingListCreate,
@@ -29,7 +29,7 @@ def _parse_id(kind: str, value: str) -> UUID:
 
 
 def _load_list(ctx: McpContext, list_id: str | None) -> ShoppingListOut:
-    if list_id is None:
+    if not list_id:
         page = ctx.repos.group_shopping_lists.page_all(
             PaginationQuery(page=1, per_page=1, order_by="updated_at", order_direction=OrderDirection.desc)
         )
@@ -89,7 +89,7 @@ def create_shopping_list_from_mealplan_impl(
     svc = ShoppingListService(ctx.repos)
     target = _load_list(ctx, list_id) if list_id else None
 
-    start, end = _day_bounds(start_date, end_date)
+    start, end = day_bounds(start_date, end_date)
     entries = sorted(ctx.repos.meals.get_meals_by_date_range(start, end), key=lambda e: (e.date, e.id))
     with_recipe = [e for e in entries if e.recipe and e.recipe.id]
     without_recipe = [e.title or e.text for e in entries if not (e.recipe and e.recipe.id)]
@@ -159,7 +159,9 @@ async def create_shopping_list_from_mealplan(
     """Turn the recipes planned between two dates (YYYY-MM-DD, inclusive) into a shopping list. Creates
     a new list (named `list_name`, default "Shopping <start>–<end>") or adds to the existing `list_id`,
     merging with items already there. Returns the list (see get_shopping_list) plus recipes_added
-    (slugs), entries_without_recipe (titles of free-text entries, not added) and skipped_from_pantry."""
+    (slugs, one per planned entry, so repeats are possible),
+    entries_without_recipe (titles of free-text entries, not added) and
+    skipped_from_pantry."""
     return await run_in_context(create_shopping_list_from_mealplan_impl, start_date, end_date, list_name, list_id)
 
 

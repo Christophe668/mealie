@@ -14,6 +14,7 @@ from mealie.mcp.tools.shopping import (
     create_shopping_list_from_mealplan,
     get_shopping_list,
 )
+from mealie.schema.household.group_shopping_list import ShoppingListItemCreate, ShoppingListSave
 from mealie.schema.meal_plan.new_meal import PlanEntryType, SavePlanEntry
 from tests.utils import api_routes
 from tests.utils.factories import random_string
@@ -128,3 +129,42 @@ async def test_get_default_list_is_most_recent(
     assert result["id"] == str(newer.id)
     explicit = await get_shopping_list(str(older.id))
     assert explicit["id"] == str(older.id)
+
+
+def _h2_list_with_item(h2_user: TestUser):
+    other = h2_user.repos.group_shopping_lists.create(
+        ShoppingListSave(name=random_string(8), group_id=h2_user.group_id, user_id=h2_user.user_id)
+    )
+    item = h2_user.repos.group_shopping_list_item.create(
+        ShoppingListItemCreate(shopping_list_id=other.id, note="secret", is_food=False)
+    )
+    return other, item
+
+
+@pytest.mark.asyncio
+async def test_other_household_list_is_not_accessible(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user: TestUser, h2_user: TestUser, shopping_list
+):
+    other, item = _h2_list_with_item(h2_user)
+    _as_user(monkeypatch, session, unique_user)
+
+    with pytest.raises(McpToolError):
+        await get_shopping_list(str(other.id))
+    with pytest.raises(McpToolError):
+        await check_shopping_items(str(shopping_list.id), [str(item.id)])
+    with pytest.raises(McpToolError):
+        await add_shopping_items(str(other.id), ["x"])
+
+    reloaded = h2_user.repos.group_shopping_list_item.get_one(item.id)
+    assert reloaded is not None and not reloaded.checked
+    assert h2_user.repos.group_shopping_lists.get_one(other.id).list_items[0].note == "secret"
+    assert len(h2_user.repos.group_shopping_lists.get_one(other.id).list_items) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_default_list_without_lists_is_not_found(
+    monkeypatch: pytest.MonkeyPatch, session: Session, g2_user: TestUser
+):
+    _as_user(monkeypatch, session, g2_user)
+    with pytest.raises(McpToolError):
+        await get_shopping_list()

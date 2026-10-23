@@ -26,7 +26,7 @@ class MealplanEntryIn(BaseModel):
     servings: float | None = None
 
 
-def _day_bounds(start: date, end: date) -> tuple[datetime, datetime]:
+def day_bounds(start: date, end: date) -> tuple[datetime, datetime]:
     return datetime.combine(start, time.min, tzinfo=UTC), datetime.combine(end, time.min, tzinfo=UTC)
 
 
@@ -52,7 +52,7 @@ def _entries(ctx: McpContext, entries: list[ReadPlanEntry]) -> list[dict[str, An
 
 
 def get_mealplan_impl(ctx: McpContext, start_date: date, end_date: date) -> dict[str, Any]:
-    start, end = _day_bounds(start_date, end_date)
+    start, end = day_bounds(start_date, end_date)
     entries = sorted(ctx.repos.meals.get_meals_by_date_range(start, end), key=lambda e: (e.date, e.id))
     return {"entries": _entries(ctx, entries)}
 
@@ -60,7 +60,7 @@ def get_mealplan_impl(ctx: McpContext, start_date: date, end_date: date) -> dict
 def get_recent_meals_impl(ctx: McpContext, days: int = 14) -> dict[str, Any]:
     days = min(max(days, 1), MAX_RANGE_DAYS)
     today = datetime.now().astimezone().date()
-    start, end = _day_bounds(today - timedelta(days=days), today)
+    start, end = day_bounds(today - timedelta(days=days), today)
     entries = sorted(ctx.repos.meals.get_meals_by_date_range(start, end), key=lambda e: (e.date, e.id), reverse=True)
     counts = Counter(e.recipe.slug for e in entries if e.recipe)
     return {"entries": _entries(ctx, entries), "recipe_counts": dict(counts)}
