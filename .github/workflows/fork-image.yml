@@ -2,7 +2,7 @@ name: Fork image
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/phase1-foundation]
     tags: ["v*"]
   workflow_dispatch:
 
