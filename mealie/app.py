@@ -21,6 +21,7 @@ from mealie.core.config import get_app_settings
 from mealie.core.root_logger import get_logger
 from mealie.core.settings import branding
 from mealie.core.settings.static import APP_VERSION
+from mealie.mcp.asgi import mcp_lifespan, register_mcp
 from mealie.middleware.locale_context import LocaleContextMiddleware
 from mealie.routes import router, spa, utility_routes
 from mealie.routes.handlers import register_debug_handler
@@ -67,7 +68,8 @@ async def lifespan_fn(_: FastAPI) -> AsyncGenerator[None]:
     init_db.main()
     logger.info("end: database initialization")
 
-    await start_scheduler()
+    if not settings.TESTING:  # tests that run the lifespan must not start background jobs
+        await start_scheduler()
 
     logger.info("-----SYSTEM STARTUP-----")
     logger.info("------APP SETTINGS------")
@@ -97,7 +99,9 @@ async def lifespan_fn(_: FastAPI) -> AsyncGenerator[None]:
             f"({', '.join(sorted(branding.ALLOWED_IMAGE_SUFFIXES))}); falling back to the default logo"
         )
 
-    yield
+    # the MCP sub-app is routed, not run as an app, so its session manager is started here
+    async with mcp_lifespan():
+        yield
 
     logger.info("-----SYSTEM SHUTDOWN----- \n")
 
@@ -155,6 +159,7 @@ def api_routers():
     app.include_router(router)
     app.include_router(media_router)
     app.include_router(utility_routes.router)
+    register_mcp(app)
 
     if settings.PRODUCTION and not settings.TESTING:
         spa.mount_spa(app)
