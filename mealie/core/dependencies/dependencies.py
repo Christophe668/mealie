@@ -47,6 +47,8 @@ async def is_logged_in(token: str = Depends(oauth2_scheme_soft_fail), session=De
     """
     try:
         payload = jwt.decode(token, settings.SECRET, algorithms=[ALGORITHM])
+        if payload.get("mcp"):
+            return False
         user_id: str = payload.get("sub")
         long_token: str = payload.get("long_token")
 
@@ -105,6 +107,8 @@ async def get_current_user(
 ) -> PrivateUser:
     try:
         payload = jwt.decode(token, settings.SECRET, algorithms=[ALGORITHM])
+        if payload.get("mcp"):
+            raise credentials_exception
         user_id: str | None = payload.get("sub")
         long_token: str | None = payload.get("long_token")
 
