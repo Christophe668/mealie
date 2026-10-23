@@ -69,7 +69,7 @@ def _patch_ctx(monkeypatch: pytest.MonkeyPatch, session: Session, subject: str) 
     monkeypatch.setattr(context, "session_factory", lambda: contextlib.nullcontext(session))
 
 
-def _tag_exists(session: Session, group_id, name: str) -> bool:
+def _tag_exists(session: Session, name: str) -> bool:
     from mealie.db.models.recipe.tag import Tag
 
     session.expire_all()
@@ -82,9 +82,12 @@ def test_context_commits_on_clean_exit(monkeypatch: pytest.MonkeyPatch, session:
     _patch_ctx(monkeypatch, session, str(unique_user.user_id))
     name = random_string()
     with context.mcp_context() as ctx:
-        ctx.repos.tags.create(TagSave(name=name, group_id=unique_user.group_id))
+        ctx.session.add(
+            ctx.repos.tags.model(**TagSave(name=name, slug=name, group_id=unique_user.group_id).model_dump())
+        )
+        ctx.session.flush()
     session.rollback()
-    assert _tag_exists(session, unique_user.group_id, name)
+    assert _tag_exists(session, name)
 
 
 def test_context_rolls_back_on_exception(monkeypatch: pytest.MonkeyPatch, session: Session, unique_user):
@@ -99,7 +102,7 @@ def test_context_rolls_back_on_exception(monkeypatch: pytest.MonkeyPatch, sessio
             )
             ctx.session.flush()
             raise RuntimeError("boom")
-    assert not _tag_exists(session, unique_user.group_id, name)
+    assert not _tag_exists(session, name)
 
 
 def test_context_unknown_user_raises(monkeypatch: pytest.MonkeyPatch, session: Session):
