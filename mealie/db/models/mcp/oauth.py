@@ -62,7 +62,7 @@ class McpOAuthCode(SqlAlchemyBase, BaseMixins):
 
     code: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
     client_id: Mapped[str] = mapped_column(String, nullable=False)
-    user_id: Mapped[GUID] = mapped_column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    user_id: Mapped[GUID] = mapped_column(GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     scopes: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     code_challenge: Mapped[str] = mapped_column(String, nullable=False)
     redirect_uri: Mapped[str] = mapped_column(String, nullable=False)
@@ -100,7 +100,7 @@ class McpOAuthGrant(SqlAlchemyBase, BaseMixins):
     __tablename__ = "mcp_oauth_grants"
 
     grant_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
-    user_id: Mapped[GUID] = mapped_column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    user_id: Mapped[GUID] = mapped_column(GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     client_id: Mapped[str] = mapped_column(String, nullable=False)
     scopes: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(NaiveDateTime)

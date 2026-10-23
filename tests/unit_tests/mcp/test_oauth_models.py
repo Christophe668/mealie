@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import delete, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -11,6 +12,7 @@ from mealie.db.models.mcp.oauth import (
     McpOAuthPendingAuth,
     McpOAuthRefreshToken,
 )
+from mealie.db.models.users import User
 from tests.utils.factories import random_string
 
 CALLBACK = "https://claude.ai/api/mcp/auth_callback"
@@ -120,3 +122,33 @@ def test_refresh_token_roundtrip(session: Session):
     assert row.used_at is None
     assert row.resource == "https://mealie.example/mcp"
     assert row.scopes == ["recipes:read"]
+
+
+def test_deleting_user_cascades_to_codes_and_grants(session: Session, unique_user_fn_scoped):
+    user_id = unique_user_fn_scoped.user_id
+    code, grant_id = random_string(), random_string()
+    session.add(
+        McpOAuthCode(
+            code=code,
+            client_id="c1",
+            user_id=user_id,
+            scopes=[],
+            code_challenge="challenge",
+            redirect_uri=CALLBACK,
+            redirect_uri_provided_explicitly=True,
+            expires_at=_future(),
+        )
+    )
+    session.add(McpOAuthGrant(grant_id=grant_id, user_id=user_id, client_id="c1", scopes=[]))
+    session.commit()
+
+    # SQLite does not enforce foreign keys unless asked to; Postgres always does
+    session.execute(text("PRAGMA foreign_keys=ON"))
+    try:
+        session.execute(delete(User).where(User.id == user_id))
+        session.commit()
+    finally:
+        session.execute(text("PRAGMA foreign_keys=OFF"))
+
+    assert session.query(McpOAuthCode).filter_by(code=code).count() == 0
+    assert session.query(McpOAuthGrant).filter_by(grant_id=grant_id).count() == 0
