@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from uuid import UUID
 
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
@@ -31,10 +32,15 @@ def mcp_context() -> Iterator[McpContext]:
     if access is None or not access.subject:
         raise McpToolError("unauthenticated")
 
+    try:
+        user_id = UUID(access.subject)
+    except ValueError as e:
+        raise McpToolError("unauthenticated") from e
+
     with session_factory() as session:
         try:
             user = get_repositories(session, group_id=None, household_id=None).users.get_one(
-                access.subject, "id", any_case=False
+                user_id, "id", any_case=False
             )
             # Avoid lazy loads on user relationships holding locks (see get_current_user).
             session.commit()

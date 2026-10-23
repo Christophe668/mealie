@@ -13,11 +13,15 @@ from .errors import forbidden_scope
 logger = get_logger("mcp")
 
 
-def _check(scope: str) -> str:
+def _subject() -> str:
+    access = get_access_token()
+    return (access.subject if access else None) or "-"
+
+
+def _check(scope: str) -> None:
     access = get_access_token()
     if access is None or scope not in access.scopes:
         raise forbidden_scope(scope)
-    return access.subject or "-"
 
 
 def _log(name: str, user: str, started: float, ok: bool) -> None:
@@ -32,9 +36,9 @@ def require_scope(scope: str) -> Callable[[Callable[..., Any]], Callable[..., An
 
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                started, user, ok = time.monotonic(), "-", False
+                started, user, ok = time.monotonic(), _subject(), False
                 try:
-                    user = _check(scope)
+                    _check(scope)
                     result = await fn(*args, **kwargs)
                     ok = True
                     return result
@@ -45,9 +49,9 @@ def require_scope(scope: str) -> Callable[[Callable[..., Any]], Callable[..., An
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            started, user, ok = time.monotonic(), "-", False
+            started, user, ok = time.monotonic(), _subject(), False
             try:
-                user = _check(scope)
+                _check(scope)
                 result = fn(*args, **kwargs)
                 ok = True
                 return result
