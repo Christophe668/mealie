@@ -176,7 +176,7 @@ for route in app.routes:
 
 def main():
     uvicorn.run(
-        "app:app",
+        "mealie.app:app",
         host="0.0.0.0",
         port=settings.API_PORT,
         reload=True,
