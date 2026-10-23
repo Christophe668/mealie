@@ -1,17 +1,19 @@
+from collections.abc import Callable
 from typing import Any, Literal
 from uuid import UUID
 
 from slugify import slugify
+from sqlalchemy.exc import MultipleResultsFound
 
 from mealie.mcp.auth import require_scope
 from mealie.mcp.context import McpContext, cross_household_repos
-from mealie.mcp.errors import not_found
+from mealie.mcp.errors import McpToolError, not_found
 from mealie.mcp.server import mcp_server
 from mealie.mcp.tools import run_in_context
 from mealie.mcp.tools._summaries import last_made_by_recipe, recipe_brief, recipe_url
 from mealie.repos.repository_generic import GroupRepositoryGeneric
 from mealie.schema.recipe.recipe import Recipe
-from mealie.schema.response.pagination import OrderDirection, PaginationQuery
+from mealie.schema.response.pagination import OrderByNullPosition, OrderDirection, PaginationQuery
 from mealie.services.query_filter.builder import QueryFilterBuilder
 
 OrderBy = Literal["name", "rating", "random", "last_made", "created_at"]
@@ -35,7 +37,10 @@ def _resolve_organizers(repo: GroupRepositoryGeneric, values: list[str]) -> tupl
     unknown: list[str] = []
     for value in values:
         # slugs are unique per group; the name lookup covers names whose slug was edited
-        item = repo.get_one(slugify(value), "slug") or repo.get_one(value, "name", any_case=True)
+        try:
+            item = repo.get_one(slugify(value), "slug") or repo.get_one(value, "name", any_case=True)
+        except MultipleResultsFound as e:
+            raise McpToolError(f"ambiguous tag or category: {value!r} matches several; use its slug") from e
         if item is None:
             unknown.append(value)
         else:
@@ -54,6 +59,21 @@ def _build_filter(
             f"last_made <= $NOW-{int(not_made_since_days)}d" if not_made_since_days is not None else None,
         )
         or None
+    )
+
+
+def _build_pagination(
+    order_by: OrderBy, page: int, per_page: int, query_filter: str | None, seed: Callable[[], str]
+) -> PaginationQuery:
+    return PaginationQuery(
+        page=page,
+        per_page=per_page,
+        order_by=order_by,
+        order_direction=_DIRECTIONS[order_by],
+        # unrated recipes have a NULL rating; Postgres sorts NULLs first on DESC, so pin them last everywhere
+        order_by_null_position=OrderByNullPosition.last,
+        query_filter=query_filter,
+        pagination_seed=seed() if order_by == "random" else None,
     )
 
 
@@ -86,13 +106,12 @@ def search_recipes_impl(
             "unknown_categories": unknown_categories,
         }
 
-    pagination = PaginationQuery(
-        page=page,
-        per_page=per_page,
-        order_by=order_by,
-        order_direction=_DIRECTIONS[order_by],
-        query_filter=_build_filter(max_total_minutes, min_rating, not_made_since_days),
-        pagination_seed=repos.recipes._random_seed() if order_by == "random" else None,
+    pagination = _build_pagination(
+        order_by,
+        page,
+        per_page,
+        _build_filter(max_total_minutes, min_rating, not_made_since_days),
+        repos.recipes._random_seed,
     )
     result = repos.recipes.by_user(ctx.user.id).page_all(
         pagination,
@@ -171,10 +190,13 @@ async def search_recipes(
     per_page: int = 20,
 ) -> dict[str, Any]:
     """Search recipes across every household of the user's group, to pick what to cook.
-    Filters combine with AND: free-text `query`, tag/category names (all must match), max total time,
-    min rating, and "not made by this household in N days". `order_by` "rating" is best first,
-    "last_made" least recent first, "random" a fresh shuffle. Returns {items, page, per_page, total}
-    with short summaries; call get_recipe for ingredients and steps."""
+    Filters combine with AND: free-text `query`, tags/categories by name or slug (all must match),
+    max total time, min rating, and "not made by this household in N days". Unknown tags/categories
+    return total 0 with `unknown_tags`/`unknown_categories` listing them. `order_by` "rating" is best
+    first (unrated last), "last_made" least recent first, "random" a fresh shuffle. `per_page` is
+    capped at 100. `min_rating` and rating order use the caller's own rating when set, while `rating`
+    in each item is the recipe's average. Returns {items, page, per_page, total}; call get_recipe for
+    ingredients and steps."""
     return await run_in_context(
         search_recipes_impl,
         query=query,

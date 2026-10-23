@@ -3,13 +3,16 @@ from datetime import UTC, datetime
 
 import pytest
 from mcp.server.auth.provider import AccessToken
+from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
 from mealie.mcp import auth, context
 from mealie.mcp.errors import McpToolError
+from mealie.mcp.tools import recipes as recipes_module
 from mealie.mcp.tools.household import get_household_context
-from mealie.mcp.tools.recipes import get_recipe, search_recipes
+from mealie.mcp.tools.recipes import _build_pagination, _resolve_organizers, get_recipe, search_recipes
+from mealie.schema.response.pagination import OrderByNullPosition, OrderDirection
 from tests.utils import api_routes
 from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
@@ -134,6 +137,51 @@ async def test_search_not_made_since_days(
 
     result = await search_recipes(tags=[tag["slug"]], not_made_since_days=7)
     assert [r["slug"] for r in result["items"]] == [never]
+
+
+@pytest.mark.parametrize("order_by", ["name", "rating", "random", "last_made", "created_at"])
+def test_pagination_orders_nulls_last(order_by):
+    pagination = _build_pagination(order_by, 1, 20, None, lambda: "seed")
+
+    # NULL ratings would sort first on Postgres with DESC; SQLite hides it, so check the query itself
+    assert pagination.order_by_null_position is OrderByNullPosition.last
+    assert pagination.pagination_seed == ("seed" if order_by == "random" else None)
+    if order_by == "rating":
+        assert pagination.order_direction is OrderDirection.desc
+
+
+@pytest.mark.asyncio
+async def test_search_by_rating_puts_unrated_last(
+    monkeypatch: pytest.MonkeyPatch, session: Session, api_client: TestClient, unique_user: TestUser
+):
+    tag = _create_tag(api_client, unique_user)
+    unrated = _create_recipe(api_client, unique_user, tags=[tag])
+    rated = _create_recipe(api_client, unique_user, tags=[tag])
+    response = api_client.post(
+        api_routes.users_id_ratings_slug(unique_user.user_id, rated), json={"rating": 4}, headers=unique_user.token
+    )
+    assert response.status_code == 200
+    _as_user(monkeypatch, session, unique_user)
+
+    captured = []
+    original = recipes_module._build_pagination
+    monkeypatch.setattr(recipes_module, "_build_pagination", lambda *a: captured.append(original(*a)) or captured[-1])
+
+    result = await search_recipes(tags=[tag["slug"]], order_by="rating")
+
+    assert [r["slug"] for r in result["items"]] == [rated, unrated]
+    assert captured[0].order_by_null_position is OrderByNullPosition.last
+
+
+def test_resolve_organizers_ambiguous_name_raises():
+    class AmbiguousRepo:
+        def get_one(self, value, key, any_case=False):
+            if key == "slug":
+                return None
+            raise MultipleResultsFound()
+
+    with pytest.raises(McpToolError, match="ambiguous.*Dinner"):
+        _resolve_organizers(AmbiguousRepo(), ["Dinner"])  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

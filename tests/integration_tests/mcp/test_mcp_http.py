@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import json
 import secrets
 from urllib.parse import parse_qs, urlparse
 
@@ -90,6 +91,17 @@ def test_mcp_call_after_initialize(mcp_client: TestClient, mcp_bearer: dict[str,
 
     names = {tool["name"] for tool in body["result"]["tools"]}
     assert {"get_household_context", "search_recipes", "get_recipe"} <= names
+
+
+def test_tools_call_get_household_context(mcp_client: TestClient, mcp_bearer: dict[str, str], unique_user: TestUser):
+    # Runs the tool through the real transport: the access token must reach the worker thread.
+    body = mcp_call(mcp_client, mcp_bearer, "tools/call", {"name": "get_household_context", "arguments": {}})
+
+    result = body["result"]
+    assert not result.get("isError"), result
+    context = result.get("structuredContent") or json.loads(result["content"][0]["text"])
+    assert context["household"]["id"] == str(unique_user.household_id)
+    assert context["user"]["id"] == str(unique_user.user_id)
 
 
 def _authorize_code(client: TestClient, user: TestUser, client_id: str, verifier: str) -> str:
