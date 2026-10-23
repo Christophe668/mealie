@@ -2,9 +2,10 @@ from datetime import datetime
 
 from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
+from mealie.db.models._model_base import SqlAlchemyBase
 from mealie.db.models._model_utils.datetime import get_utc_now
 from mealie.db.models._model_utils.guid import GUID
 from mealie.db.models.mcp.oauth import (
@@ -28,14 +29,10 @@ class OAuthStore:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def _save(self, row: McpOAuthClient | McpOAuthPendingAuth | McpOAuthCode | McpOAuthGrant | McpOAuthRefreshToken):
+    def _save[T: SqlAlchemyBase](self, row: T) -> T:
         self.session.add(row)
         self.session.commit()
         return row
-
-    def _delete_row(self, row) -> None:
-        self.session.delete(row)
-        self.session.commit()
 
     # clients
 
@@ -47,15 +44,21 @@ class OAuthStore:
         if not info.client_id:
             raise ValueError("client_id is required")
 
-        self._save(
-            McpOAuthClient(
-                client_id=info.client_id,
-                client_secret_hash=tokens.hash_token(info.client_secret) if info.client_secret else None,
-                client_name=info.client_name,
-                redirect_uris=[str(uri) for uri in info.redirect_uris or []],
-                metadata_json=info.model_dump(mode="json"),
-            )
-        )
+        # the plaintext secret stays in metadata_json because the SDK compares it directly on token requests
+        values = {
+            "client_secret_hash": tokens.hash_token(info.client_secret) if info.client_secret else None,
+            "client_name": info.client_name,
+            "redirect_uris": [str(uri) for uri in info.redirect_uris or []],
+            "metadata_json": info.model_dump(mode="json"),
+        }
+        row = self.session.scalars(select(McpOAuthClient).where(McpOAuthClient.client_id == info.client_id)).first()
+        if row is None:
+            self._save(McpOAuthClient(client_id=info.client_id, **values))
+            return
+
+        for key, value in values.items():
+            setattr(row, key, value)
+        self.session.commit()
 
     # pending authorizations
 
@@ -87,8 +90,12 @@ class OAuthStore:
             return None
 
         result = (row.client_id, AuthorizationParams.model_validate(row.params_json))
-        self._delete_row(row)
-        return result
+        # conditional delete: only the caller that actually removes the row gets the data
+        deleted = self.session.execute(
+            delete(McpOAuthPendingAuth).where(McpOAuthPendingAuth.request_id == request_id)
+        ).rowcount
+        self.session.commit()
+        return result if deleted else None
 
     # authorization codes
 
@@ -115,8 +122,11 @@ class OAuthStore:
             return None
 
         expired = row.expires_at <= _now()
-        self._delete_row(row)
-        return None if expired else row
+        self.session.expunge(row)
+        # conditional delete: of concurrent callers only one removes the row
+        deleted = self.session.execute(delete(McpOAuthCode).where(McpOAuthCode.code == code)).rowcount
+        self.session.commit()
+        return None if expired or not deleted else row
 
     # grants
 
@@ -176,22 +186,34 @@ class OAuthStore:
         return raw
 
     def consume_refresh_token(self, raw: str) -> McpOAuthRefreshToken | None:
-        row = self.session.scalars(
-            select(McpOAuthRefreshToken).where(McpOAuthRefreshToken.token_hash == tokens.hash_token(raw))
-        ).first()
-        if row is None or row.expires_at <= _now():
-            return None
+        token_hash = tokens.hash_token(raw)
+        now = _now()
+        # atomic claim: only one concurrent caller can flip used_at from NULL
+        claimed = self.session.execute(
+            update(McpOAuthRefreshToken)
+            .where(
+                McpOAuthRefreshToken.token_hash == token_hash,
+                McpOAuthRefreshToken.used_at.is_(None),
+                McpOAuthRefreshToken.expires_at > now,
+            )
+            .values(used_at=now)
+        ).rowcount
+        self.session.commit()
 
-        if row.used_at is not None:
+        row = self.session.scalars(
+            select(McpOAuthRefreshToken).where(McpOAuthRefreshToken.token_hash == token_hash)
+        ).first()
+        if row is None:
+            return None
+        if claimed:
+            return row
+
+        if row.used_at is not None and row.expires_at > now:
             # reuse of a rotated token: assume theft and kill the whole family
             grant = self.get_grant(row.grant_id)
             if grant is not None:
                 self._revoke(grant)
-            return None
-
-        row.used_at = _now()
-        self.session.commit()
-        return row
+        return None
 
     # housekeeping
 
