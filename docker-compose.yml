@@ -1,0 +1,48 @@
+services:
+  mealie:
+    image: ghcr.io/christophe668/mealie:main
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: production
+    restart: unless-stopped
+    ports:
+      - "9925:9000"
+    environment:
+      # Must be https://... (or localhost) for the MCP/OAuth routes to be registered.
+      BASE_URL: ${BASE_URL}
+      DB_ENGINE: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-mealie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mealie}
+      POSTGRES_SERVER: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-mealie}
+      ALLOW_SIGNUP: "false"
+      TZ: Europe/Brussels
+      # Narrow to your reverse proxy IP for accurate per-IP rate limiting.
+      HOST_IP: ${HOST_IP:-*}
+    volumes:
+      - mealie-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mealie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mealie}
+      POSTGRES_DB: ${POSTGRES_DB:-mealie}
+      TZ: Europe/Brussels
+    volumes:
+      - mealie-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mealie-data:
+  mealie-pgdata:

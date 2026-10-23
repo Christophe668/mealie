@@ -1,0 +1,65 @@
+# Deploying the fork and connecting claude.ai
+
+This fork exposes an OAuth 2.1-protected MCP server at `https://<your-domain>/mcp`. claude.ai connects to it as a custom connector.
+
+## Prerequisites
+
+- A domain name pointing at your host (or a Cloudflare Tunnel hostname).
+- HTTPS in front of Mealie. claude.ai only talks to public HTTPS endpoints.
+- Docker with Compose v2.
+
+> **`BASE_URL` must start with `https://`** (or point at `localhost`/`127.0.0.1` for local tests). With a plain `http://` LAN URL, Mealie logs a WARNING and does **not** register the MCP/OAuth routes. The container healthcheck only probes the MCP metadata when `BASE_URL` qualifies.
+
+## Run the stack
+
+```bash
+cp .env.example .env
+# edit .env: set BASE_URL=https://mealie.example.com and change the passwords
+docker compose up -d
+```
+
+The compose file pulls `ghcr.io/christophe668/mealie:main` (built by `.github/workflows/fork-image.yml` on every push to `main`). To build locally instead: `docker compose up -d --build`.
+
+Mealie listens on host port `9925`. Create your admin account on first start (signup is disabled afterwards via `ALLOW_SIGNUP=false`).
+
+## Reverse proxy
+
+### Caddy
+
+```caddyfile
+mealie.example.com {
+    reverse_proxy localhost:9925
+}
+```
+
+### Cloudflare Tunnel
+
+```bash
+cloudflared tunnel --url http://localhost:9925
+# or, for a named tunnel routed to mealie.example.com:
+cloudflared tunnel run --url http://localhost:9925 <tunnel-name>
+```
+
+## Rate limiting and workers
+
+- Set `HOST_IP` in `.env` to your reverse proxy's IP (instead of the default `*`) so per-IP rate limiting sees the real client address and cannot be spoofed via forwarded headers.
+- The MCP transport is stateless, so running multiple workers (`UVICORN_WORKERS`) is fine. Note that the rate limiter is per process, so limits apply per worker.
+
+## Add to claude.ai
+
+1. Open claude.ai, Settings, Connectors.
+2. Choose **Add custom connector**.
+3. Enter the URL `https://<domain>/mcp`.
+4. You are redirected to Mealie: sign in and approve access.
+5. The connector's tools are now available in conversations.
+
+## Verify
+
+```bash
+curl https://<domain>/.well-known/oauth-authorization-server
+curl https://<domain>/.well-known/oauth-protected-resource/mcp
+# unauthenticated MCP calls must be rejected with 401 and a WWW-Authenticate header
+curl -i -X POST https://<domain>/mcp
+```
+
+The protected-resource document should report `"resource": "https://<domain>/mcp"`.
