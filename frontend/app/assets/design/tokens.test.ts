@@ -59,6 +59,15 @@ describe("design tokens", () => {
     });
   });
 
+  test("cook mode shares the dark palette whatever the theme", () => {
+    expect(declarations(tokens, ".ds-cook")).toEqual(declarations(tokens, ".v-theme--dark"));
+  });
+
+  test("a scrim for each mode", () => {
+    expect(declarations(tokens, ":root")["--ds-scrim"]).toBe("rgb(23 32 27 / 40%)");
+    expect(declarations(tokens, ".v-theme--dark")["--ds-scrim"]).toBe("rgb(0 0 0 / 55%)");
+  });
+
   test("shape, depth, font, spacing and type scale", () => {
     const root = declarations(tokens, ":root");
     expect(root).toMatchObject({

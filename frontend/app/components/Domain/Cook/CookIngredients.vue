@@ -1,5 +1,21 @@
 <template>
-  <section class="cook-ingredients" :aria-labelledby="headingId">
+  <!-- Compact: only this step's ingredients, as a short list above the step on mobile (no ticks). -->
+  <section v-if="compact" class="cook-ingredients cook-ingredients--compact" :aria-labelledby="headingId">
+    <h2 :id="headingId" class="cook-ingredients__compact-title">
+      {{ $t("cook.for-this-step") }}
+    </h2>
+    <ul class="cook-ingredients__items" role="list">
+      <li v-for="row in activeRows" :key="row.key" class="cook-ingredients__item cook-ingredients__item--active">
+        <span class="cook-ingredients__label">
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <span v-html="row.html" />
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <span v-if="row.note" class="cook-ingredients__note" v-html="` ${row.note}`" />
+        </span>
+      </li>
+    </ul>
+  </section>
+  <section v-else class="cook-ingredients" :aria-labelledby="headingId">
     <h2 :id="headingId" class="cook-ingredients__heading">
       {{ $t("cook.ingredients") }}
     </h2>
@@ -40,6 +56,7 @@ import { useId } from "vue";
 import { marked } from "marked";
 import { ingredientTicksKey } from "~/components/Domain/Recipe/RecipeRead/RecipeReadIngredients.vue";
 import { useIngredientTextParser } from "~/composables/recipes";
+import type { RecipeIngredient } from "~/lib/api/types/recipe";
 import { sanitizeMarkdownHtml } from "~/lib/sanitize/markdown";
 
 const props = withDefaults(defineProps<{
@@ -49,10 +66,12 @@ const props = withDefaults(defineProps<{
   scale?: number;
   recipeSlug: string;
   groupSlug?: string;
+  compact?: boolean;
 }>(), {
   active: () => [],
   scale: 1,
   groupSlug: "",
+  compact: false,
 });
 
 const headingId = useId();
@@ -101,6 +120,8 @@ const sections = computed(() => {
   return result;
 });
 
+const activeRows = computed(() => sections.value.flatMap(section => section.rows.filter(row => row.active)));
+
 /* The read page's ticks, same key and shape, so a tick here shows there and back. */
 const ticks = ref<Record<string, boolean>>({});
 watch(
@@ -140,6 +161,23 @@ function setChecked(key: string, value: boolean) {
   font-variation-settings: "wdth" 92;
   letter-spacing: -0.015em;
   line-height: 1.2;
+}
+
+.cook-ingredients__compact-title {
+  margin: 0 0 calc(var(--ds-space) * 0.5);
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-2);
+  font-weight: 500;
+}
+
+.cook-ingredients--compact .cook-ingredients__item {
+  padding-top: calc(var(--ds-space) * 0.5);
+  padding-bottom: calc(var(--ds-space) * 0.5);
+  border-bottom: 0;
+}
+
+.cook-ingredients--compact .cook-ingredients__label {
+  cursor: default;
 }
 
 .cook-ingredients__section + .cook-ingredients__section {

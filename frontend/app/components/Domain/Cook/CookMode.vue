@@ -1,7 +1,7 @@
 <template>
   <div class="ds-cook cook">
-    <header class="cook__bar">
-      <DsButton variant="ghost" icon="close" :aria-label="$t('cook.exit-label')" @click="exit">
+    <header class="cook__bar" :inert="sheetOpen || undefined">
+      <DsButton variant="ghost" size="lg" icon="close" :aria-label="$t('cook.exit-label')" @click="exit">
         {{ $t("cook.exit") }}
       </DsButton>
       <p class="cook__title">
@@ -12,8 +12,8 @@
       </p>
     </header>
 
-    <div class="cook__body" :style="{ '--cook-timer-count': timers.length }">
-      <main class="cook__steps">
+    <div class="cook__body" :style="{ '--cook-timer-count': timers.length }" :inert="sheetOpen || undefined">
+      <div class="cook__steps">
         <p v-if="!total" class="cook__empty">
           {{ $t("cook.no-steps") }}
         </p>
@@ -27,6 +27,17 @@
               @select="go(index - 1)"
             />
           </div>
+          <!-- Mobile: what this step needs, above it; the sheet keeps the full list. -->
+          <CookIngredients
+            v-if="isMobile && activeIngredients.length"
+            compact
+            class="cook__strip"
+            :ingredients="ingredients"
+            :active="activeIngredients"
+            :scale="scale"
+            :recipe-slug="recipe.slug || ''"
+            :group-slug="groupSlug"
+          />
           <Transition name="cook-step" mode="out-in">
             <CookStep
               :key="index"
@@ -53,7 +64,7 @@
           :back-to="backTo"
           :logged-in="loggedIn"
         />
-      </main>
+      </div>
 
       <aside v-if="!isMobile && ingredients.length" class="cook__aside">
         <CookIngredients
@@ -66,7 +77,7 @@
       </aside>
     </div>
 
-    <div v-if="timers.length" class="cook__timers" role="region" :aria-label="$t('cook.timers')">
+    <div v-if="timers.length" class="cook__timers" role="region" :aria-label="$t('cook.timers')" :inert="sheetOpen || undefined">
       <CookTimer
         v-for="timer in timers"
         :key="timer.id"
@@ -82,14 +93,15 @@
       {{ doneAnnouncement }}
     </p>
 
-    <nav v-if="total" class="cook__controls">
-      <DsButton variant="ghost" icon="chevronLeft" :disabled="index === 0" @click="go(index - 1)">
+    <nav v-if="total" class="cook__controls" :inert="sheetOpen || undefined">
+      <DsButton variant="ghost" size="lg" icon="chevronLeft" :disabled="index === 0" @click="go(index - 1)">
         <span class="cook__control-label">{{ $t("cook.previous-step") }}</span>
       </DsButton>
       <DsButton
         v-if="isMobile && ingredients.length"
         ref="sheetToggle"
         variant="ghost"
+        size="lg"
         icon="formatListCheck"
         :aria-expanded="sheetOpen ? 'true' : 'false'"
         aria-controls="cook-ingredients-sheet"
@@ -97,7 +109,7 @@
       >
         {{ $t("cook.show-ingredients") }}
       </DsButton>
-      <DsButton variant="line" :disabled="isLast" class="cook__next" @click="go(index + 1)">
+      <DsButton variant="line" size="lg" :disabled="isLast" class="cook__next" @click="go(index + 1)">
         <span class="cook__control-label">{{ $t("cook.next-step") }}</span>
         <DsIcon name="chevronRight" :size="18" />
       </DsButton>
@@ -108,10 +120,12 @@
       <div v-if="isMobile && sheetOpen" class="cook__sheet-scrim" @click.self="closeSheet">
         <div
           id="cook-ingredients-sheet"
+          ref="sheet"
           class="cook__sheet"
           role="dialog"
           aria-modal="true"
           :aria-label="$t('cook.ingredients')"
+          @keydown.tab="trapTab"
         >
           <button ref="sheetClose" type="button" class="cook__sheet-close ds-focus" :aria-label="$t('cook.close-ingredients')" @click="closeSheet">
             <DsIcon name="close" :size="22" />
@@ -178,8 +192,9 @@ function go(to: number) {
   index.value = Math.min(Math.max(to, 0), Math.max(total.value - 1, 0));
 }
 
+// Replace, so Back from the recipe does not land in cook mode again.
 function exit() {
-  router.push(props.backTo);
+  router.replace(props.backTo);
 }
 
 const activeIngredients = computed(() => ingredientsInStep(ingredients.value, currentStep.value));
@@ -196,8 +211,13 @@ const doneAnnouncement = computed(() => announced.value);
 const timerId = (step: number, n: number) => `step-${step}-timer-${n}`;
 const stepOf = (id: string) => Number(id.split("-")[1]) + 1;
 
+/** A day at most: "marinate for 48 hours" is a plan, not a countdown. */
+const MAX_TIMER_SECONDS = 24 * 3600;
+
 function stepTimers(step: number): CookTimerSpec[] {
-  return findStepTimers(steps.value[step]?.text).map((timer, n) => ({ id: timerId(step, n), label: timer.text, total: timer.seconds }));
+  return findStepTimers(steps.value[step]?.text)
+    .map((timer, n) => ({ id: timerId(step, n), label: timer.text, total: timer.seconds }))
+    .filter(timer => timer.total <= MAX_TIMER_SECONDS);
 }
 
 function stateOf(id: string): StepTimerState {
@@ -218,8 +238,12 @@ function timerCaption(timer: CookTimerState) {
   return `${timer.label}, ${i18n.t("cook.timer-step", { n: stepOf(timer.id) })}`;
 }
 
-/* Mobile ingredient sheet: focus moves in on open and back to its toggle on close. */
+/*
+ * Mobile ingredient sheet, a modal: everything else is inert while it is open, Tab wraps inside it,
+ * focus moves in on open and back to its toggle on close.
+ */
 const sheetOpen = ref(false);
+const sheet = useTemplateRef<HTMLElement>("sheet");
 const sheetClose = useTemplateRef<HTMLButtonElement>("sheetClose");
 const sheetToggle = useTemplateRef<{ $el: HTMLElement }>("sheetToggle");
 
@@ -233,6 +257,25 @@ async function closeSheet() {
   sheetOpen.value = false;
   await nextTick();
   sheetToggle.value?.$el?.focus?.();
+}
+
+const FOCUSABLE = "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
+
+function trapTab(event: KeyboardEvent) {
+  const focusable = Array.from(sheet.value?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []).filter(el => !el.hasAttribute("disabled"));
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!first || !last) {
+    return;
+  }
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  }
+  else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 watch(isMobile, (mobile) => {
@@ -260,7 +303,8 @@ function onKeydown(event: KeyboardEvent) {
     }
     return;
   }
-  if (target?.closest("input, textarea, select, [contenteditable='true']")) {
+  // Nothing moves behind the open sheet.
+  if (sheetOpen.value || target?.closest("input, textarea, select, [contenteditable='true']")) {
     return;
   }
   switch (event.key) {
@@ -299,17 +343,11 @@ useEventListener(window, "keydown", onKeydown);
 
 <style>
 /*
- * Cook mode is always dark, whatever the user's theme: the dark token block, declared on the cook root.
+ * Cook mode is always dark, whatever the user's theme: the cook root takes the dark token block.
  * The float shadow is deepened so the timer pill still lifts off ink.
  */
 .ds-cook {
-  --ds-bg: #121714;
-  --ds-surface: #1b211d;
-  --ds-border: #2a322d;
-  --ds-text-2: #9aa49e;
-  --ds-text: #eceeea;
-  --ds-accent: #f2b01e;
-  --ds-accent-text: #17201b;
+  /* The dark palette itself comes from tokens.css (.v-theme--dark, .ds-cook). */
   --ds-shadow-float: 0 8px 24px rgb(0 0 0 / 45%);
 
   background: var(--ds-bg);
@@ -339,7 +377,12 @@ useEventListener(window, "keydown", onKeydown);
   font-family: var(--ds-font);
 }
 
+/* Stays in reach on long steps: a phone has no Escape key. */
 .cook__bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--ds-bg);
   display: flex;
   align-items: center;
   gap: calc(var(--ds-space) * 2);
@@ -386,6 +429,10 @@ useEventListener(window, "keydown", onKeydown);
 /* Holds its place on step 1 so the current step never jumps up. */
 .cook__before {
   min-height: calc(var(--ds-t-4) * 2.7 + var(--ds-space) * 2);
+}
+
+.cook__strip {
+  margin-bottom: calc(var(--ds-space) * -1);
 }
 
 .cook__current {
@@ -465,7 +512,7 @@ useEventListener(window, "keydown", onKeydown);
   z-index: 4;
   display: flex;
   align-items: flex-end;
-  background: rgb(0 0 0 / 55%);
+  background: var(--ds-scrim);
 }
 
 .cook__sheet {

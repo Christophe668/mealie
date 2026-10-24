@@ -15,6 +15,7 @@
   --ds-radius-card: 12px;
   --ds-radius-hero: 20px;
   --ds-shadow-float: 0 8px 24px rgb(23 32 27 / 8%);
+  --ds-scrim: rgb(23 32 27 / 40%);
 
   /* Type */
   --ds-font: "Bricolage Grotesque", system-ui, sans-serif;
@@ -31,7 +32,9 @@
   --ds-space: 8px;
 }
 
-.v-theme--dark {
+/* Cook mode (.ds-cook) is always dark, whatever the theme. */
+.v-theme--dark,
+.ds-cook {
   --ds-bg: #121714;
   --ds-surface: #1b211d;
   --ds-border: #2a322d;
@@ -40,4 +43,5 @@
   --ds-accent: #f2b01e;
   /* Ink on saffron in both modes, never light text on the accent. */
   --ds-accent-text: #17201b;
+  --ds-scrim: rgb(0 0 0 / 55%);
 }

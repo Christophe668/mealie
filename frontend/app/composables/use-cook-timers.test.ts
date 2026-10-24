@@ -101,6 +101,23 @@ describe("useCookTimers", () => {
     stop();
   });
 
+  test("the interval stops once no timer runs", () => {
+    const { start, pause, dismiss, stop } = setup();
+    start({ id: "a", label: "1 minute", total: 60 });
+    start({ id: "b", label: "2 minutes", total: 120 });
+    expect(vi.getTimerCount()).toBe(1);
+
+    dismiss("a");
+    expect(vi.getTimerCount()).toBe(1);
+    dismiss("b");
+    expect(vi.getTimerCount()).toBe(0);
+
+    start({ id: "c", label: "1 minute", total: 60 });
+    pause("c");
+    expect(vi.getTimerCount()).toBe(0);
+    stop();
+  });
+
   test("starting a finished timer runs it again from the top", () => {
     const { timers, start, stop } = setup();
     start({ id: "a", label: "2 seconds", total: 2 });

@@ -25,7 +25,7 @@
         {{ $t("cook.last-step") }}
       </h2>
       <div class="cook-finish__choices">
-        <DsButton variant="line" size="lg" @click="router.push(backTo)">
+        <DsButton variant="line" size="lg" @click="router.replace(backTo)">
           {{ $t("cook.done") }}
         </DsButton>
       </div>
@@ -82,7 +82,8 @@ async function finish(verdict: CookVerdict | null) {
     alert.error(i18n.t("cook.save-failed"));
   }
   busy.value = false;
-  router.push(props.backTo);
+  // Replace, so Back from the recipe does not land in cook mode again.
+  router.replace(props.backTo);
 }
 </script>
 

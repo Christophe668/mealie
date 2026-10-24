@@ -95,17 +95,17 @@ const plain = computed(() => {
   border: 0;
   border-radius: var(--ds-radius-ctl);
   background: none;
-  color: var(--ds-text);
+  /* Dimmed by colour, not opacity: still a readable tap target (text-2 on ink is about 6.9:1). */
+  color: var(--ds-text-2);
   font-size: var(--ds-t-4);
   line-height: 1.35;
-  opacity: 0.35;
   cursor: pointer;
-  transition: opacity 120ms ease;
+  transition: color 120ms ease;
 }
 
 .cook-step--neighbour:hover,
 .cook-step--neighbour:focus-visible {
-  opacity: 0.6;
+  color: var(--ds-text);
 }
 
 .cook-step__preview {

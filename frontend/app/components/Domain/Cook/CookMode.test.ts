@@ -12,7 +12,7 @@ vi.mock("~/composables/api", () => ({
   useUserApi: () => ({ recipes: { updateLastMade } }),
 }));
 
-const push = vi.fn();
+const replace = vi.fn();
 
 const stubs = {
   "v-icon": { template: "<i class=\"v-icon\" aria-hidden=\"true\" />" },
@@ -36,7 +36,7 @@ const recipe: Recipe = {
   ],
 };
 
-function render(props: Partial<{ loggedIn: boolean; scale: number }> = {}) {
+function render(props: Partial<{ loggedIn: boolean; scale: number; recipe: Recipe }> = {}) {
   return mount(CookMode, {
     props: { recipe, backTo: "/g/home/r/onion-soup", loggedIn: true, ...props },
     global: { stubs },
@@ -55,9 +55,9 @@ const current = (wrapper: ReturnType<typeof render>) => wrapper.find(".cook-step
 beforeEach(() => {
   vi.useFakeTimers();
   sessionStorage.clear();
-  push.mockReset();
+  replace.mockReset();
   updateLastMade.mockClear();
-  vi.stubGlobal("useRouter", () => ({ push }));
+  vi.stubGlobal("useRouter", () => ({ replace }));
   vi.mocked(useLocales).mockReturnValue({
     locales: [{ value: "en-US", pluralFoodHandling: "without-unit" }],
     locale: { value: "en-US" },
@@ -148,7 +148,7 @@ describe("CookMode", () => {
     const wrapper = render();
 
     await press("Escape");
-    expect(push).toHaveBeenCalledWith("/g/home/r/onion-soup");
+    expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
     wrapper.unmount();
   });
 
@@ -172,7 +172,7 @@ describe("CookMode", () => {
 
     expect(updateLastMade).toHaveBeenCalledWith("onion-soup", expect.any(String));
     expect(sessionStorage.getItem("pending-feedback:onion-soup")).toBe("loved");
-    expect(push).toHaveBeenCalledWith("/g/home/r/onion-soup");
+    expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
     wrapper.unmount();
   });
 
@@ -185,7 +185,18 @@ describe("CookMode", () => {
 
     expect(updateLastMade).toHaveBeenCalledTimes(1);
     expect(sessionStorage.getItem("pending-feedback:onion-soup")).toBeNull();
-    expect(push).toHaveBeenCalledWith("/g/home/r/onion-soup");
+    expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
+    wrapper.unmount();
+  });
+
+  test("a duration over a day offers no timer", async () => {
+    const marinade: Recipe = { ...recipe, recipeInstructions: [{ id: "m1", text: "Marinate for 48 hours, or 2 hours at least." }] };
+    const wrapper = render({ recipe: marinade });
+
+    const buttons = wrapper.findAll(".cook-step__timers button").map(b => b.text());
+    expect(buttons).toEqual(["Start 2 hours"]);
+    await press(" ");
+    expect(wrapper.find(".cook-timer__time").text()).toBe("2:00:00");
     wrapper.unmount();
   });
 
@@ -198,7 +209,96 @@ describe("CookMode", () => {
     await flushPromises();
 
     expect(updateLastMade).not.toHaveBeenCalled();
-    expect(push).toHaveBeenCalledWith("/g/home/r/onion-soup");
+    expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
     wrapper.unmount();
+  });
+
+  describe("on a phone", () => {
+    beforeEach(() => {
+      vi.stubGlobal("matchMedia", (media: string) => ({
+        matches: true,
+        media,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+      }));
+    });
+
+    async function renderMobile() {
+      const wrapper = render();
+      await flushPromises();
+      return wrapper;
+    }
+
+    const openSheet = async (wrapper: Awaited<ReturnType<typeof renderMobile>>) => {
+      await wrapper.findAll("button").find(b => b.text() === "Ingredients")!.trigger("click");
+      await flushPromises();
+    };
+
+    test("the step's ingredients sit above the step, the full list waits in the sheet", async () => {
+      const wrapper = await renderMobile();
+
+      expect(wrapper.find(".cook__aside").exists()).toBe(false);
+      const strip = wrapper.find(".cook-ingredients--compact");
+      expect(strip.text()).toContain("For this step");
+      expect(strip.findAll("li").map(li => li.text())).toEqual(["50 g butter"]);
+      // Above the current step in the document.
+      const order = strip.element.compareDocumentPosition(wrapper.find(".cook-step--current").element);
+      expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      await press("ArrowRight");
+      expect(wrapper.find(".cook-ingredients--compact").findAll("li").map(li => li.text())).toEqual(["4 onions"]);
+      wrapper.unmount();
+    });
+
+    test("the open sheet is modal: the rest is inert and the step keys do nothing", async () => {
+      const wrapper = await renderMobile();
+      await openSheet(wrapper);
+
+      const sheet = wrapper.find("[role=dialog]");
+      expect(sheet.attributes("aria-modal")).toBe("true");
+      expect(sheet.findAll("input[type=checkbox]")).toHaveLength(3);
+      for (const selector of [".cook__bar", ".cook__body", ".cook__controls"]) {
+        expect(wrapper.find(selector).attributes()).toHaveProperty("inert");
+      }
+
+      await press("ArrowRight");
+      await press("End");
+      expect(progress(wrapper)).toBe("Step 1 of 3");
+      wrapper.unmount();
+    });
+
+    test("Tab wraps inside the sheet", async () => {
+      const wrapper = await renderMobile();
+      await openSheet(wrapper);
+
+      const focusable = wrapper.find("[role=dialog]").findAll("button, input");
+      const first = focusable[0]!.element as HTMLElement;
+      const last = focusable[focusable.length - 1]!.element as HTMLElement;
+      expect(document.activeElement).toBe(first);
+
+      last.focus();
+      await focusable[focusable.length - 1]!.trigger("keydown", { key: "Tab" });
+      expect(document.activeElement).toBe(first);
+
+      await focusable[0]!.trigger("keydown", { key: "Tab", shiftKey: true });
+      expect(document.activeElement).toBe(last);
+      wrapper.unmount();
+    });
+
+    test("Escape closes the sheet first, then leaves", async () => {
+      const wrapper = await renderMobile();
+      await openSheet(wrapper);
+
+      await press("Escape");
+      expect(wrapper.find("[role=dialog]").exists()).toBe(false);
+      expect(wrapper.find(".cook__body").attributes()).not.toHaveProperty("inert");
+      expect(replace).not.toHaveBeenCalled();
+
+      await press("Escape");
+      expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
+      wrapper.unmount();
+    });
   });
 });

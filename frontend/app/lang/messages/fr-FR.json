@@ -1530,6 +1530,7 @@
     "done": "Terminé",
     "last-step": "C’est la dernière étape.",
     "save-failed": "Impossible d’enregistrer que vous l’avez préparée.",
-    "no-steps": "Cette recette n’a pas encore d’étapes."
+    "no-steps": "Cette recette n’a pas encore d’étapes.",
+    "for-this-step": "Pour cette étape"
   }
 }

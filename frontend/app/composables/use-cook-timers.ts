@@ -172,10 +172,12 @@ export function useCookTimers(options: { onDone?: (timer: CookTimer) => void } =
     syncInterval();
   }
 
+  /** Leaving cook mode: drop every timer and let the audio thread sleep (ring() resumes it). */
   function clear() {
     timers.value = [];
     endsAt.clear();
     syncInterval();
+    audio?.suspend().catch(() => {});
   }
 
   onScopeDispose(clear);

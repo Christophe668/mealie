@@ -1530,6 +1530,7 @@
     "done": "Done",
     "last-step": "That’s the last step.",
     "save-failed": "Couldn’t record that you made it.",
-    "no-steps": "This recipe has no steps yet."
+    "no-steps": "This recipe has no steps yet.",
+    "for-this-step": "For this step"
   }
 }
