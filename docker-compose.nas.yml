@@ -20,7 +20,8 @@ services:
       TZ: ${TZ:-Europe/Brussels}
       HOST_IP: "*"
     volumes:
-      - ./data:/app/data
+      # Portainer Git stacks resolve ./ inside Portainer's own volume: set DATA_DIR / PG_DATA_DIR to absolute NAS paths there.
+      - ${DATA_DIR:-./data}:/app/data
     # Optional: reach Mealie directly on the LAN at http://<nas-ip>:9925 (MCP stays on the HTTPS address).
     ports:
       - "9925:9000"
@@ -37,7 +38,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-mealie}
       TZ: ${TZ:-Europe/Brussels}
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
+      - ${PG_DATA_DIR:-./pgdata}:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s

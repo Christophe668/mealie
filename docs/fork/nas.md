@@ -49,6 +49,19 @@ cd /volume1/docker/mealie
 docker compose up -d
 ```
 
+### With Portainer
+
+Portainer can deploy the same file straight from GitHub, with the settings typed into its interface instead of a `.env` file.
+
+1. Create the data folders on the NAS first, for example `/volume1/docker/mealie/data` and `/volume1/docker/mealie/pgdata`.
+2. **Stacks**, **Add stack**, name `mealie`, build method **Repository**:
+   - Repository URL `https://github.com/Christophe668/mealie`, reference `refs/heads/main`
+   - Compose path `docker-compose.nas.yml`
+3. **Environment variables**: add `BASE_URL`, `TUNNEL_TOKEN`, `POSTGRES_PASSWORD`, plus `DATA_DIR=/volume1/docker/mealie/data` and `PG_DATA_DIR=/volume1/docker/mealie/pgdata`. The two folder variables matter: without them Portainer stores the database inside its own internal volume, outside your NAS backups, and deleting the stack can delete your recipes.
+4. **Deploy the stack**.
+
+To update later: open the stack, **Pull and redeploy**, with **Re-pull image** switched on. Do not rely on Portainer's automatic GitOps polling for updates: it redeploys as soon as the repository changes, which is about 15 minutes before the new image finishes building, so it would restart on the old image.
+
 ## 4. First login
 
 Open `https://mealie.yourdomain.com` and sign in with the default admin, `changeme@example.com` / `MyPassword`. Change the email and password straight away in your profile.
