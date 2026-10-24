@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   recipes: { getAll: vi.fn() },
   householdRecipe: vi.fn(),
   connections: vi.fn(),
+  toastError: vi.fn(),
   firstDayOfWeek: { value: 0 },
 }));
 
@@ -21,6 +22,13 @@ vi.mock("~/composables/api", () => ({
     mcpConnections: { getConnections: api.connections },
   }),
 }));
+
+vi.mock("vue-i18n", async importOriginal => ({
+  ...(await importOriginal<object>()),
+  useI18n: () => ({ t: (key: string) => key, locale: ref("en-US") }),
+}));
+
+vi.mock("~/composables/use-toast", () => ({ alert: { error: api.toastError } }));
 
 vi.mock("~/composables/use-households", () => ({
   useHouseholdSelf: () => ({
@@ -200,7 +208,12 @@ describe("useToday shelves", () => {
 
     const { makeAgain, recent, lastMade } = await load();
 
-    expect(api.recipes.getAll).toHaveBeenCalledWith(1, 8, expect.objectContaining({ orderBy: "last_made", orderDirection: "asc" }));
+    // Not cooked for 30+ days: 24 October minus 30 days.
+    expect(api.recipes.getAll).toHaveBeenCalledWith(1, 8, {
+      orderBy: "last_made",
+      orderDirection: "asc",
+      queryFilter: "lastMade < \"2026-09-24\"",
+    });
     expect(api.recipes.getAll).toHaveBeenCalledWith(1, 8, { orderBy: "created_at", orderDirection: "desc" });
     expect(makeAgain.value.map(r => r.name)).toEqual(["Shakshuka"]);
     expect(recent.value.map(r => r.name)).toEqual(["Risotto"]);
@@ -247,6 +260,56 @@ describe("useToday with nothing to show", () => {
   });
 });
 
+describe("useToday loading and races", () => {
+  test("the page stops loading before the per-recipe last-made lookups come back", async () => {
+    mockPlan([entry("2026-10-24", "dinner", "Roast chicken")]);
+    let release!: () => void;
+    api.householdRecipe.mockImplementation(() => new Promise((resolve) => {
+      release = () => resolve({ data: { recipeId: "r", lastMade: "2026-09-12T18:00:00" }, error: null });
+    }));
+
+    const today = useToday();
+    const done = today.refresh();
+    await vi.waitFor(() => expect(today.loading.value).toBe(false));
+    expect(today.tonight.value?.recipe?.name).toBe("Roast chicken");
+    expect(today.tonightLastMade.value).toBeNull();
+
+    release();
+    await done;
+    expect(today.tonightLastMade.value).toBe("2026-09-12T18:00:00");
+  });
+
+  test("an older, slower plan response does not overwrite a newer one", async () => {
+    const resolvers: Array<(entries: ReadPlanEntry[]) => void> = [];
+    api.mealplans.getAll.mockImplementation(() => new Promise((resolve) => {
+      resolvers.push(entries => resolve({ data: page(entries), error: null }));
+    }));
+    api.householdRecipe.mockImplementation((slug: string) => ok({ recipeId: "r", lastMade: slug === "pizza-night" ? "2026-10-01T19:00:00" : "2026-01-01T19:00:00" }));
+
+    const today = useToday();
+    const first = today.refresh();
+    const second = today.refresh();
+    await vi.waitFor(() => expect(resolvers).toHaveLength(2));
+
+    resolvers[1]!([entry("2026-10-24", "dinner", "Pizza night")]);
+    await second;
+    resolvers[0]!([entry("2026-10-24", "dinner", "Roast chicken")]);
+    await first;
+
+    expect(today.tonight.value?.recipe?.name).toBe("Pizza night");
+    expect(today.tonightLastMade.value).toBe("2026-10-01T19:00:00");
+  });
+
+  test("a failed load is reported, an empty one is not", async () => {
+    const empty = await load();
+    expect(empty.loadFailed.value).toBe(false);
+
+    api.mealplans.getAll.mockImplementation(failed);
+    const broken = await load();
+    expect(broken.loadFailed.value).toBe(true);
+  });
+});
+
 describe("useToday swap", () => {
   test("saving an existing entry updates it and reloads the plan", async () => {
     mockPlan([entry("2026-10-24", "dinner", "Roast chicken")]);
@@ -266,6 +329,17 @@ describe("useToday swap", () => {
     await today.saveEntry({ date: "2026-10-24", entryType: "dinner", recipeId: "r2" });
 
     expect(api.mealplans.createOne).toHaveBeenCalledWith(expect.objectContaining({ recipeId: "r2" }));
+  });
+
+  test("a failed save tells the user and keeps the plan as it was", async () => {
+    api.mealplans.updateOne.mockImplementation(failed);
+    const today = await load();
+
+    const saved = await today.saveEntry({ id: 9, date: "2026-10-24", entryType: "dinner", recipeId: "r2", groupId: "g", userId: "u" });
+
+    expect(saved).toBe(false);
+    expect(api.toastError).toHaveBeenCalledWith("home-today.save-failed");
+    expect(api.mealplans.getAll).toHaveBeenCalledTimes(1);
   });
 });
 

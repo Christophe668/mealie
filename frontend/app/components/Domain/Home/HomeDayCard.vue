@@ -1,17 +1,26 @@
 <template>
-  <NuxtLink
-    :to="to"
-    class="home-day ds-focus"
-    :class="{ 'home-day--today': isToday, 'home-day--empty': !lead }"
+  <!-- While the plan loads the card is a plain placeholder: no link, no "Nothing yet". -->
+  <component
+    :is="loading ? 'div' : NuxtLinkComponent"
+    :to="loading ? undefined : to"
+    class="home-day"
+    :class="{
+      'ds-focus': !loading,
+      'home-day--today': isToday,
+      'home-day--empty': !loading && !lead,
+      'home-day--loading': loading,
+    }"
     :aria-current="isToday ? 'date' : undefined"
-    :aria-label="lead ? undefined : $t('home-today.plan-day', { day: longDay })"
+    :aria-label="loading || lead ? undefined : $t('home-today.plan-day', { day: longDay })"
   >
     <span class="home-day__head">
       <span>{{ weekday }}</span>
       <span>{{ dayNumber }}</span>
     </span>
 
-    <template v-if="lead">
+    <template v-if="loading" />
+
+    <template v-else-if="lead">
       <span class="home-day__media">
         <img
           v-if="imageUrl && !imageFailed"
@@ -32,10 +41,11 @@
     </template>
 
     <span v-else class="home-day__empty ds-muted">{{ $t("home-today.nothing-yet") }}</span>
-  </NuxtLink>
+  </component>
 </template>
 
 <script setup lang="ts">
+import { format } from "date-fns";
 import DsChip from "~/components/Design/DsChip.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
 import { useStaticRoutes } from "~/composables/api";
@@ -47,9 +57,12 @@ const props = defineProps<{
   entries: ReadPlanEntry[];
   isToday: boolean;
   groupSlug: string;
-  /** Where an empty day (or a day led by a note) sends you: the planner. */
-  plannerTo: string;
+  /** The planner page; an empty day (or one led by a note) links there with `?start=<that day>`. */
+  plannerPath: string;
+  loading?: boolean;
 }>();
+
+const NuxtLinkComponent = resolveComponent("NuxtLink");
 
 const i18n = useI18n();
 const { recipeSmallImage } = useStaticRoutes();
@@ -71,7 +84,7 @@ watch(imageUrl, () => (imageFailed.value = false));
 
 const to = computed(() => {
   const slug = lead.value?.recipe?.slug;
-  return slug ? `/g/${props.groupSlug}/r/${slug}` : props.plannerTo;
+  return slug ? `/g/${props.groupSlug}/r/${slug}` : `${props.plannerPath}?start=${format(props.date, "yyyy-MM-dd")}`;
 });
 </script>
 
@@ -95,9 +108,9 @@ const to = computed(() => {
   border-color: var(--ds-text-2);
 }
 
-.home-day--today {
-  outline: 2px solid var(--ds-text);
-  outline-offset: -1px;
+.home-day--loading {
+  border-style: dashed;
+  background: transparent;
 }
 
 .home-day__head {
@@ -165,6 +178,12 @@ const to = computed(() => {
 .home-day--empty {
   border-style: dashed;
   background: transparent;
+}
+
+/* The today mark is a border, so `outline` stays free for the keyboard focus ring. */
+.home-day--today,
+.home-day--today:hover {
+  border: 2px solid var(--ds-text);
 }
 
 .home-day__sr {

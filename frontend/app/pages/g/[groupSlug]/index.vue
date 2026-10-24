@@ -1,5 +1,12 @@
 <template>
   <div v-if="!redirecting" class="home">
+    <p v-if="loadFailed && !loading" class="home__error" role="status">
+      {{ $t("home-today.load-failed") }}
+      <button type="button" class="home__retry ds-focus" @click="refresh()">
+        {{ $t("home-today.try-again") }}
+      </button>
+    </p>
+
     <div class="home__top">
       <HomeTonightBoard
         :entry="tonight"
@@ -16,7 +23,7 @@
         :open-list="openList"
         :loading="loading"
         :group-slug="groupSlug"
-        :planner-to="plannerTo"
+        :planner-to="plannerTodayTo"
       />
     </div>
 
@@ -24,7 +31,8 @@
       :days="week"
       :today="today"
       :group-slug="groupSlug"
-      :planner-to="plannerTo"
+      :planner-path="PLANNER_PATH"
+      :loading="loading"
     />
 
     <HomeRecipeShelf
@@ -104,12 +112,14 @@ const {
   lastMade,
   hasConnection,
   loading,
+  loadFailed,
   refresh,
   saveEntry,
 } = useToday();
 const { duration, lastMadeLabel } = useTodayFormat();
 
 const plannerTo = computed(() => `${PLANNER_PATH}?start=${format(weekStart.value, "yyyy-MM-dd")}`);
+const plannerTodayTo = computed(() => `${PLANNER_PATH}?start=${format(today.value, "yyyy-MM-dd")}`);
 
 function makeAgainFact(recipe: RecipeSummary) {
   return recipe.slug ? lastMadeLabel(lastMade.value[recipe.slug], today.value) : "";
@@ -139,6 +149,24 @@ onMounted(() => {
   grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
   gap: calc(var(--ds-space) * 3);
   align-items: stretch;
+}
+
+.home__error {
+  margin: 0 0 calc(var(--ds-space) * 2);
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-2);
+}
+
+.home__retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ds-text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
 }
 
 @media (max-width: 1023px) {

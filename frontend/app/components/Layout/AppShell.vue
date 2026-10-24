@@ -99,7 +99,18 @@ const recipesActive = computed(() => {
 });
 
 const primaryItems = computed<AppShellNavItem[]>(() => {
-  const items: AppShellNavItem[] = [
+  const recipes: AppShellNavItem = {
+    key: "recipes",
+    label: i18n.t("app-shell.recipes"),
+    to: recipesPath.value,
+    icon: "silverwareForkKnife",
+    active: recipesActive.value,
+  };
+  // Today is the signed-in household's day; visitors of a public group only browse its recipes.
+  if (!isOwnGroup.value) {
+    return [recipes];
+  }
+  return [
     {
       key: "today",
       label: i18n.t("app-shell.today"),
@@ -107,33 +118,22 @@ const primaryItems = computed<AppShellNavItem[]>(() => {
       icon: "home",
       active: currentPath.value === todayPath.value,
     },
+    recipes,
     {
-      key: "recipes",
-      label: i18n.t("app-shell.recipes"),
-      to: recipesPath.value,
-      icon: "silverwareForkKnife",
-      active: recipesActive.value,
+      key: "plan",
+      label: i18n.t("app-shell.plan"),
+      to: PLAN_PATH,
+      icon: "calendar",
+      active: isUnder("/household/mealplan"),
+    },
+    {
+      key: "shop",
+      label: i18n.t("app-shell.shop"),
+      to: SHOP_PATH,
+      icon: "cartCheck",
+      active: isUnder(SHOP_PATH),
     },
   ];
-  if (isOwnGroup.value) {
-    items.push(
-      {
-        key: "plan",
-        label: i18n.t("app-shell.plan"),
-        to: PLAN_PATH,
-        icon: "calendar",
-        active: isUnder("/household/mealplan"),
-      },
-      {
-        key: "shop",
-        label: i18n.t("app-shell.shop"),
-        to: SHOP_PATH,
-        icon: "cartCheck",
-        active: isUnder(SHOP_PATH),
-      },
-    );
-  }
-  return items;
 });
 
 const secondaryItems = computed<AppShellNavItem[]>(() => {

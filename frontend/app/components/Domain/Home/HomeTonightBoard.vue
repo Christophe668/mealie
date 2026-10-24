@@ -5,7 +5,7 @@
     class="home-board v-theme--light"
     :class="{ 'home-board--enter': animate }"
     :aria-busy="loading ? 'true' : undefined"
-    :aria-labelledby="titleId"
+    :aria-labelledby="loading ? undefined : titleId"
   >
     <div class="home-board__photo" :class="{ 'home-board__photo--empty': !loading && (!imageUrl || imageFailed) }">
       <img
@@ -23,9 +23,8 @@
       </p>
 
       <template v-if="loading">
-        <h2 :id="titleId" class="home-board__title ds-display">
-          <span class="home-board__skeleton" />
-        </h2>
+        <span class="home-board__skeleton ds-display" aria-hidden="true" />
+        <span class="home-board__skeleton home-board__skeleton--short ds-display" aria-hidden="true" />
       </template>
 
       <template v-else-if="entry">
@@ -219,10 +218,15 @@ let entrancePlayed = false;
 
 .home-board__skeleton {
   display: block;
-  width: min(100%, 14em);
-  height: 1em;
+  width: min(100%, 7em);
+  height: 0.9em;
+  margin-bottom: calc(var(--ds-space) * 1.25);
   border-radius: var(--ds-radius-ctl);
   background: color-mix(in srgb, var(--ds-accent-text) 12%, transparent);
+}
+
+.home-board__skeleton--short {
+  width: min(70%, 4.5em);
 }
 
 @media (max-width: 1023px) {

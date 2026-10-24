@@ -233,7 +233,7 @@ describe("AppShell", () => {
     const wrapper = render();
 
     const labels = wrapper.findAll(".ds-tabbar a").map(a => a.text().trim());
-    expect(labels).toEqual(["Today", "Recipes"]);
+    expect(labels).toEqual(["Recipes"]);
     expect(wrapper.find(".ds-tabbar button[aria-haspopup=menu]").exists()).toBe(false);
     expect(wrapper.find(".ds-rail").text()).not.toContain("Connections");
     expect(wrapper.find(".ds-rail").text()).toContain("Log in");

@@ -1,5 +1,7 @@
 import { addDays, differenceInCalendarDays, differenceInCalendarMonths, format, parseISO, startOfDay, subDays } from "date-fns";
+import { tryOnScopeDispose, useEventListener } from "@vueuse/core";
 import { useUserApi } from "~/composables/api";
+import { alert } from "~/composables/use-toast";
 import { useHouseholdSelf } from "~/composables/use-households";
 import type { CreatePlanEntry, ReadPlanEntry, UpdatePlanEntry } from "~/lib/api/types/meal-plan";
 import type { RecipeSummary } from "~/lib/api/types/recipe";
@@ -38,6 +40,7 @@ export function leadEntry(entries: ReadPlanEntry[]): ReadPlanEntry | null {
  */
 export function useToday() {
   const api = useUserApi();
+  const i18n = useI18n();
   const { household, actions: householdActions } = useHouseholdSelf();
 
   const today = ref(startOfDay(new Date()));
@@ -53,6 +56,8 @@ export function useToday() {
   /** null when the connections call failed, so the caller can say nothing rather than something wrong. */
   const hasConnection = ref<boolean | null>(null);
   const loading = ref(true);
+  /** Which loads failed outright (as opposed to coming back empty). */
+  const failed = reactive({ plan: false, list: false, shelves: false });
 
   const weekStart = computed(() => startOfHouseholdWeek(today.value, firstDayOfWeek.value));
 
@@ -78,26 +83,56 @@ export function useToday() {
     return data ? data.lastMade ?? null : undefined;
   }
 
-  async function loadPlan() {
-    const { data } = await api.mealplans.getAll(1, -1, {
+  // Each loader stamps its request; a response that is no longer the latest one is dropped, so a slow
+  // first load cannot overwrite a reload (e.g. after a Swap) that finished before it.
+  const seq = { plan: 0, list: 0, shelves: 0, connections: 0 };
+
+  /**
+   * Loaders resolve once their own data is in and return a follow-up for the slower per-recipe
+   * last-made lookups, so the page can render before those arrive.
+   */
+  async function loadPlan(): Promise<() => Promise<void>> {
+    const stamp = ++seq.plan;
+    const { data, error } = await api.mealplans.getAll(1, -1, {
       start_date: ymd(weekStart.value),
       end_date: ymd(addDays(weekStart.value, 6)),
     });
+    if (stamp !== seq.plan) {
+      return async () => {};
+    }
     plan.value = data?.items ?? [];
+    failed.plan = !data && !!error;
 
     const slug = tonight.value?.recipe?.slug;
-    tonightLastMade.value = slug ? (await lookUpLastMade(slug)) ?? null : null;
+    tonightLastMade.value = null;
+    return async () => {
+      if (!slug) {
+        return;
+      }
+      const value = await lookUpLastMade(slug);
+      if (stamp === seq.plan) {
+        tonightLastMade.value = value ?? null;
+      }
+    };
   }
 
   async function loadList() {
-    const { data } = await api.shopping.lists.getAll(1, 1, { orderBy: "updated_at", orderDirection: "desc" });
+    const stamp = ++seq.list;
+    const { data, error } = await api.shopping.lists.getAll(1, 1, { orderBy: "updated_at", orderDirection: "desc" });
     const summary = data?.items?.[0];
     if (!summary) {
-      openList.value = null;
+      if (stamp === seq.list) {
+        openList.value = null;
+        failed.list = !data && !!error;
+      }
       return;
     }
     // The paginated list endpoint returns summaries without items, so the count needs the list itself.
-    const { data: list } = await api.shopping.lists.getOne(summary.id);
+    const { data: list, error: listError } = await api.shopping.lists.getOne(summary.id);
+    if (stamp !== seq.list) {
+      return;
+    }
+    failed.list = !list && !!listError;
     openList.value = list
       ? {
           id: list.id,
@@ -107,7 +142,8 @@ export function useToday() {
       : null;
   }
 
-  async function loadShelves() {
+  async function loadShelves(): Promise<() => Promise<void>> {
+    const stamp = ++seq.shelves;
     const cutoff = ymd(subDays(today.value, MAKE_AGAIN_AFTER_DAYS));
     const [again, latest] = await Promise.all([
       api.recipes.getAll(1, SHELF_SIZE, {
@@ -118,22 +154,33 @@ export function useToday() {
       }),
       api.recipes.getAll(1, SHELF_SIZE, { orderBy: "created_at", orderDirection: "desc" }),
     ]);
+    if (stamp !== seq.shelves) {
+      return async () => {};
+    }
     makeAgain.value = again.data?.items ?? [];
     recent.value = latest.data?.items ?? [];
+    failed.shelves = (!again.data && !!again.error) || (!latest.data && !!latest.error);
+    lastMade.value = {};
 
-    // Recipe summaries carry no household last-made date; it is a per-recipe lookup.
-    const entries = await Promise.all(
-      makeAgain.value
-        .map(recipe => recipe.slug)
-        .filter((slug): slug is string => !!slug)
-        .map(async slug => [slug, await lookUpLastMade(slug)] as const),
-    );
-    lastMade.value = Object.fromEntries(entries.filter(([, value]) => value !== undefined));
+    // Recipe summaries carry no household last-made date; it is a per-recipe lookup. Results fill in
+    // one by one as they arrive.
+    const slugs = makeAgain.value.map(recipe => recipe.slug).filter((slug): slug is string => !!slug);
+    return async () => {
+      await Promise.all(slugs.map(async (slug) => {
+        const value = await lookUpLastMade(slug);
+        if (stamp === seq.shelves && value !== undefined) {
+          lastMade.value = { ...lastMade.value, [slug]: value };
+        }
+      }));
+    };
   }
 
   async function loadConnections() {
+    const stamp = ++seq.connections;
     const { data } = await api.mcpConnections.getConnections();
-    hasConnection.value = data ? data.length > 0 : null;
+    if (stamp === seq.connections) {
+      hasConnection.value = data ? data.length > 0 : null;
+    }
   }
 
   async function refresh() {
@@ -143,26 +190,63 @@ export function useToday() {
       // The week cannot be framed before the household's first day of week is known.
       await householdActions.refresh();
     }
-    await Promise.all([loadPlan(), loadList(), loadShelves(), loadConnections()]);
+    const [planFollowUp, , shelvesFollowUp] = await Promise.all([loadPlan(), loadList(), loadShelves(), loadConnections()]);
     loading.value = false;
+    await Promise.all([planFollowUp(), shelvesFollowUp()]);
   }
 
-  async function saveEntry(payload: CreatePlanEntry | UpdatePlanEntry) {
-    if ("id" in payload && payload.id !== undefined) {
-      await api.mealplans.updateOne(payload.id, payload);
+  async function reloadPlan() {
+    const followUp = await loadPlan();
+    await followUp();
+  }
+
+  /** Creates or updates a plan entry, then reloads the week. Resolves false (and tells the user) on failure. */
+  async function saveEntry(payload: CreatePlanEntry | UpdatePlanEntry): Promise<boolean> {
+    const { error } = "id" in payload && payload.id !== undefined
+      ? await api.mealplans.updateOne(payload.id, payload)
+      : await api.mealplans.createOne(payload);
+    if (error) {
+      alert.error(i18n.t("home-today.save-failed"));
+      return false;
     }
-    else {
-      await api.mealplans.createOne(payload);
-    }
-    await loadPlan();
+    await reloadPlan();
+    return true;
   }
 
   // Household preferences can arrive (or change) after the first load; reframe the week when they do.
   watch(firstDayOfWeek, () => {
     if (!loading.value) {
-      loadPlan();
+      reloadPlan();
     }
   });
+
+  // A tab left open past midnight moves on to the new day: checked when the tab comes back into view
+  // and by a timer set for just after midnight.
+  function rollOverIfNewDay() {
+    if (ymd(new Date()) !== ymd(today.value)) {
+      refresh();
+    }
+  }
+  let midnightTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleMidnight() {
+    clearTimeout(midnightTimer);
+    const nextMidnight = addDays(startOfDay(new Date()), 1);
+    midnightTimer = setTimeout(() => {
+      rollOverIfNewDay();
+      scheduleMidnight();
+    }, nextMidnight.getTime() - Date.now() + 1000);
+  }
+  if (typeof document !== "undefined") {
+    useEventListener(document, "visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        rollOverIfNewDay();
+      }
+    });
+    scheduleMidnight();
+  }
+  tryOnScopeDispose(() => clearTimeout(midnightTimer));
+
+  const loadFailed = computed(() => failed.plan || failed.list || failed.shelves);
 
   return {
     today,
@@ -177,6 +261,7 @@ export function useToday() {
     lastMade,
     hasConnection,
     loading,
+    loadFailed,
     refresh,
     saveEntry,
   };

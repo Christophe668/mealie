@@ -12,7 +12,8 @@
           :entries="day.entries"
           :is-today="isToday(day.date)"
           :group-slug="groupSlug"
-          :planner-to="plannerTo"
+          :planner-path="plannerPath"
+          :loading="loading"
         />
       </li>
     </ol>
@@ -30,8 +31,9 @@ const props = defineProps<{
   days: TodayDay[];
   today: Date;
   groupSlug: string;
-  /** Planner link framed on this week, e.g. `/household/mealplan/planner/view?start=2026-10-19`. */
-  plannerTo: string;
+  /** The planner page; each empty day links to it with its own date. */
+  plannerPath: string;
+  loading: boolean;
 }>();
 
 const strip = useTemplateRef<HTMLOListElement>("strip");
@@ -76,8 +78,9 @@ onMounted(() => {
     grid-auto-columns: 150px;
     grid-auto-flow: column;
     grid-template-columns: none;
-    margin-inline: calc(var(--ds-space) * -2);
-    padding: 2px calc(var(--ds-space) * 2);
+    /* 4 px of vertical padding, cancelled by the margin, keeps the cards' focus ring inside the clip box. */
+    margin: calc(var(--ds-space) * -0.5) calc(var(--ds-space) * -2);
+    padding: calc(var(--ds-space) * 0.5) calc(var(--ds-space) * 2);
     overflow-x: auto;
     scroll-padding-inline: calc(var(--ds-space) * 2);
     scroll-snap-type: x mandatory;

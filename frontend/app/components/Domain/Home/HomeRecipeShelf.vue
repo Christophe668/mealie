@@ -65,9 +65,11 @@ const failed = reactive<Record<string, boolean>>({});
   grid-auto-columns: 220px;
   grid-auto-flow: column;
   gap: calc(var(--ds-space) * 2);
-  margin: 0;
-  padding: 0 0 calc(var(--ds-space) * 0.75);
+  /* Room for the cards' focus ring inside the scroller's clip box, cancelled by the negative margin. */
+  margin: calc(var(--ds-space) * -0.5);
+  padding: calc(var(--ds-space) * 0.5) calc(var(--ds-space) * 0.5) calc(var(--ds-space) * 1.25);
   overflow-x: auto;
+  scroll-padding-inline: calc(var(--ds-space) * 0.5);
   list-style: none;
   scroll-snap-type: x proximity;
 }
