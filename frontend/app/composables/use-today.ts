@@ -1,5 +1,5 @@
 import { addDays, differenceInCalendarDays, differenceInCalendarMonths, format, parseISO, startOfDay, subDays } from "date-fns";
-import { tryOnScopeDispose, useEventListener } from "@vueuse/core";
+import { useDayRollover } from "~/composables/use-day-rollover";
 import { useUserApi } from "~/composables/api";
 import { alert } from "~/composables/use-toast";
 import { useHouseholdSelf } from "~/composables/use-households";
@@ -43,7 +43,8 @@ export function useToday() {
   const i18n = useI18n();
   const { household, actions: householdActions } = useHouseholdSelf();
 
-  const today = ref(startOfDay(new Date()));
+  // Moves on by itself when a tab is left open past midnight; the watcher below reloads the new day.
+  const today = useDayRollover();
   const firstDayOfWeek = computed(() => household.value?.preferences?.firstDayOfWeek ?? 0);
 
   const plan = ref<ReadPlanEntry[]>([]);
@@ -185,7 +186,6 @@ export function useToday() {
 
   async function refresh() {
     loading.value = true;
-    today.value = startOfDay(new Date());
     if (!household.value) {
       // The week cannot be framed before the household's first day of week is known.
       await householdActions.refresh();
@@ -220,31 +220,10 @@ export function useToday() {
     }
   });
 
-  // A tab left open past midnight moves on to the new day: checked when the tab comes back into view
-  // and by a timer set for just after midnight.
-  function rollOverIfNewDay() {
-    if (ymd(new Date()) !== ymd(today.value)) {
-      refresh();
-    }
-  }
-  let midnightTimer: ReturnType<typeof setTimeout> | undefined;
-  function scheduleMidnight() {
-    clearTimeout(midnightTimer);
-    const nextMidnight = addDays(startOfDay(new Date()), 1);
-    midnightTimer = setTimeout(() => {
-      rollOverIfNewDay();
-      scheduleMidnight();
-    }, nextMidnight.getTime() - Date.now() + 1000);
-  }
-  if (typeof document !== "undefined") {
-    useEventListener(document, "visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        rollOverIfNewDay();
-      }
-    });
-    scheduleMidnight();
-  }
-  tryOnScopeDispose(() => clearTimeout(midnightTimer));
+  // A tab left open past midnight moves on to the new day (see useDayRollover): reload everything for it.
+  watch(today, () => {
+    refresh();
+  });
 
   const loadFailed = computed(() => failed.plan || failed.list || failed.shelves);
 

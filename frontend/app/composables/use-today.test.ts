@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { ref } from "vue";
+import { effectScope, ref } from "vue";
 import { relativeAgo, useToday } from "./use-today";
 import type { ReadPlanEntry } from "~/lib/api/types/meal-plan";
 
@@ -65,8 +65,16 @@ function mockPlan(entries: ReadPlanEntry[]) {
   api.mealplans.getAll.mockImplementation(() => ok(page(entries)));
 }
 
+// Each instance listens for visibility changes; run it in a scope that afterEach stops so none leak.
+const scopes: ReturnType<typeof effectScope>[] = [];
+function create() {
+  const scope = effectScope();
+  scopes.push(scope);
+  return scope.run(() => useToday())!;
+}
+
 async function load() {
-  const today = useToday();
+  const today = create();
   await today.refresh();
   return today;
 }
@@ -87,6 +95,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  scopes.splice(0).forEach(scope => scope.stop());
   vi.useRealTimers();
   vi.clearAllMocks();
 });
@@ -246,7 +255,7 @@ describe("useToday with nothing to show", () => {
     api.lists.getAll.mockImplementation(failed);
     api.recipes.getAll.mockImplementation(failed);
 
-    const today = useToday();
+    const today = create();
     await expect(today.refresh()).resolves.toBeUndefined();
 
     expect(today.tonight.value).toBeNull();
@@ -268,7 +277,7 @@ describe("useToday loading and races", () => {
       release = () => resolve({ data: { recipeId: "r", lastMade: "2026-09-12T18:00:00" }, error: null });
     }));
 
-    const today = useToday();
+    const today = create();
     const done = today.refresh();
     await vi.waitFor(() => expect(today.loading.value).toBe(false));
     expect(today.tonight.value?.recipe?.name).toBe("Roast chicken");
@@ -286,7 +295,7 @@ describe("useToday loading and races", () => {
     }));
     api.householdRecipe.mockImplementation((slug: string) => ok({ recipeId: "r", lastMade: slug === "pizza-night" ? "2026-10-01T19:00:00" : "2026-01-01T19:00:00" }));
 
-    const today = useToday();
+    const today = create();
     const first = today.refresh();
     const second = today.refresh();
     await vi.waitFor(() => expect(resolvers).toHaveLength(2));
@@ -339,6 +348,36 @@ describe("useToday swap", () => {
 
     expect(saved).toBe(false);
     expect(api.toastError).toHaveBeenCalledWith("home-today.save-failed");
+    expect(api.mealplans.getAll).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useToday midnight rollover", () => {
+  test("a tab that comes back on a new day reloads that day", async () => {
+    mockPlan([
+      entry("2026-10-24", "dinner", "Roast chicken"),
+      entry("2026-10-25", "dinner", "Sunday soup"),
+    ]);
+    const today = create();
+    await today.refresh();
+    expect(today.tonight.value?.recipe?.name).toBe("Roast chicken");
+
+    // Sunday morning: a new week too, since the household week starts on Sunday.
+    vi.setSystemTime(new Date(2026, 9, 25, 8, 0));
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    await vi.waitFor(() => expect(today.tonight.value?.recipe?.name).toBe("Sunday soup"));
+    expect(api.mealplans.getAll).toHaveBeenLastCalledWith(1, -1, { start_date: "2026-10-25", end_date: "2026-10-31" });
+  });
+
+  test("nothing reloads while the day is the same", async () => {
+    const today = create();
+    await today.refresh();
+
+    vi.setSystemTime(new Date(2026, 9, 24, 23, 0));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Promise.resolve();
+
     expect(api.mealplans.getAll).toHaveBeenCalledTimes(1);
   });
 });
