@@ -80,7 +80,7 @@ const pageTitle = useAppShellTitle();
 const nuxtApp = useNuxtApp();
 const brandName = computed(() => nuxtApp.$appInfo?.brandingName || "Mealie");
 
-// Same resolution as DefaultLayout: the slug in the URL wins (public group pages), else the user's own group.
+// Same resolution as the old default layout: the slug in the URL wins (public group pages), else the user's own group.
 const groupSlug = computed(() => (route.params.groupSlug as string) || auth.user.value?.groupSlug || "");
 const todayPath = computed(() => (groupSlug.value ? `/g/${groupSlug.value}` : "/"));
 // The group index is Home ("Today"); the recipe explorer lives under /recipes. Search follows it.
