@@ -12,6 +12,7 @@ from mealie.mcp.tools._summaries import feedback_dict, feedback_service, summary
 from mealie.mcp.tools.recipes import _find_recipe
 from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedbackCreate
 from mealie.schema.recipe.recipe import Recipe
+from mealie.services.claude_context.recipe_feedback_service import FutureMadeOnError
 
 MAX_FEEDBACK_LIMIT = 50
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -90,6 +91,8 @@ def record_recipe_feedback_impl(
         )
     except NoEntryFound as e:
         raise not_found("recipe", recipe) from e
+    except FutureMadeOnError as e:
+        raise McpToolError(f"made_on is in the future: {e}") from e
 
     return {
         "feedback": feedback_dict(row),
@@ -120,7 +123,8 @@ async def record_recipe_feedback(
     `verdict` is "loved", "ok" or "never_again"; `never_again` means do not propose the recipe again
     unless the user asks for it, and `loved` recipes are the ones to prefer when the user wants
     something reliable. Optional: `effort` 1 (easy), 2 (fine) or 3 (a lot of work); a free-text
-    `note`; `for_whom` (who it was cooked for); `made_on` as an ISO date YYYY-MM-DD (default today).
+    `note`; `for_whom` (who it was cooked for); `made_on` as an ISO date YYYY-MM-DD (default today;
+    not later than tomorrow).
     It also sets the user's rating (loved 5, ok 3, never_again 1), adds a timeline comment and moves
     the household's last made forward. Returns {feedback, summary} where summary is the recipe's
     feedback summary for the household (last_verdict, last_made_on, counts per verdict, total)."""

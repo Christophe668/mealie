@@ -56,6 +56,8 @@ const current = (wrapper: ReturnType<typeof render>) => wrapper.find(".cook-step
 
 beforeEach(() => {
   vi.useFakeTimers();
+  // Late evening local time, so a UTC date would already be the next day east of Greenwich.
+  vi.setSystemTime(new Date(2026, 9, 24, 23, 30));
   sessionStorage.clear();
   replace.mockReset();
   updateLastMade.mockClear();
@@ -176,7 +178,8 @@ describe("CookMode", () => {
     await button(wrapper, "Loved it").trigger("click");
     await flushPromises();
 
-    expect(createFeedback).toHaveBeenCalledWith({ recipeId: "r-1", verdict: "loved" });
+    // Dated by the browser's local day, not the server's clock.
+    expect(createFeedback).toHaveBeenCalledWith({ recipeId: "r-1", verdict: "loved", madeOn: "2026-10-24" });
     // The server sets last made when it records a verdict.
     expect(updateLastMade).not.toHaveBeenCalled();
     expect(sessionStorage.length).toBe(0);
@@ -204,7 +207,7 @@ describe("CookMode", () => {
     await button(wrapper, "It was fine").trigger("click");
     await flushPromises();
 
-    expect(createFeedback).toHaveBeenCalledWith({ recipeId: "r-1", verdict: "ok", effort: 3 });
+    expect(createFeedback).toHaveBeenCalledWith({ recipeId: "r-1", verdict: "ok", effort: 3, madeOn: "2026-10-24" });
     wrapper.unmount();
   });
 
@@ -215,7 +218,7 @@ describe("CookMode", () => {
     await button(wrapper, "Not again").trigger("click");
     await flushPromises();
 
-    expect(createFeedback).toHaveBeenCalledWith({ recipeId: "r-1", verdict: "never_again" });
+    expect(createFeedback).toHaveBeenCalledWith({ recipeId: "r-1", verdict: "never_again", madeOn: "2026-10-24" });
     wrapper.unmount();
   });
 

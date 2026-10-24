@@ -18,7 +18,7 @@ from mealie.schema.household.recipe_feedback import (
     RecipeFeedbackSummary,
 )
 from mealie.schema.response import ErrorResponse
-from mealie.services.claude_context.recipe_feedback_service import RecipeFeedbackService
+from mealie.services.claude_context.recipe_feedback_service import FutureMadeOnError, RecipeFeedbackService
 
 router = UserAPIRouter(prefix="/households/recipe-feedback", tags=["Households: Recipe Feedback"])
 
@@ -27,11 +27,14 @@ MAX_SUMMARY_IDS = 100
 
 @contextmanager
 def _service_errors() -> Iterator[None]:
-    """Map the feedback service's `NoEntryFound` (missing or foreign recipe/feedback) to a 404."""
+    """Map the feedback service's errors: `NoEntryFound` (missing or foreign recipe/feedback) to a 404, a
+    `made_on` in the future to a 422."""
     try:
         yield
     except NoEntryFound as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=ErrorResponse.respond(message=str(e))) from e
+    except FutureMadeOnError as e:
+        raise _unprocessable(str(e)) from e
 
 
 def _unprocessable(message: str) -> HTTPException:

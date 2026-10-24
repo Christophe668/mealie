@@ -50,6 +50,7 @@
 </template>
 
 <script setup lang="ts">
+import { format } from "date-fns";
 import { useId } from "vue";
 import DsButton from "~/components/Design/DsButton.vue";
 import { useUserApi } from "~/composables/api";
@@ -94,7 +95,8 @@ async function record(verdict: FeedbackVerdict) {
     return;
   }
   busy.value = true;
-  const payload: RecipeFeedbackCreate = { recipeId: props.recipeId, verdict };
+  // The cook's own day, not the server's: a container on UTC would date a late dinner the day before.
+  const payload: RecipeFeedbackCreate = { recipeId: props.recipeId, verdict, madeOn: format(new Date(), "yyyy-MM-dd") };
   if (effort.value !== null) {
     payload.effort = effort.value;
   }

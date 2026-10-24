@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -249,3 +250,25 @@ def test_body_validation_422(api_client: TestClient, unique_user: TestUser, body
         api_routes.households_recipe_feedback, json={"recipeId": recipe_id, **body}, headers=unique_user.token
     )
     assert response.status_code == 422
+
+
+def test_made_on_after_tomorrow_is_422(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    recipe_id = _create_recipe(api_client, user)
+    today = datetime.now().astimezone().date()
+
+    response = api_client.post(
+        api_routes.households_recipe_feedback,
+        json={"recipeId": recipe_id, "verdict": "loved", "madeOn": (today + timedelta(days=2)).isoformat()},
+        headers=user.token,
+    )
+    assert response.status_code == 422, response.text
+    assert "made_on" in response.json()["detail"]["message"]
+    response = api_client.get(
+        api_routes.households_recipe_feedback_summary, params={"recipeIds": recipe_id}, headers=user.token
+    )
+    assert response.json() == {}
+
+    # tomorrow is allowed (time-zone slack)
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    assert _record(api_client, user, recipe_id, "loved", tomorrow)["madeOn"] == tomorrow

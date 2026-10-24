@@ -18,6 +18,11 @@ export interface TodayList {
 }
 
 const SHELF_SIZE = 8;
+/**
+ * "Not again" recipes drift to the head of the make-again ordering (their last made only gets older),
+ * so the shelf over-fetches to still fill up after they are dropped.
+ */
+const MAKE_AGAIN_FETCH = SHELF_SIZE * 3;
 /** "Make again" means not cooked for at least this long (never-cooked recipes count too). */
 const MAKE_AGAIN_AFTER_DAYS = 30;
 
@@ -144,23 +149,27 @@ export function useToday() {
   }
 
   /**
-   * Drops the recipes the household last marked "never again", in one summary call. When that call
-   * fails the shelf is kept whole: a stale suggestion is better than an empty shelf.
+   * Drops the recipes the household last marked "never again", in one summary call, and keeps the
+   * first shelf's worth. When that call fails the shelf is kept whole (still capped): a stale
+   * suggestion is better than an empty shelf.
    */
   async function withoutNeverAgain(recipes: RecipeSummary[]): Promise<RecipeSummary[]> {
+    const fallback = recipes.slice(0, SHELF_SIZE);
     const ids = recipes.map(recipe => recipe.id).filter((id): id is string => !!id);
     if (!ids.length) {
-      return recipes;
+      return fallback;
     }
     try {
       const { data } = await api.recipeFeedback.summaries(ids);
       if (!data) {
-        return recipes;
+        return fallback;
       }
-      return recipes.filter(recipe => !recipe.id || data[recipe.id]?.lastVerdict !== "never_again");
+      return recipes
+        .filter(recipe => !recipe.id || data[recipe.id]?.lastVerdict !== "never_again")
+        .slice(0, SHELF_SIZE);
     }
     catch {
-      return recipes;
+      return fallback;
     }
   }
 
@@ -168,7 +177,7 @@ export function useToday() {
     const stamp = ++seq.shelves;
     const cutoff = ymd(subDays(today.value, MAKE_AGAIN_AFTER_DAYS));
     const [again, latest] = await Promise.all([
-      api.recipes.getAll(1, SHELF_SIZE, {
+      api.recipes.getAll(1, MAKE_AGAIN_FETCH, {
         orderBy: "last_made",
         orderDirection: "asc",
         // last_made is coalesced to 1900 for never-cooked recipes, so they pass this filter and sort first.

@@ -221,7 +221,8 @@ describe("useToday shelves", () => {
     const { makeAgain, recent, lastMade } = await load();
 
     // Not cooked for 30+ days: 24 October minus 30 days.
-    expect(api.recipes.getAll).toHaveBeenCalledWith(1, 8, {
+    // Three shelves' worth, so "never again" recipes can be dropped and still leave a full shelf.
+    expect(api.recipes.getAll).toHaveBeenCalledWith(1, 24, {
       orderBy: "last_made",
       orderDirection: "asc",
       queryFilter: "lastMade < \"2026-09-24\"",
@@ -266,6 +267,34 @@ describe("useToday shelves", () => {
 
     expect(makeAgain.value.map(r => r.name)).toEqual(["Shakshuka", "Liver and onions", "Dal"]);
     expect(loadFailed.value).toBe(false);
+  });
+
+  const many = Array.from({ length: 24 }, (_, i) => ({ id: `${i + 1}`, slug: `r${i + 1}`, name: `Recipe ${i + 1}` }));
+  function mockMany() {
+    api.recipes.getAll.mockImplementation((_page: number, _perPage: number, params: { orderBy: string }) =>
+      ok(page(params.orderBy === "last_made" ? many : [])),
+    );
+  }
+
+  test("never again recipes at the front still leave a full shelf of the next eight", async () => {
+    mockMany();
+    api.summaries.mockImplementation(() => ok(Object.fromEntries(
+      many.slice(0, 8).map(recipe => [recipe.id, { lastVerdict: "never_again", lastMadeOn: "2026-01-01" }]),
+    )));
+
+    const { makeAgain } = await load();
+
+    expect(api.summaries).toHaveBeenCalledExactlyOnceWith(many.map(recipe => recipe.id));
+    expect(makeAgain.value.map(r => r.name)).toEqual(many.slice(8, 16).map(recipe => recipe.name));
+  });
+
+  test("a failed summary call still caps the shelf at eight, unfiltered", async () => {
+    mockMany();
+    api.summaries.mockImplementation(failed);
+
+    const { makeAgain } = await load();
+
+    expect(makeAgain.value.map(r => r.name)).toEqual(many.slice(0, 8).map(recipe => recipe.name));
   });
 
   test("an empty shelf makes no summary call", async () => {

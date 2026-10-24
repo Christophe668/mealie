@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 import pytest
 
@@ -11,6 +11,7 @@ from mealie.services.claude_context import recipe_feedback_service
 from mealie.services.claude_context.recipe_feedback_service import (
     VERDICT_RATING,
     VERDICT_SUBJECT,
+    FutureMadeOnError,
     RecipeFeedbackService,
 )
 from mealie.services.household_services.household_service import HouseholdService
@@ -102,8 +103,35 @@ def test_last_made_only_moves_forward(unique_user: TestUser):
     HouseholdService(unique_user.group_id, unique_user.household_id, unique_user.repos).set_household_recipe(
         recipe.slug, HouseholdRecipeUpdate(last_made=evening)
     )
-    service.record(RecipeFeedbackCreate(recipe_id=recipe.id, verdict=FeedbackVerdict.ok, made_on=date(2026, 10, 25)))
+    service.record(
+        RecipeFeedbackCreate(recipe_id=recipe.id, verdict=FeedbackVerdict.ok, made_on=date(2026, 10, 25)), today=DAY_2
+    )
     assert _last_made(unique_user, recipe) == evening
+
+
+def test_record_rejects_made_on_after_tomorrow(unique_user: TestUser):
+    recipe = _recipe(unique_user)
+    service = _service(unique_user)
+
+    with pytest.raises(FutureMadeOnError, match="made_on"):
+        service.record(
+            RecipeFeedbackCreate(recipe_id=recipe.id, verdict=FeedbackVerdict.loved, made_on=DAY_2 + timedelta(days=2)),
+            today=DAY_2,
+        )
+    assert issubclass(FutureMadeOnError, ValueError)
+
+    # nothing was written
+    unique_user.repos.session.expire_all()
+    assert unique_user.repos.recipe_feedback.summaries([recipe.id]) == {}
+    assert _rating(unique_user, recipe) is None
+    assert _last_made(unique_user, recipe) is None
+
+    # tomorrow is allowed: one day of slack for a cook ahead of the server's time zone
+    tomorrow = DAY_2 + timedelta(days=1)
+    out = service.record(
+        RecipeFeedbackCreate(recipe_id=recipe.id, verdict=FeedbackVerdict.loved, made_on=tomorrow), today=DAY_2
+    )
+    assert out.made_on == tomorrow
 
 
 @pytest.mark.parametrize(

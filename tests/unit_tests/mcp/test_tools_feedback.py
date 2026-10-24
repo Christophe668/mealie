@@ -1,5 +1,5 @@
 import contextlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -137,6 +137,26 @@ async def test_record_validates_before_writing(
     assert user.repos.recipe_feedback.summaries([UUID(recipe["id"])]) == {}
     events = user.repos.recipe_timeline_events.multi_query({"recipe_id": UUID(recipe["id"])})
     assert [e for e in events if e.event_type == "comment"] == []  # only the "recipe created" event
+
+
+@pytest.mark.asyncio
+async def test_record_rejects_made_on_after_tomorrow(
+    monkeypatch: pytest.MonkeyPatch, session: Session, api_client: TestClient, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = _create_recipe(api_client, user)
+    _as_user(monkeypatch, session, user)
+    today = datetime.now().astimezone().date()
+
+    with pytest.raises(McpToolError, match="made_on"):
+        await record_recipe_feedback(recipe["slug"], "loved", made_on=(today + timedelta(days=2)).isoformat())
+
+    session.expire_all()
+    assert user.repos.recipe_feedback.summaries([UUID(recipe["id"])]) == {}
+
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    result = await record_recipe_feedback(recipe["slug"], "loved", made_on=tomorrow)
+    assert result["feedback"]["made_on"] == tomorrow
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,5 @@
 import builtins
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 
 from mealie.core.exceptions import NoEntryFound
@@ -31,6 +31,10 @@ VERDICT_SUBJECT: dict[FeedbackVerdict, str] = {
     FeedbackVerdict.ok: "It was fine",
     FeedbackVerdict.never_again: "Not again",
 }
+
+
+class FutureMadeOnError(ValueError):
+    """`made_on` is later than tomorrow (server local date + 1 day of time-zone slack)."""
 
 
 def _local_noon(day: date) -> datetime:
@@ -78,15 +82,22 @@ class RecipeFeedbackService(BaseService):
     def record(self, data: RecipeFeedbackCreate, today: date | None = None) -> RecipeFeedbackOut:
         """Record how a recipe went: the row, its timeline event, the user's rating and the household's last made.
 
-        Everything is validated before the first write; raises `NoEntryFound` when the recipe is not in the
-        user's group, and then nothing is written.
+        Everything is validated before the first write; raises `FutureMadeOnError` (a `ValueError`) when
+        `made_on` is later than tomorrow (one day of slack for a cook ahead of the server's time zone), and
+        `NoEntryFound` when the recipe is not in the user's group. Either way nothing is written.
 
         Each repository call commits on its own. Order: timeline event, feedback row (carrying the event id),
         rating, last made. A failure midway can leave a timeline comment without its row, or a row whose rating
         or last made was not applied, but never a rating or last made without the feedback that caused it.
         """
+        today = today or datetime.now().astimezone().date()
+        latest = today + timedelta(days=1)
+        if data.made_on is not None and data.made_on > latest:
+            raise FutureMadeOnError(
+                f"made_on cannot be later than {latest.isoformat()}, got {data.made_on.isoformat()}."
+            )
         recipe = self._get_recipe_or_raise(data.recipe_id)
-        made_on = data.made_on or today or datetime.now().astimezone().date()
+        made_on = data.made_on or today
         made_at = _local_noon(made_on)
 
         event = self.repos.recipe_timeline_events.create(
