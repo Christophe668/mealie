@@ -1,0 +1,47 @@
+/* Mise en place design tokens. Light values on :root (and light subtrees), dark values follow Vuetify's dark theme class. */
+:root,
+.v-theme--light {
+  /* Colour */
+  --ds-bg: #f4f5f3;
+  --ds-surface: #ffffff;
+  --ds-border: #dfe3df;
+  --ds-text-2: #5b655f;
+  --ds-text: #17201b;
+  --ds-accent: #f2b01e;
+  --ds-accent-text: #17201b;
+
+  /* Shape and depth */
+  --ds-radius-ctl: 6px;
+  --ds-radius-card: 12px;
+  --ds-radius-hero: 20px;
+  --ds-shadow-float: 0 8px 24px rgb(23 32 27 / 8%);
+  --ds-scrim: rgb(23 32 27 / 40%);
+
+  /* Type */
+  --ds-font: "Bricolage Grotesque", system-ui, sans-serif;
+  --ds-t-1: 0.8125rem;
+  --ds-t-2: 0.9375rem;
+  --ds-t-3: 1.0625rem;
+  --ds-t-4: 1.25rem;
+  --ds-t-5: 1.5rem;
+  --ds-t-6: 2rem;
+  --ds-t-7: 2.75rem;
+  --ds-t-8: 3.5rem;
+
+  /* Spacing */
+  --ds-space: 8px;
+}
+
+/* Cook mode (.ds-cook) is always dark, whatever the theme. */
+.v-theme--dark,
+.ds-cook {
+  --ds-bg: #121714;
+  --ds-surface: #1b211d;
+  --ds-border: #2a322d;
+  --ds-text-2: #9aa49e;
+  --ds-text: #eceeea;
+  --ds-accent: #f2b01e;
+  /* Ink on saffron in both modes, never light text on the accent. */
+  --ds-accent-text: #17201b;
+  --ds-scrim: rgb(0 0 0 / 55%);
+}

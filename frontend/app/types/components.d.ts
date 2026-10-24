@@ -37,7 +37,6 @@ import type SafeMarkdown from "@/components/global/SafeMarkdown.vue";
 import type StatsCards from "@/components/global/StatsCards.vue";
 import type ToggleState from "@/components/global/ToggleState.vue";
 import type WakelockSwitch from "@/components/global/WakelockSwitch.vue";
-import type DefaultLayout from "@/components/layout/DefaultLayout.vue";
 
 declare module "vue" {
   export interface GlobalComponents {
@@ -81,7 +80,6 @@ declare module "vue" {
     ToggleState: typeof ToggleState;
     WakelockSwitch: typeof WakelockSwitch;
     // Layout Components
-    DefaultLayout: typeof DefaultLayout;
   }
 }
 

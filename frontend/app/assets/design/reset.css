@@ -1,0 +1,29 @@
+/*
+ * Minimal reset. Global rules stay harmless to Vuetify; margin and motion resets only apply
+ * to design-system elements (any element carrying a ds-* class) and their descendants.
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:where([class^="ds-"], [class*=" ds-"]):where(h1, h2, h3, h4, h5, h6, p, ul, ol, figure, blockquote),
+:where([class^="ds-"], [class*=" ds-"]) :where(h1, h2, h3, h4, h5, h6, p, ul, ol, figure, blockquote) {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where([class^="ds-"], [class*=" ds-"]),
+  :where([class^="ds-"], [class*=" ds-"]) * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

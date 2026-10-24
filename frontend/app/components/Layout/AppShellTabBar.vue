@@ -1,0 +1,96 @@
+<template>
+  <nav class="ds-tabbar" :aria-label="$t('app-shell.main-navigation')">
+    <NuxtLink
+      v-for="item in items"
+      :key="item.key"
+      :to="item.to"
+      class="ds-tabbar__link ds-focus"
+      :aria-current="item.active ? 'page' : undefined"
+    >
+      <DsIcon :name="item.icon" :size="22" />
+      <span>{{ item.label }}</span>
+    </NuxtLink>
+
+    <AppShellMenu
+      v-if="addItems.length"
+      class="ds-tabbar__add"
+      :items="addItems"
+      :label="$t('app-shell.add')"
+      :trigger-label="$t('app-shell.add')"
+      trigger-class="ds-tabbar__plus ds-focus"
+      placement="top-end"
+    >
+      <template #trigger>
+        <DsIcon name="createAlt" :size="26" />
+      </template>
+    </AppShellMenu>
+  </nav>
+</template>
+
+<script setup lang="ts">
+import AppShellMenu from "./AppShellMenu.vue";
+import DsIcon from "~/components/Design/DsIcon.vue";
+import type { AppShellMenuItem, AppShellNavItem } from "~/types/application-types";
+
+defineProps<{
+  items: AppShellNavItem[];
+  addItems: AppShellMenuItem[];
+}>();
+</script>
+
+<style scoped>
+.ds-tabbar {
+  position: fixed;
+  right: calc(var(--ds-space) * 1.5);
+  bottom: calc(var(--ds-space) * 1.5 + env(safe-area-inset-bottom));
+  left: calc(var(--ds-space) * 1.5);
+  /* Above page content and Vuetify app bars (1004), below Vuetify overlays and dialogs. */
+  z-index: 1005;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 0.5);
+  padding: calc(var(--ds-space) * 0.75);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-surface);
+  box-shadow: var(--ds-shadow-float);
+}
+
+.ds-tabbar__link {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--ds-space) * 0.25);
+  min-width: 0;
+  padding: calc(var(--ds-space) * 0.75) calc(var(--ds-space) * 0.5);
+  border-radius: var(--ds-radius-ctl);
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-1);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.ds-tabbar__link[aria-current="page"] {
+  background: var(--ds-bg);
+  color: var(--ds-text);
+  font-weight: 700;
+}
+
+.ds-tabbar__add {
+  flex: none;
+}
+
+/* Ink, not saffron: Home's Tonight board is the screen's single accent. */
+.ds-tabbar__add :deep(.ds-tabbar__plus) {
+  display: grid;
+  place-items: center;
+  width: calc(var(--ds-space) * 6.5);
+  height: calc(var(--ds-space) * 6.5);
+  border: 0;
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-text);
+  color: var(--ds-bg);
+  cursor: pointer;
+}
+</style>

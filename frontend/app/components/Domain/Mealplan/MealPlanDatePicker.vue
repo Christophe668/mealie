@@ -71,7 +71,8 @@ function hasMealPlanned(date: string): DatePickerEventColorValue {
   const laterDate = isDate(selectedDate.value) ? selectedDate.value : selectedDate.value?.[1];
   const isSelected = (earlierDate && date === format(earlierDate, "yyyy-MM-dd")) || (laterDate && date === format(laterDate, "yyyy-MM-dd"));
   if (!dateMatched.length) return false;
-  if (typeMatched.length) return isSelected ? "primary-lighten-3" : "primary";
+  // Stone dots (ink on the saffron selected day): the selected day is the picker's only accent.
+  if (typeMatched.length) return isSelected ? "accent" : "secondary";
   return isSelected ? "grey-lighten-3" : "grey";
 }
 </script>

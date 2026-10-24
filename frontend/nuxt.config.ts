@@ -53,7 +53,7 @@ export default defineNuxtConfig({
       ],
       script: [
         {
-          innerHTML: `(function(){try{var d=localStorage.getItem('vueuse-color-scheme');var m=d==='dark'||(d!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.style.backgroundColor=m?'#1E1E1E':'#FFFFFF'}catch(e){}})()`,
+          innerHTML: `(function(){try{var d=localStorage.getItem('vueuse-color-scheme');var m=d==='dark'||(d!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.style.backgroundColor=m?'#121714':'#F4F5F3'}catch(e){}})()`,
           type: "text/javascript",
         },
       ],
@@ -73,7 +73,13 @@ export default defineNuxtConfig({
     viewTransition: true,
   },
 
-  css: ["~/assets/main.css", "~/assets/style-overrides.scss"],
+  css: [
+    "~/assets/design/tokens.css",
+    "~/assets/design/typography.css",
+    "~/assets/design/reset.css",
+    "~/assets/main.css",
+    "~/assets/style-overrides.scss",
+  ],
 
   runtimeConfig: {
     sessionPassword: process.env.SESSION_PASSWORD || "password-with-at-least-32-characters",
@@ -85,27 +91,6 @@ export default defineNuxtConfig({
       // ==============================================
       // Theme Runtime Config
       useDark: Boolean(process.env.THEME_USE_DARK) || false,
-      themes: {
-        dark: {
-          primary: process.env.THEME_DARK_PRIMARY || "#E58325",
-          accent: process.env.THEME_DARK_ACCENT || "#007A99",
-          secondary: process.env.THEME_DARK_SECONDARY || "#973542",
-          success: process.env.THEME_DARK_SUCCESS || "#43A047",
-          info: process.env.THEME_DARK_INFO || "#1976d2",
-          warning: process.env.THEME_DARK_WARNING || "#FF6D00",
-          error: process.env.THEME_DARK_ERROR || "#EF5350",
-          background: "#1E1E1E",
-        },
-        light: {
-          primary: process.env.THEME_LIGHT_PRIMARY || "#E58325",
-          accent: process.env.THEME_LIGHT_ACCENT || "#007A99",
-          secondary: process.env.THEME_LIGHT_SECONDARY || "#973542",
-          success: process.env.THEME_LIGHT_SUCCESS || "#43A047",
-          info: process.env.THEME_LIGHT_INFO || "#1976d2",
-          warning: process.env.THEME_LIGHT_WARNING || "#FF6D00",
-          error: process.env.THEME_LIGHT_ERROR || "#EF5350",
-        },
-      },
     },
   },
 
@@ -162,6 +147,19 @@ export default defineNuxtConfig({
       weights: ["100 900"],
       styles: ["normal", "italic"],
       subsets: ["cyrillic-ext", "cyrillic", "greek-ext", "greek", "vietnamese", "latin-ext", "latin"],
+    },
+    // The design font is only referenced through the --ds-font / --v-font-body variables,
+    // so it is registered globally rather than relying on font-family detection.
+    families: [
+      { name: "Bricolage Grotesque", provider: "google", global: true, weights: ["200 800"], styles: ["normal"] },
+    ],
+    google: {
+      // Without this the Google provider only requests the weight axis.
+      experimental: {
+        variableAxis: {
+          "Bricolage Grotesque": { wdth: [["75", "100"]], opsz: [["12", "96"]] },
+        },
+      },
     },
   },
 
@@ -269,6 +267,27 @@ export default defineNuxtConfig({
         fallback: "en-US",
       },
       defaults: {
+        VBtn: {
+          rounded: "md",
+          elevation: 0,
+        },
+        VCard: {
+          elevation: 0,
+          rounded: "lg",
+          border: true,
+        },
+        // Dialog headers that do not pick a colour sit on the stone surface with ink text, the same
+        // neutral header BaseDialog uses, instead of Vuetify's default grey bar.
+        VDialog: {
+          VToolbar: { color: "surface" },
+        },
+        VBottomSheet: {
+          VToolbar: { color: "surface" },
+        },
+        VTextField: {
+          variant: "outlined",
+          density: "comfortable",
+        },
         VOverlay: {
           scrollStrategy: "close",
         },

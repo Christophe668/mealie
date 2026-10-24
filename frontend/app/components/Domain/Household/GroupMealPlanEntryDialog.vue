@@ -149,10 +149,13 @@ import type { RecipeSummary } from "~/lib/api/types/recipe";
 interface Props {
   entry?: ReadPlanEntry | null;
   date?: Date | null;
+  /** Meal type a new entry starts with, e.g. the planner row it was added from. */
+  defaultEntryType?: PlanEntryType | null;
 }
 const props = withDefaults(defineProps<Props>(), {
   entry: null,
   date: null,
+  defaultEntryType: null,
 });
 
 const emit = defineEmits<{
@@ -198,7 +201,7 @@ function parseEntryDate(date: string) {
 function initialize() {
   entryMode.value = props.entry && !props.entry.recipeId ? "note" : "recipe";
   selectedDate.value = props.entry ? parseEntryDate(props.entry.date) : props.date ?? new Date();
-  entryType.value = props.entry?.entryType ?? "dinner";
+  entryType.value = props.entry?.entryType ?? props.defaultEntryType ?? "dinner";
   recipe.value = props.entry?.recipe ?? null;
   recipeScale.value = props.entry?.recipeScale ?? 1;
   title.value = props.entry?.title ?? "";

@@ -5,3 +5,10 @@
 .v-tab {
   text-transform: none !important;
 }
+
+// Spec: saffron is a surface (ink on saffron), never a text colour, and appears once per screen.
+// Vuetify paints text, outlined and tonal variants with color="primary" (focused fields, toggles,
+// chips, text buttons) through .text-primary, so on untouched pages those read in the text colour.
+.text-primary {
+  color: var(--ds-text) !important;
+}

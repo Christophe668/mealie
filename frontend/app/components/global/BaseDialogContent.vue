@@ -6,13 +6,17 @@
         indeterminate
       />
     </template>
+    <!-- Neutral header (stone surface, ink title, hairline): the colour prop only tints the icon, so a
+         delete dialog still reads as one without a red or saffron bar on every dialog. -->
     <v-toolbar
-      dark
       density="comfortable"
-      :color="color"
-      class="px-3 position-relative top-0 left-0 w-100"
+      color="surface"
+      class="base-dialog-header px-3 position-relative top-0 left-0 w-100"
     >
-      <v-icon size="large">
+      <v-icon
+        size="large"
+        :color="color === 'primary' ? undefined : color"
+      >
         {{ icon }}
       </v-icon>
       <v-toolbar-title class="headline">
@@ -30,7 +34,6 @@
       <slot name="card-actions">
         <v-btn
           variant="text"
-          color="grey"
           @click="emit('cancel')"
         >
           {{ cancelLabel }}
@@ -44,7 +47,7 @@
         />
         <BaseButton
           v-if="canConfirm"
-          :color="color"
+          :color="color === 'primary' ? 'accent' : color"
           type="submit"
           :disabled="submitDisabled"
           @click="emit('confirm')"
@@ -54,8 +57,11 @@
           </template>
           {{ $t("general.confirm") }}
         </BaseButton>
+        <!-- Confirm and submit are ink rather than saffron or Base's green, so saffron stays one pointer
+             per screen; destructive dialogs (color="error") keep their red. -->
         <BaseButton
           v-if="canSubmit"
+          :color="color === 'primary' ? 'accent' : color"
           type="submit"
           :disabled="submitDisabled || loading"
           @click="emit('submit')"
@@ -125,6 +131,16 @@ const cancelLabel = computed(() => props.cancelText ?? i18n.t("general.cancel"))
 </script>
 
 <style scoped>
+.base-dialog-header {
+  border-bottom: 1px solid var(--ds-border);
+  color: var(--ds-text);
+}
+
+.base-dialog-header :deep(.v-toolbar-title) {
+  font-weight: 700;
+  font-variation-settings: "wdth" 92;
+}
+
 /* On extra-small displays the dialog is a bottom sheet or fullscreen, so the
    actions stretch evenly across the full width. Larger displays keep the
    default v-card-actions flex row, where the spacer pushes the actions right. */

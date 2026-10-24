@@ -1,0 +1,44 @@
+/* Vuetify reads --v-font-body for every component, so untouched Vuetify pages share the design font. */
+:root {
+  --v-font-body: var(--ds-font);
+}
+
+body {
+  font-family: var(--ds-font);
+  font-optical-sizing: auto;
+}
+
+.ds-display {
+  font-family: var(--ds-font);
+  font-size: var(--ds-t-7);
+  font-weight: 800;
+  font-variation-settings: "wdth" 85;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.ds-title {
+  font-family: var(--ds-font);
+  font-size: var(--ds-t-5);
+  font-weight: 700;
+  font-variation-settings: "wdth" 92;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.ds-body {
+  font-family: var(--ds-font);
+  font-size: var(--ds-t-3);
+  font-weight: 400;
+  line-height: 1.55;
+  max-width: 70ch;
+}
+
+.ds-muted {
+  color: var(--ds-text-2);
+}
+
+.ds-focus:focus-visible {
+  outline: 2px solid var(--ds-text);
+  outline-offset: 2px;
+}

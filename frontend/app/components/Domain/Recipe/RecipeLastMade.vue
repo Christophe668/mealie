@@ -108,7 +108,7 @@
         </v-card-text>
       </BaseDialog>
     </div>
-    <div>
+    <div v-if="!dialogOnly">
       <div v-if="lastMadeReady" class="d-flex justify-center flex-wrap">
         <v-row no-gutters class="d-flex flex-wrap align-center" style="font-size: larger">
           <v-tooltip location="bottom">
@@ -152,12 +152,14 @@ import { useHouseholdSelf } from "~/composables/use-households";
 import type { Recipe, RecipeTimelineEventIn, RecipeTimelineEventOut } from "~/lib/api/types/recipe";
 import type { VForm } from "~/types/auto-forms";
 
-const props = defineProps<{ recipe: Recipe }>();
+// dialogOnly: render just the "made this" dialog, opened through the exposed open() (fork: recipe read page).
+const props = defineProps<{ recipe: Recipe; dialogOnly?: boolean }>();
 const emit = defineEmits<{
   eventCreated: [event: RecipeTimelineEventOut];
 }>();
 
 const madeThisDialog = ref(false);
+defineExpose({ open: () => (madeThisDialog.value = true) });
 const userApi = useUserApi();
 const { household } = useHouseholdSelf();
 const i18n = useI18n();
