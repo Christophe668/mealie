@@ -35,7 +35,7 @@ Deliberately *not* taken: swipe-to-match gimmicks, AI chrome, gradient washes, t
 Dark: background `#121714`, surface `#1B211D`, border `#2A322D`, secondary `#9AA49E`, text `#ECEEEA`, saffron unchanged. Semantic (success/warning/error) reuse Mealie's existing greens/reds but desaturated 10 %.
 
 ### Type
-One family: **Bricolage Grotesque** (variable: weight 200–800, width 75–100, optical size). Display at wide width/heavy weight, body at normal width/400, labels 500. Scale (rem): 0.8125 / 0.9375 / 1.0625 (body) / 1.25 / 1.5 / 2 / 2.75 / 3.5 (hero). Line length ≤ 70 ch. No all-caps labels, no eyebrows, no middle-dot meta strings.
+One family: **Bricolage Grotesque** (variable: weight 200–800, width 75–100, optical size). Display at condensed width (wdth 85) and heavy weight (800), titles at wdth 92 / 700, body at normal width (wdth 100) / 400, labels 500. (Bricolage's width axis tops out at 100 = normal, so "wide" display is not available; condensed-heavy is the chosen display voice.) Scale (rem): 0.8125 / 0.9375 / 1.0625 (body) / 1.25 / 1.5 / 2 / 2.75 / 3.5 (hero). Line length ≤ 70 ch. No all-caps labels, no eyebrows, no middle-dot meta strings.
 
 ### Shape, depth, motion
 - Radii: controls 6 px, cards 12 px, the hero board 20 px, images follow their container.
