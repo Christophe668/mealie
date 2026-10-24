@@ -154,6 +154,8 @@ def test_put_away_unchecked_ids_422(api_client: TestClient, unique_user_fn_scope
         headers=user.token,
     )
     assert response.status_code == 422
+    assert unchecked_id in response.json()["detail"]["message"]
+    assert checked_id not in response.json()["detail"]["message"]
 
     # nothing moved, nothing deleted
     response = api_client.get(api_routes.households_shopping_lists_item_id(list_id), headers=user.token)

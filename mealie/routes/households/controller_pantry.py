@@ -21,7 +21,7 @@ from mealie.schema.household.pantry import (
 )
 from mealie.schema.response import ErrorResponse
 from mealie.schema.response.pagination import OrderByNullPosition, PaginationQuery
-from mealie.services.claude_context.pantry_service import PantryService
+from mealie.services.claude_context.pantry_service import PantryItemsNotChecked, PantryService
 
 router = UserAPIRouter(prefix="/households/pantry", tags=["Households: Pantry"])
 # Put-away lives on its own router so the upstream shopping list controller stays untouched.
@@ -33,12 +33,14 @@ _DEFAULT_ORDER_BY = "use_by:asc, bought_on:desc, name:asc"
 
 @contextmanager
 def _service_errors() -> Iterator[None]:
-    """Map the pantry service's exceptions to HTTP errors: missing → 404, invalid request → 422."""
+    """Map the pantry service's exceptions to HTTP errors: missing → 404, unchecked put-away items → 422.
+
+    Any other exception (including a bare `ValueError`) is a bug and surfaces as a 500."""
     try:
         yield
     except NoEntryFound as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=ErrorResponse.respond(message=str(e))) from e
-    except ValueError as e:
+    except PantryItemsNotChecked as e:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=ErrorResponse.respond(message=str(e))) from e
 
 

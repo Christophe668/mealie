@@ -36,6 +36,14 @@ _FRIDGE_LABEL_WORDS = (
 )
 
 
+class PantryItemsNotChecked(ValueError):
+    """Put away was asked to move shopping items that are not checked."""
+
+    def __init__(self, item_ids: list[str]):
+        self.item_ids = item_ids
+        super().__init__(f"items not checked: {', '.join(item_ids)}")
+
+
 def _format_quantity(quantity: float) -> str:
     return f"{quantity:g}"
 
@@ -120,7 +128,7 @@ class PantryService(BaseService):
         can leave rows already moved, but it never deletes a shopping item that was not moved.
 
         `item_ids=None` means every checked item. Raises `NoEntryFound` when the list (or an item on it)
-        is not in this household, and `ValueError` when any requested item is not checked.
+        is not in this household, and `PantryItemsNotChecked` when any requested item is not checked.
         """
         today = today or datetime.now().astimezone().date()
         shopping_list = self.repos.group_shopping_lists.get_one(list_id)
@@ -138,7 +146,7 @@ class PantryService(BaseService):
             to_move = [on_list[str(item_id)] for item_id in item_ids]
             unchecked = [str(item.id) for item in to_move if not item.checked]
             if unchecked:
-                raise ValueError(f"items not checked: {', '.join(unchecked)}")
+                raise PantryItemsNotChecked(unchecked)
 
         created: dict[UUID, PantryItemOut] = {}
         merged: dict[UUID, PantryItemOut] = {}

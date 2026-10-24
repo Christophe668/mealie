@@ -53,6 +53,8 @@ cloudflared tunnel run --url http://localhost:9925 <tunnel-name>
 4. You are redirected to Mealie: sign in and approve access.
 5. The connector's tools are now available in conversations.
 
+The pantry tools need the `pantry:write` permission. A connection made before it existed does not have it: disconnect and reconnect the connector to grant it.
+
 ## Verify
 
 ```bash

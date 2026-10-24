@@ -836,7 +836,8 @@
         "recipes-write": "Créer et modifier des recettes",
         "mealplan-write": "Modifier le planning des repas",
         "shopping-write": "Modifier les listes de courses",
-        "household-write": "Modifier les paramètres du foyer"
+        "household-write": "Modifier les paramètres du foyer",
+        "pantry-write": "Gérer le garde-manger"
       },
       "approve": "Autoriser",
       "deny": "Refuser",

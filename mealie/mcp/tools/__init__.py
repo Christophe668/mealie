@@ -22,4 +22,4 @@ async def run_in_context[T](impl: Callable[..., T], *args: Any, **kwargs: Any) -
 __all__ = ["McpContext", "run_in_context"]
 
 # Imported last: the tool modules use `run_in_context` above and `mcp_server` from mealie.mcp.server.
-from . import household, mealplan, recipes, shopping  # noqa: E402,F401
+from . import household, mealplan, pantry, recipes, shopping  # noqa: E402,F401

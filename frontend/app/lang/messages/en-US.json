@@ -836,7 +836,8 @@
         "recipes-write": "Create and edit recipes",
         "mealplan-write": "Edit the meal plan",
         "shopping-write": "Edit shopping lists",
-        "household-write": "Edit household settings"
+        "household-write": "Edit household settings",
+        "pantry-write": "Manage the pantry"
       },
       "approve": "Approve",
       "deny": "Deny",
