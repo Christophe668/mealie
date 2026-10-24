@@ -218,19 +218,23 @@ def update_pantry_impl(
     # 2. apply: removes, then updates, then adds
     added_ids: list[str] = []
     merged_ids: list[str] = []
+    # only reachable if the pantry changed between validation and write; report the id being written
+    writing: UUID | None = None
     try:
-        for item_id in remove_ids:
-            service.remove_item(item_id)
-        for item_id, data in updates:
-            service.update_item(item_id, data)
+        for writing in remove_ids:
+            service.remove_item(writing)
+        for writing, data in updates:
+            service.update_item(writing, data)
+        writing = None
         for data in adds:
             item, merged = service.add_item(data)
             target = merged_ids if merged else added_ids
             if str(item.id) not in merged_ids and str(item.id) not in added_ids:
                 target.append(str(item.id))
     except NoEntryFound as e:
-        # only reachable if the pantry changed between validation and write
-        raise not_found("pantry_item", str(e)) from e
+        if writing is None:
+            raise McpToolError(str(e)) from e
+        raise not_found("pantry_item", str(writing)) from e
 
     return {
         "items": _pantry_items(ctx),

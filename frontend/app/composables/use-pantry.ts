@@ -1,8 +1,9 @@
 import { format } from "date-fns";
 import { useUserApi } from "~/composables/api";
-import { alert } from "~/composables/use-toast";
+import { alertUnreportedError } from "~/composables/use-toast";
 import { groupByLocation } from "~/lib/pantry/freshness";
 import type { PantryItemOut, PantryItemUpdate } from "~/lib/api/types/household";
+import type { RequestResponse } from "~/lib/api/types/non-generated";
 
 /** The writable fields of an item, as the full-replace PUT expects them. */
 export function toPantryUpdate(item: PantryItemOut, changes: Partial<PantryItemUpdate> = {}): PantryItemUpdate {
@@ -55,11 +56,14 @@ export function usePantry() {
 
   const byLocation = computed(() => groupByLocation(items.value));
 
-  /** Runs a change, says so if it failed, and reloads either way so the screen shows what is saved. */
-  async function save(request: Promise<{ error: unknown }>) {
+  /**
+   * Runs a change, says so if it failed (unless the API interceptor already showed Mealie's own message),
+   * and reloads either way so the screen shows what is saved.
+   */
+  async function save(request: Promise<Pick<RequestResponse<unknown>, "error">>) {
     const { error } = await request;
     if (error) {
-      alert.error(i18n.t("pantry.save-failed"));
+      alertUnreportedError(error, i18n.t("pantry.save-failed"));
     }
     await refresh();
     return !error;

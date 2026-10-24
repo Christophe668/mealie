@@ -366,7 +366,8 @@ async function putAway() {
       alertUnreportedError(error, i18n.t("shop.put-away-failed"));
       return;
     }
-    const count = data.created.length + data.merged.length;
+    // Items that left the list, not pantry rows: several bought lines can merge into one row.
+    const count = data.removedItemIds.length;
     alert.info(i18n.t("shop.put-away-done", { count }, count), undefined, {
       timeout: 6000,
       action: { message: i18n.t("shop.open-pantry"), onClick: () => router.push("/household/pantry") },

@@ -166,11 +166,12 @@ describe("shopping list page", () => {
     await button().trigger("click");
     expect(api.householdPantry.putAway).toHaveBeenCalledOnce();
 
-    resolve({ data: { created: [{ id: "p1" }], merged: [{ id: "p2" }], removedItemIds: ["b", "c"] }, error: null });
+    // Three bought lines went into two pantry rows: the count is of the items that left the list.
+    resolve({ data: { created: [{ id: "p1" }], merged: [{ id: "p2" }], removedItemIds: ["b", "c", "d"] }, error: null });
     await flushPromises();
 
     const [text, , options] = vi.mocked(alert.info).mock.calls.at(-1)!;
-    expect(text).toBe("2 items put away");
+    expect(text).toBe("3 items put away");
     expect(options!.action!.message).toBe("Open pantry");
     options!.action!.onClick();
     expect(router.push).toHaveBeenCalledWith("/household/pantry");

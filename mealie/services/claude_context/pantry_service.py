@@ -14,7 +14,8 @@ from mealie.schema.household.pantry import (
 )
 from mealie.services._base_service import BaseService
 
-# Put-away location rule: the shopping item's label (its own, else its food's) decides where it goes.
+# Put-away location rule: `item.label` decides where it goes. Only the item's label is read; when the item has
+# none, `ShoppingListItemOut.populate_missing_label` has already filled it from the food's label.
 # Matched case-insensitively as substrings, in this order; anything else goes to the cupboard.
 # English and French, to cover Mealie's seeded labels in both locales. "Produce" / "Fruits & Légumes"
 # is deliberately absent: onions, potatoes and bananas belong in the cupboard.
@@ -255,12 +256,18 @@ class PantryService(BaseService):
         if item.food is not None:
             name, note = item.food.name, item.note or None
         else:
-            # a blank shopping item still needs a pantry name (the schema refuses empty names)
-            name, note = (item.note or item.display or "").strip() or _UNNAMED_ITEM, None
+            # a blank shopping item still needs a pantry name (the schema refuses empty names); `display` is not
+            # used because for a food-less item it starts with the quantity ("1", "2 kg")
+            name, note = (item.note or "").strip() or _UNNAMED_ITEM, None
+        quantity = item.quantity
+        if item.food is None and item.unit_id is None and quantity == 1:
+            # a bare "1" on a food-less item is the shopping list's default quantity, not information
+            quantity = None
         return PantryItemCreate(
             name=name,
-            food_id=item.food_id,
-            quantity=item.quantity,
+            # not item.food_id: on SQLite a deleted food leaves a dangling id behind on the shopping item
+            food_id=item.food.id if item.food else None,
+            quantity=quantity,
             unit_id=item.unit_id,
             location=self._location_for(item),
             bought_on=today,

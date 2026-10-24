@@ -7,6 +7,7 @@ from mcp.server.auth.provider import AccessToken
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
 
+from mealie.core.exceptions import NoEntryFound
 from mealie.mcp import auth, context
 from mealie.mcp.errors import McpToolError
 from mealie.mcp.scopes import ALL_SCOPES
@@ -272,6 +273,24 @@ async def test_put_away_tool_unchecked_ids_error(
 
 
 @pytest.mark.asyncio
+async def test_put_away_tool_refuses_another_households_list(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user: TestUser, h2_user: TestUser
+):
+    list_id, ids = _list_with_items(h2_user, {random_string(8): True})
+    (item_id,) = ids.values()
+    before = {u.user_id: len(u.repos.pantry_items.get_all()) for u in (unique_user, h2_user)}
+    _as_user(monkeypatch, session, unique_user)
+
+    with pytest.raises(McpToolError, match=f"shopping_list not found: {list_id}"):
+        await put_away_shopping_items(list_id)
+    with pytest.raises(McpToolError, match=f"shopping_list not found: {list_id}"):
+        await put_away_shopping_items(list_id, [item_id])
+
+    assert h2_user.repos.group_shopping_list_item.get_one(item_id) is not None
+    assert {u.user_id: len(u.repos.pantry_items.get_all()) for u in (unique_user, h2_user)} == before
+
+
+@pytest.mark.asyncio
 async def test_update_pantry_rejects_blank_names_before_writing(
     monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
 ):
@@ -352,3 +371,21 @@ async def test_update_pantry_unit_by_name(
     result = await update_pantry(add=[{"name": "Flour", "quantity": 500, "unit": unit.abbreviation.upper()}])
 
     assert result["items"][0]["unit"] == unit.name
+
+
+@pytest.mark.asyncio
+async def test_update_pantry_race_reports_the_item_id(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    item_id = _add(user, name="Gone soon")
+    _as_user(monkeypatch, session, user)
+
+    def vanished(self, *args, **kwargs):
+        raise NoEntryFound("Food not found.")
+
+    # the row passes validation, then disappears before the write
+    monkeypatch.setattr(PantryService, "update_item", vanished)
+
+    with pytest.raises(McpToolError, match=f"^pantry_item not found: {item_id}$"):
+        await update_pantry(update=[{"id": item_id, "note": "x"}])

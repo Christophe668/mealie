@@ -1,5 +1,5 @@
 from datetime import date
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -157,7 +157,8 @@ def test_put_away_moves_checked_items(unique_user: TestUser):
     from_food = by_name[food.name]
     assert (from_food.food_id, from_food.unit_id, from_food.quantity) == (food.id, unit_id, 2)
     from_note = by_name[note_name]
-    assert (from_note.food_id, from_note.quantity) == (None, 1)
+    # a food-less item with no unit keeps the shopping list's default quantity 1 as "no quantity"
+    assert (from_note.food_id, from_note.quantity) == (None, None)
 
     remaining = unique_user.repos.group_shopping_lists.get_one(shopping_list.id)
     assert remaining is not None
@@ -381,3 +382,87 @@ def test_put_away_blank_shopping_item_gets_a_name(unique_user: TestUser):
 
     (row,) = result.created
     assert row.name.strip() != ""
+
+
+def test_put_away_food_less_item_with_default_quantity_stores_no_quantity(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    shopping_list = _list(unique_user)
+    unit_id = _unit_id(unique_user)
+    items = unique_user.repos.group_shopping_list_item
+    bare = items.create(
+        ShoppingListItemCreate(shopping_list_id=shopping_list.id, note=f"{random_string(8)} lemons", checked=True)
+    )
+    counted = items.create(
+        ShoppingListItemCreate(
+            shopping_list_id=shopping_list.id, note=f"{random_string(8)} eggs", quantity=6, checked=True
+        )
+    )
+    one_unit = items.create(
+        ShoppingListItemCreate(
+            shopping_list_id=shopping_list.id,
+            note=f"{random_string(8)} flour",
+            quantity=1,
+            unit_id=unit_id,
+            checked=True,
+        )
+    )
+    assert bare.quantity == 1
+
+    result = service.put_away(shopping_list.id, None, today=DAY_2)
+
+    by_name = {row.name: row for row in result.created}
+    assert by_name[bare.note].quantity is None
+    assert by_name[counted.note].quantity == 6
+    assert (by_name[one_unit.note].quantity, by_name[one_unit.note].unit_id) == (1, unit_id)
+
+
+def test_put_away_blank_item_with_quantity_is_unnamed_not_its_quantity(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    shopping_list = _list(unique_user)
+    unit_id = _unit_id(unique_user)
+    items = unique_user.repos.group_shopping_list_item
+    items.create(ShoppingListItemCreate(shopping_list_id=shopping_list.id, note="", quantity=1, checked=True))
+    items.create(
+        ShoppingListItemCreate(shopping_list_id=shopping_list.id, note="", quantity=2, unit_id=unit_id, checked=True)
+    )
+
+    result = service.put_away(shopping_list.id, None, today=DAY_2)
+
+    assert [row.name for row in result.created + result.merged] == ["Unnamed item"]
+
+
+def test_put_away_survives_a_shopping_item_whose_food_was_deleted(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    shopping_list = _list(unique_user)
+    food = _food(unique_user)
+    item = unique_user.repos.group_shopping_list_item.create(
+        ShoppingListItemCreate(
+            shopping_list_id=shopping_list.id, food_id=food.id, note="still wanted", quantity=2, checked=True
+        )
+    )
+    # upstream's shopping-item FK has no ondelete: Postgres refuses this delete, SQLite leaves a dangling food_id
+    try:
+        unique_user.repos.ingredient_foods.delete(food.id)
+    except Exception:
+        pytest.skip("the database refuses to delete a food still on a shopping list")
+    unique_user.repos.session.expire_all()
+
+    result = service.put_away(shopping_list.id, [item.id], today=DAY_2)
+
+    (row,) = result.created
+    assert row.food_id is None
+    assert row.name == "still wanted"
+    assert [str(i) for i in result.removed_item_ids] == [str(item.id)]
+
+
+def test_put_away_mapping_drops_a_dangling_food_id(unique_user: TestUser):
+    # the same case without needing the database to allow the delete: food_id set, food not loadable
+    shopping_list = _list(unique_user)
+    item = unique_user.repos.group_shopping_list_item.create(
+        ShoppingListItemCreate(shopping_list_id=shopping_list.id, note="still wanted", quantity=2, checked=True)
+    )
+    dangling = item.model_copy(update={"food_id": uuid4(), "food": None})
+
+    data = PantryService(unique_user.repos)._from_shopping_item(dangling, DAY_2)
+
+    assert (data.name, data.food_id, data.quantity) == ("still wanted", None, 2)
