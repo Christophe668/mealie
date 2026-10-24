@@ -18,52 +18,57 @@
     </nav>
 
     <div class="ds-rail__bottom">
-      <button
-        v-if="announcementCount > 0"
-        type="button"
-        class="ds-rail__link ds-focus"
-        @click="emit('open-announcements')"
-      >
-        <DsIcon name="bullhornVariant" :size="18" />
-        {{ $t("app-shell.announcements") }}
-        <span class="ds-rail__count">{{ announcementCount }}</span>
-      </button>
-
-      <NuxtLink
-        v-for="item in secondaryItems"
-        :key="item.key"
-        :to="item.to"
-        class="ds-rail__link ds-focus"
-        :aria-current="item.active ? 'page' : undefined"
-      >
-        <DsIcon :name="item.icon" :size="18" />
-        {{ item.label }}
-      </NuxtLink>
-
-      <div v-if="userName" class="ds-rail__user">
-        <span class="ds-rail__avatar" aria-hidden="true">{{ userName.charAt(0) }}</span>
-        <span class="ds-rail__name">{{ userName }}</span>
+      <nav class="ds-rail__nav" :aria-label="$t('app-shell.account')">
         <button
+          v-if="showAnnouncements"
           type="button"
-          class="ds-rail__logout ds-focus"
-          :aria-label="$t('app-shell.log-out')"
-          :title="$t('app-shell.log-out')"
-          @click="emit('log-out')"
+          class="ds-rail__link ds-focus"
+          @click="emit('open-announcements')"
         >
-          <DsIcon name="logout" :size="18" />
+          <DsIcon name="bullhornVariant" :size="18" />
+          {{ $t("app-shell.announcements") }}
+          <span v-if="announcementCount > 0" class="ds-rail__count">{{ announcementCount }}</span>
         </button>
-      </div>
-      <NuxtLink v-else to="/login" class="ds-rail__link ds-focus">
-        <DsIcon name="user" :size="18" />
-        {{ $t("app-shell.log-in") }}
-      </NuxtLink>
+
+        <NuxtLink
+          v-for="item in secondaryItems"
+          :key="item.key"
+          :to="item.to"
+          class="ds-rail__link ds-focus"
+          :aria-current="item.active ? 'page' : undefined"
+        >
+          <DsIcon :name="item.icon" :size="18" />
+          {{ item.label }}
+        </NuxtLink>
+
+        <NuxtLink v-if="!userName" to="/login" class="ds-rail__link ds-focus">
+          <DsIcon name="user" :size="18" />
+          {{ $t("app-shell.log-in") }}
+        </NuxtLink>
+      </nav>
+
+      <AppShellMenu
+        v-if="userName"
+        class="ds-rail__user"
+        :items="userItems"
+        :label="$t('app-shell.account')"
+        trigger-class="ds-rail__user-trigger ds-focus"
+        placement="top-start"
+      >
+        <template #trigger>
+          <span class="ds-rail__avatar" aria-hidden="true">{{ userName.charAt(0) }}</span>
+          <span class="ds-rail__name">{{ userName }}</span>
+          <DsIcon name="dotsVertical" :size="18" />
+        </template>
+      </AppShellMenu>
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
+import AppShellMenu from "./AppShellMenu.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
-import type { AppShellNavItem } from "~/types/application-types";
+import type { AppShellMenuItem, AppShellNavItem } from "~/types/application-types";
 
 defineProps<{
   brandName: string;
@@ -71,11 +76,13 @@ defineProps<{
   items: AppShellNavItem[];
   secondaryItems: AppShellNavItem[];
   userName?: string;
+  userItems: AppShellMenuItem[];
+  showAnnouncements: boolean;
   announcementCount: number;
 }>();
 
 const emit = defineEmits<{
-  (e: "open-announcements" | "log-out"): void;
+  (e: "open-announcements"): void;
 }>();
 </script>
 
@@ -83,12 +90,13 @@ const emit = defineEmits<{
 .ds-rail {
   position: sticky;
   top: 0;
+  /* Keeps the user menu, which opens over the content column, above it. */
+  z-index: 2;
   display: flex;
   flex-direction: column;
   gap: calc(var(--ds-space) * 0.5);
   height: 100vh;
   padding: calc(var(--ds-space) * 3) calc(var(--ds-space) * 2);
-  overflow-y: auto;
   border-right: 1px solid var(--ds-border);
   background: var(--ds-bg);
 }
@@ -156,12 +164,30 @@ const emit = defineEmits<{
 }
 
 .ds-rail__user {
+  margin-top: var(--ds-space);
+  padding-top: var(--ds-space);
+  border-top: 1px solid var(--ds-border);
+}
+
+.ds-rail__user :deep(.ds-rail__user-trigger) {
   display: flex;
   align-items: center;
   gap: calc(var(--ds-space) * 1.5);
-  margin-top: var(--ds-space);
-  padding: calc(var(--ds-space) * 1.5) calc(var(--ds-space) * 0.5) 0 calc(var(--ds-space) * 1.25);
-  border-top: 1px solid var(--ds-border);
+  width: 100%;
+  padding: var(--ds-space) calc(var(--ds-space) * 1.25);
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-ctl);
+  background: none;
+  color: var(--ds-text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ds-rail__user :deep(.ds-rail__user-trigger:hover),
+.ds-rail__user :deep(.ds-rail__user-trigger[aria-expanded="true"]) {
+  border-color: var(--ds-border);
+  background: var(--ds-surface);
 }
 
 .ds-rail__avatar {
@@ -187,20 +213,5 @@ const emit = defineEmits<{
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.ds-rail__logout {
-  display: grid;
-  place-items: center;
-  padding: calc(var(--ds-space) * 0.75);
-  border: 0;
-  border-radius: var(--ds-radius-ctl);
-  background: none;
-  color: var(--ds-text-2);
-  cursor: pointer;
-}
-
-.ds-rail__logout:hover {
-  color: var(--ds-text);
 }
 </style>

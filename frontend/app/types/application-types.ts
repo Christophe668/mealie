@@ -21,3 +21,16 @@ export interface AppShellNavItem {
   icon: keyof Icon;
   active: boolean;
 }
+
+/** An entry in an app shell menu (add menu, user menu): a link (`to`) or an action (`onSelect`). */
+export interface AppShellMenuItem {
+  key: string;
+  label: string;
+  icon: keyof Icon;
+  to?: string;
+  onSelect?: () => void;
+  /** Set (true or false) to render a menuitemradio, e.g. the theme choice. */
+  checked?: boolean;
+  /** Draws a hairline above the item to start a new group. */
+  dividerBefore?: boolean;
+}

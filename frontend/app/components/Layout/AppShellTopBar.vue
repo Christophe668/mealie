@@ -11,56 +11,83 @@
       <slot name="title" />
     </div>
 
-    <form
-      v-if="showSearch"
-      role="search"
-      class="ds-topbar__search ds-desktop-only"
-      @submit.prevent="submit"
-    >
-      <label :for="inputId" class="ds-topbar__label">{{ $t("app-shell.search-recipes") }}</label>
-      <DsIcon name="search" :size="18" />
-      <input
-        :id="inputId"
-        ref="input"
-        v-model="query"
-        type="search"
-        class="ds-topbar__input"
-        :placeholder="$t('app-shell.search-recipes')"
-        aria-keyshortcuts="Meta+K Control+K"
-        enterkeyhint="search"
-        autocomplete="off"
+    <div class="ds-topbar__actions">
+      <form
+        v-if="showSearch"
+        ref="form"
+        role="search"
+        class="ds-topbar__search ds-desktop-only"
+        @submit.prevent="submit"
       >
-      <kbd class="ds-topbar__kbd" :title="$t('app-shell.search-shortcut-hint', { shortcut: shortcutLabel })">{{ shortcutLabel }}</kbd>
-    </form>
+        <label :for="inputId" class="ds-topbar__label">{{ $t("app-shell.search-recipes") }}</label>
+        <DsIcon name="search" :size="18" />
+        <input
+          :id="inputId"
+          ref="input"
+          v-model="query"
+          type="search"
+          class="ds-topbar__input"
+          :placeholder="$t('app-shell.search-recipes')"
+          aria-keyshortcuts="Meta+K Control+K"
+          enterkeyhint="search"
+          autocomplete="off"
+        >
+        <kbd class="ds-topbar__kbd" :title="$t('app-shell.search-shortcut-hint', { shortcut: shortcutLabel })">{{ shortcutLabel }}</kbd>
+      </form>
 
-    <NuxtLink
-      v-if="settingsTo"
-      :to="settingsTo"
-      class="ds-topbar__settings ds-mobile-only ds-focus"
-      :aria-label="$t('app-shell.settings')"
-    >
-      <DsIcon name="cog" :size="22" />
-    </NuxtLink>
+      <!-- Desktop create menu; mobile has the same menu on the floating tab bar. -->
+      <AppShellMenu
+        v-if="addItems.length"
+        class="ds-desktop-only"
+        :items="addItems"
+        :label="$t('app-shell.add')"
+        :trigger-label="$t('app-shell.add')"
+        trigger-class="ds-topbar__plus ds-focus"
+        placement="bottom-end"
+      >
+        <template #trigger>
+          <DsIcon name="createAlt" :size="22" />
+        </template>
+      </AppShellMenu>
+
+      <!-- Mobile has no rail, so the account menu lives here. -->
+      <AppShellMenu
+        v-if="userItems.length"
+        class="ds-mobile-only"
+        :items="userItems"
+        :label="$t('app-shell.account')"
+        :trigger-label="$t('app-shell.account')"
+        trigger-class="ds-topbar__icon ds-focus"
+        placement="bottom-end"
+      >
+        <template #trigger>
+          <DsIcon name="cog" :size="22" />
+        </template>
+      </AppShellMenu>
+    </div>
   </header>
 </template>
 
 <script setup lang="ts">
-import { useId } from "vue";
+import { useId, useTemplateRef } from "vue";
 import { useEventListener } from "@vueuse/core";
+import AppShellMenu from "./AppShellMenu.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
+import type { AppShellMenuItem } from "~/types/application-types";
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   /** Shown on mobile only, where there is no rail to carry the brand. */
   brandName?: string;
   homeTo?: string;
   showSearch?: boolean;
-  /** Mobile has no rail, so the top bar carries the way to settings there. */
-  settingsTo?: string;
+  addItems?: AppShellMenuItem[];
+  userItems?: AppShellMenuItem[];
 }>(), {
   brandName: undefined,
   homeTo: "/",
   showSearch: true,
-  settingsTo: undefined,
+  addItems: () => [],
+  userItems: () => [],
 });
 
 const emit = defineEmits<{
@@ -68,7 +95,8 @@ const emit = defineEmits<{
 }>();
 
 const inputId = useId();
-const input = ref<HTMLInputElement | null>(null);
+const form = useTemplateRef<HTMLFormElement>("form");
+const input = useTemplateRef<HTMLInputElement>("input");
 const query = ref("");
 
 const isApple = ref(false);
@@ -89,8 +117,19 @@ function focus() {
   input.value?.select();
 }
 
+function isOtherEditable(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement) || target === input.value) {
+    return false;
+  }
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
+
 useEventListener(window, "keydown", (event: KeyboardEvent) => {
-  if (!props.showSearch || event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) {
+  if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) {
+    return;
+  }
+  // Leave the shortcut alone where there is no visible field to focus (mobile) or the user is typing elsewhere.
+  if (!form.value || getComputedStyle(form.value).display === "none" || isOtherEditable(event.target)) {
     return;
   }
   event.preventDefault();
@@ -104,7 +143,6 @@ defineExpose({ focus });
 .ds-topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: calc(var(--ds-space) * 3);
   min-height: calc(var(--ds-space) * 5);
   margin-bottom: calc(var(--ds-space) * 3);
@@ -120,10 +158,6 @@ defineExpose({ focus });
   text-decoration: none;
 }
 
-.ds-topbar__title:empty {
-  display: none;
-}
-
 .ds-topbar__title {
   min-width: 0;
   font-size: var(--ds-t-6);
@@ -133,13 +167,22 @@ defineExpose({ focus });
   line-height: 1.15;
 }
 
+.ds-topbar__title:empty {
+  display: none;
+}
+
+.ds-topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 1.5);
+  margin-left: auto;
+}
+
 .ds-topbar__search {
   display: flex;
   align-items: center;
   gap: calc(var(--ds-space) * 1.25);
-  flex: none;
   width: calc(var(--ds-space) * 40);
-  margin-left: auto;
   padding: var(--ds-space) calc(var(--ds-space) * 1.5);
   border: 1px solid var(--ds-border);
   border-radius: var(--ds-radius-ctl);
@@ -190,32 +233,33 @@ defineExpose({ focus });
   white-space: nowrap;
 }
 
-.ds-topbar__settings {
+/* Ink, not saffron, like the mobile "+". */
+.ds-topbar__actions :deep(.ds-topbar__plus) {
   display: grid;
   place-items: center;
-  margin-left: auto;
-  padding: var(--ds-space);
+  width: calc(var(--ds-space) * 5.25);
+  height: calc(var(--ds-space) * 5.25);
+  border: 0;
   border-radius: var(--ds-radius-ctl);
+  background: var(--ds-text);
+  color: var(--ds-bg);
+  cursor: pointer;
+}
+
+.ds-topbar__actions :deep(.ds-topbar__icon) {
+  display: grid;
+  place-items: center;
+  padding: var(--ds-space);
+  border: 0;
+  border-radius: var(--ds-radius-ctl);
+  background: none;
   color: var(--ds-text-2);
+  cursor: pointer;
 }
 
 @media (max-width: 1023px) {
   .ds-topbar {
     margin-bottom: calc(var(--ds-space) * 2);
-  }
-
-  .ds-topbar__brand {
-    flex: none;
-    color: var(--ds-text);
-    font-size: var(--ds-t-4);
-    font-weight: 800;
-    font-variation-settings: "wdth" 90;
-    letter-spacing: -0.01em;
-    text-decoration: none;
-  }
-
-  .ds-topbar__title:empty {
-    display: none;
   }
 
   .ds-topbar__title {

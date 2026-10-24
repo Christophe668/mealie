@@ -7,13 +7,17 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   signOut: vi.fn(),
   loggedIn: { value: true },
+  admin: { value: false },
+  groupSlug: { value: "home" as string | undefined },
+  announcementsEnabled: { value: false },
+  unread: { value: [] as object[] },
 }));
 
 vi.mock("~/composables/use-mealie-auth", async () => {
   const { computed, ref } = await import("vue");
   return {
     useMealieAuth: () => ({
-      user: ref({ id: "u1", fullName: "Christophe", groupSlug: "home" }),
+      user: ref({ id: "u1", fullName: "Christophe", groupSlug: mocks.groupSlug.value, admin: mocks.admin.value }),
       loggedIn: computed(() => mocks.loggedIn.value),
       signOut: mocks.signOut,
     }),
@@ -30,7 +34,26 @@ vi.mock("~/composables/use-logged-in-state", async () => {
 });
 vi.mock("~/composables/use-announcements", async () => {
   const { ref } = await import("vue");
-  return { useAnnouncements: () => ({ announcementsEnabled: ref(false), newAnnouncements: ref([]) }) };
+  return {
+    useAnnouncements: () => ({
+      announcementsEnabled: ref(mocks.announcementsEnabled.value),
+      newAnnouncements: ref(mocks.unread.value),
+    }),
+  };
+});
+vi.mock("~/components/global/LanguageDialog.vue", async () => {
+  const { defineComponent, h } = await import("vue");
+  return {
+    default: defineComponent({
+      props: { modelValue: Boolean },
+      setup: props => () => h("div", { "class": "language-dialog", "data-open": String(props.modelValue) }),
+    }),
+  };
+});
+// Node 25 exposes a stub global localStorage that warns on access; the theme choice only needs an in-memory ref here.
+vi.mock("@vueuse/core", async (importOriginal) => {
+  const { ref } = await import("vue");
+  return { ...(await importOriginal<object>()), useStorage: (_key: string, initial: unknown) => ref(initial) };
 });
 vi.mock("~/components/Layout/LayoutParts/TheSnackbar.vue", () => ({ default: { render: () => null } }));
 vi.mock("~/components/Domain/Announcement/AnnouncementDialog.vue", () => ({ default: { render: () => null } }));
@@ -64,6 +87,10 @@ describe("AppShell", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.loggedIn.value = true;
+    mocks.admin.value = false;
+    mocks.groupSlug.value = "home";
+    mocks.announcementsEnabled.value = false;
+    mocks.unread.value = [];
     route.path = "/g/home";
     route.params = { groupSlug: "home" };
     vi.stubGlobal("useRoute", () => route);
@@ -169,8 +196,18 @@ describe("AppShell", () => {
     await trigger.trigger("click");
     const items = wrapper.findAll("[role=menu] [role=menuitem]");
     expect(trigger.attributes("aria-expanded")).toBe("true");
-    expect(items.map(i => i.text().trim())).toEqual(["Add recipe from URL", "Add to plan", "Add to shopping list"]);
-    expect(items[0]!.attributes("href")).toBe("/g/home/r/create/url");
+    expect(items.map(i => i.text().trim())).toEqual([
+      "Add recipe from URL",
+      "Create recipe",
+      "Add to plan",
+      "Add to shopping list",
+    ]);
+    expect(items.map(i => i.attributes("href"))).toEqual([
+      "/g/home/r/create/url",
+      "/g/home/r/create/new",
+      "/household/mealplan/planner/edit",
+      "/shopping-lists",
+    ]);
     expect(document.activeElement).toBe(items[0]!.element);
 
     await wrapper.find("[role=menu]").trigger("keydown", { key: "Escape" });
@@ -188,7 +225,7 @@ describe("AppShell", () => {
     expect(document.activeElement).toBe(items[1]!.element);
     await menu.trigger("keydown", { key: "ArrowUp" });
     await menu.trigger("keydown", { key: "ArrowUp" });
-    expect(document.activeElement).toBe(items[2]!.element);
+    expect(document.activeElement).toBe(items[3]!.element);
   });
 
   test("visitors see neither household pages nor the add button", () => {
@@ -200,5 +237,143 @@ describe("AppShell", () => {
     expect(wrapper.find(".ds-tabbar button[aria-haspopup=menu]").exists()).toBe(false);
     expect(wrapper.find(".ds-rail").text()).not.toContain("Connections");
     expect(wrapper.find(".ds-rail").text()).toContain("Log in");
+  });
+
+  test("desktop has its own add button opening the same menu", async () => {
+    const wrapper = render();
+    const trigger = wrapper.find(".ds-topbar .ds-desktop-only button[aria-haspopup=menu]");
+
+    await trigger.trigger("click");
+    expect(wrapper.findAll("[role=menu] [role=menuitem]").map(i => i.text().trim())).toEqual([
+      "Add recipe from URL",
+      "Create recipe",
+      "Add to plan",
+      "Add to shopping list",
+    ]);
+  });
+
+  test("the add menu leaves out group links until the group is known", async () => {
+    mocks.groupSlug.value = undefined;
+    route.path = "/";
+    route.params = {};
+    const wrapper = render();
+
+    await wrapper.find(".ds-tabbar button[aria-haspopup=menu]").trigger("click");
+    const hrefs = wrapper.findAll("[role=menuitem]").map(i => i.attributes("href"));
+    expect(hrefs).toEqual(["/household/mealplan/planner/edit", "/shopping-lists"]);
+    expect(link(wrapper, ".ds-rail", "Today").attributes("aria-current")).toBe("page");
+  });
+
+  const userTriggers = {
+    "rail": ".ds-rail button[aria-haspopup=menu]",
+    "mobile top bar": ".ds-topbar .ds-mobile-only button[aria-haspopup=menu]",
+  };
+
+  test.each(Object.entries(userTriggers))("the user menu opens from the %s", async (_where, selector) => {
+    const wrapper = render();
+    const trigger = wrapper.find(selector);
+
+    await trigger.trigger("click");
+    const labels = wrapper.findAll("[role=menu] li > *").map(i => i.text().trim());
+    expect(labels).toEqual(["Profile", "Language", "Light theme", "Dark theme", "Match system theme", "Log out"]);
+
+    await wrapper.find("[role=menu]").trigger("keydown", { key: "Escape" });
+    expect(wrapper.find("[role=menu]").exists()).toBe(false);
+    expect(document.activeElement).toBe(trigger.element);
+  });
+
+  test("admins also get the admin link", async () => {
+    mocks.admin.value = true;
+    const wrapper = render();
+
+    await wrapper.find(userTriggers.rail).trigger("click");
+    const admin = wrapper.findAll("[role=menuitem]").find(i => i.text().trim() === "Admin");
+    expect(admin?.attributes("href")).toBe("/admin/site-settings");
+  });
+
+  function menuButton(wrapper: ReturnType<typeof render>, label: string) {
+    const match = wrapper.findAll("[role=menu] button").find(b => b.text().trim() === label);
+    if (!match) {
+      throw new Error(`No "${label}" menu item`);
+    }
+    return match;
+  }
+
+  test("log out signs out", async () => {
+    mocks.signOut.mockResolvedValue(undefined);
+    const wrapper = render();
+
+    await wrapper.find(userTriggers["mobile top bar"]).trigger("click");
+    await menuButton(wrapper, "Log out").trigger("click");
+    expect(mocks.signOut).toHaveBeenCalledWith("/login?direct=1");
+  });
+
+  test("a failed log out is caught", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.signOut.mockRejectedValue(new Error("offline"));
+    const wrapper = render();
+
+    await wrapper.find(userTriggers.rail).trigger("click");
+    await menuButton(wrapper, "Log out").trigger("click");
+    await flushPromises();
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  test("language opens the language dialog", async () => {
+    const wrapper = render();
+    expect(wrapper.find(".language-dialog").attributes("data-open")).toBe("false");
+
+    await wrapper.find(userTriggers.rail).trigger("click");
+    await menuButton(wrapper, "Language").trigger("click");
+    expect(wrapper.find(".language-dialog").attributes("data-open")).toBe("true");
+  });
+
+  test("the theme choice is a radio group that remembers the pick", async () => {
+    const wrapper = render();
+    await wrapper.find(userTriggers.rail).trigger("click");
+
+    expect(menuButton(wrapper, "Match system theme").attributes("role")).toBe("menuitemradio");
+    await menuButton(wrapper, "Dark theme").trigger("click");
+    await wrapper.find(userTriggers.rail).trigger("click");
+
+    expect(menuButton(wrapper, "Dark theme").attributes("aria-checked")).toBe("true");
+    expect(menuButton(wrapper, "Light theme").attributes("aria-checked")).toBe("false");
+    await menuButton(wrapper, "Match system theme").trigger("click");
+  });
+
+  test("announcements stay reachable; the count shows only when something is unread", async () => {
+    mocks.announcementsEnabled.value = true;
+    const wrapper = render();
+    const item = wrapper.findAll(".ds-rail button").find(b => b.text().includes("Announcements"));
+    expect(item?.find(".ds-rail__count").exists()).toBe(false);
+
+    wrapper.unmount();
+    mocks.unread.value = [{ key: "a" }];
+    const withUnread = render();
+    const unreadItem = withUnread.findAll(".ds-rail button").find(b => b.text().includes("Announcements"));
+    expect(unreadItem?.find(".ds-rail__count").text()).toBe("1");
+  });
+
+  test("account links sit in their own navigation landmark", () => {
+    const wrapper = render();
+
+    const account = wrapper.find(".ds-rail nav[aria-label=Account]");
+    expect(account.text()).toContain("Connections");
+    expect(account.text()).toContain("Settings");
+  });
+
+  test("the search shortcut is left alone while typing in another field", () => {
+    const wrapper = render();
+    const other = document.createElement("textarea");
+    document.body.appendChild(other);
+    other.focus();
+
+    const event = new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true, cancelable: true });
+    other.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(other);
+    expect(wrapper.find("input[type=search]").exists()).toBe(true);
   });
 });

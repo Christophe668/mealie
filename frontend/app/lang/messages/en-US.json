@@ -1376,6 +1376,14 @@
     "add": "Add",
     "add-recipe-from-url": "Add recipe from URL",
     "add-to-plan": "Add to plan",
-    "add-to-shopping-list": "Add to shopping list"
+    "add-to-shopping-list": "Add to shopping list",
+    "create-recipe": "Create recipe",
+    "account": "Account",
+    "profile": "Profile",
+    "admin": "Admin",
+    "language": "Language",
+    "theme-light": "Light theme",
+    "theme-dark": "Dark theme",
+    "theme-auto": "Match system theme"
   }
 }

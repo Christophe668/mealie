@@ -2,6 +2,7 @@
   <v-app class="ds-shell">
     <TheSnackbar />
     <AnnouncementDialog v-if="loggedIn" v-model="announcementsOpen" />
+    <LanguageDialog v-model="languageOpen" />
 
     <div class="ds-shell__frame">
       <AppShellRail
@@ -11,16 +12,18 @@
         :items="primaryItems"
         :secondary-items="secondaryItems"
         :user-name="loggedIn ? auth.user.value?.fullName || '' : undefined"
+        :user-items="userItems"
+        :show-announcements="loggedIn && announcementsEnabled"
         :announcement-count="announcementCount"
         @open-announcements="announcementsOpen = true"
-        @log-out="auth.signOut('/login?direct=1')"
       />
 
       <div class="ds-shell__column">
         <AppShellTopBar
           :brand-name="brandName"
           :home-to="todayPath"
-          :settings-to="loggedIn ? SETTINGS_PATH : undefined"
+          :add-items="addItems"
+          :user-items="userItems"
           @search="search"
         >
           <template #title>
@@ -40,7 +43,6 @@
       class="ds-mobile-only"
       :items="primaryItems"
       :add-items="addItems"
-      :route-path="route.path"
     />
   </v-app>
 </template>
@@ -51,16 +53,21 @@ import AppShellTabBar from "./AppShellTabBar.vue";
 import AppShellTopBar from "./AppShellTopBar.vue";
 import TheSnackbar from "~/components/Layout/LayoutParts/TheSnackbar.vue";
 import AnnouncementDialog from "~/components/Domain/Announcement/AnnouncementDialog.vue";
+import LanguageDialog from "~/components/global/LanguageDialog.vue";
+import { useStorage } from "@vueuse/core";
 import { useMealieAuth } from "~/composables/use-mealie-auth";
 import { useLoggedInState } from "~/composables/use-logged-in-state";
 import { useAnnouncements } from "~/composables/use-announcements";
 import { useAppShellTitle } from "~/composables/use-app-shell-title";
-import type { AppShellNavItem } from "~/types/application-types";
+import type { AppShellMenuItem, AppShellNavItem } from "~/types/application-types";
 
 const PLAN_PATH = "/household/mealplan/planner/view";
 const SHOP_PATH = "/shopping-lists";
 const CONNECTIONS_PATH = "/user/connections";
 const SETTINGS_PATH = "/user/profile";
+const ADMIN_PATH = "/admin/site-settings";
+// The key the dark-mode plugin's useDark() persists to; writing it here switches the theme everywhere.
+const COLOR_SCHEME_KEY = "vueuse-color-scheme";
 
 const i18n = useI18n();
 const route = useRoute();
@@ -80,8 +87,11 @@ const todayPath = computed(() => (groupSlug.value ? `/g/${groupSlug.value}` : "/
 // only this line (plus the search target, which follows it) has to change.
 const recipesPath = computed(() => todayPath.value);
 
+// "/g/home/" and "/g/home" are the same page; "/" stays "/".
+const currentPath = computed(() => (route.path.length > 1 ? route.path.replace(/\/$/, "") : route.path));
+
 function isUnder(prefix: string) {
-  return route.path === prefix || route.path.startsWith(`${prefix}/`);
+  return currentPath.value === prefix || currentPath.value.startsWith(`${prefix}/`);
 }
 
 const recipesActive = computed(() => {
@@ -96,7 +106,7 @@ const primaryItems = computed<AppShellNavItem[]>(() => {
       label: i18n.t("app-shell.today"),
       to: todayPath.value,
       icon: "home",
-      active: route.path.replace(/\/$/, "") === todayPath.value,
+      active: currentPath.value === todayPath.value,
     },
     {
       key: "recipes",
@@ -149,15 +159,60 @@ const secondaryItems = computed<AppShellNavItem[]>(() => {
   ];
 });
 
-const addItems = computed<Omit<AppShellNavItem, "active">[]>(() => {
+const addItems = computed<AppShellMenuItem[]>(() => {
   if (!isOwnGroup.value) {
     return [];
   }
-  return [
-    { key: "recipe", label: i18n.t("app-shell.add-recipe-from-url"), to: `${todayPath.value}/r/create/url`, icon: "link" },
+  const items: AppShellMenuItem[] = [];
+  // Recipe creation lives under the group; without a slug yet (auth still loading) those links would be invalid.
+  if (groupSlug.value) {
+    items.push(
+      { key: "recipe-url", label: i18n.t("app-shell.add-recipe-from-url"), to: `${todayPath.value}/r/create/url`, icon: "link" },
+      { key: "recipe-new", label: i18n.t("app-shell.create-recipe"), to: `${todayPath.value}/r/create/new`, icon: "edit" },
+    );
+  }
+  items.push(
     { key: "plan", label: i18n.t("app-shell.add-to-plan"), to: "/household/mealplan/planner/edit", icon: "calendar" },
     { key: "list", label: i18n.t("app-shell.add-to-shopping-list"), to: SHOP_PATH, icon: "formatListCheck" },
+  );
+  return items;
+});
+
+const languageOpen = ref(false);
+const colorScheme = useStorage<"auto" | "light" | "dark">(COLOR_SCHEME_KEY, "auto");
+
+async function logOut() {
+  try {
+    await auth.signOut("/login?direct=1");
+  }
+  catch (error) {
+    console.error("Logout failed:", error);
+  }
+}
+
+const userItems = computed<AppShellMenuItem[]>(() => {
+  if (!loggedIn.value) {
+    return [];
+  }
+  const items: AppShellMenuItem[] = [
+    { key: "profile", label: i18n.t("app-shell.profile"), to: SETTINGS_PATH, icon: "user" },
   ];
+  if (auth.user.value?.admin) {
+    items.push({ key: "admin", label: i18n.t("app-shell.admin"), to: ADMIN_PATH, icon: "wrench" });
+  }
+  items.push(
+    { key: "language", label: i18n.t("app-shell.language"), icon: "translate", onSelect: () => (languageOpen.value = true) },
+    ...(["light", "dark", "auto"] as const).map((scheme, index) => ({
+      key: `theme-${scheme}`,
+      label: i18n.t(`app-shell.theme-${scheme}`),
+      icon: ({ light: "weatherSunny", dark: "weatherNight", auto: "themeLightDark" } as const)[scheme],
+      checked: colorScheme.value === scheme,
+      dividerBefore: index === 0,
+      onSelect: () => (colorScheme.value = scheme),
+    })),
+    { key: "log-out", label: i18n.t("app-shell.log-out"), icon: "logout", onSelect: logOut, dividerBefore: true },
+  );
+  return items;
 });
 
 const announcementsOpen = ref(false);
@@ -200,7 +255,8 @@ function search(query: string) {
 
   .ds-shell__column {
     /* Bottom padding clears the floating tab bar. */
-    padding: calc(var(--ds-space) * 2) calc(var(--ds-space) * 2) calc(var(--ds-space) * 12);
+    padding: calc(var(--ds-space) * 2) calc(var(--ds-space) * 2)
+      calc(var(--ds-space) * 12 + env(safe-area-inset-bottom));
   }
 }
 </style>

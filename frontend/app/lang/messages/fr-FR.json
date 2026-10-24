@@ -1376,6 +1376,14 @@
     "add": "Ajouter",
     "add-recipe-from-url": "Ajouter une recette depuis une URL",
     "add-to-plan": "Ajouter au planning",
-    "add-to-shopping-list": "Ajouter à la liste de courses"
+    "add-to-shopping-list": "Ajouter à la liste de courses",
+    "create-recipe": "Créer une recette",
+    "account": "Compte",
+    "profile": "Profil",
+    "admin": "Administration",
+    "language": "Langue",
+    "theme-light": "Thème clair",
+    "theme-dark": "Thème sombre",
+    "theme-auto": "Thème du système"
   }
 }
