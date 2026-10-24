@@ -17,6 +17,8 @@ from mealie.schema.household.group_shopping_list import (
     ShoppingListItemUpdateBulk,
     ShoppingListOut,
 )
+from mealie.schema.recipe.recipe import Recipe
+from mealie.schema.recipe.recipe_ingredient import IngredientFood, RecipeIngredient
 from mealie.schema.response.pagination import OrderDirection, PaginationQuery
 from mealie.services.household_services.shopping_lists import ShoppingListService
 
@@ -75,6 +77,21 @@ def _list_dict(ctx: McpContext, shopping_list: ShoppingListOut) -> dict[str, Any
     }
 
 
+def _on_hand_foods(
+    svc: ShoppingListService, list_id: UUID, ingredients: list[RecipeIngredient], found: dict[UUID, str]
+) -> None:
+    """Collects the foods `add_recipe_ingredients_to_list` leaves off the list because the household has them on
+    hand. Mirrors the walk in `ShoppingListService.get_shopping_list_items_from_recipe` (sub-recipes included) and
+    uses its own predicate, so the report matches what the service actually skipped."""
+    for ingredient in ingredients:
+        if isinstance(ingredient.referenced_recipe, Recipe):
+            _on_hand_foods(svc, list_id, ingredient.referenced_recipe.recipe_ingredient, found)
+            continue
+        food = ingredient.food
+        if isinstance(food, IngredientFood) and food.id not in found and svc._is_on_hand(list_id, food):
+            found[food.id] = food.name
+
+
 def get_shopping_list_impl(ctx: McpContext, list_id: str | None = None) -> dict[str, Any]:
     return _list_dict(ctx, _load_list(ctx, list_id))
 
@@ -100,18 +117,28 @@ def create_shopping_list_from_mealplan_impl(
         )
 
     recipes_added: list[str] = []
+    skipped_from_pantry: list[str] = []
     if with_recipe:
         params = [
             ShoppingListAddRecipeParamsBulk(recipe_id=e.recipe.id, recipe_increment_quantity=e.recipe_scale)  # type: ignore[union-attr]
             for e in with_recipe
         ]
+        # computed before adding: the service skips on-hand foods silently when no explicit ingredients are given
+        recipes = cross_household_repos(ctx).recipes
+        on_hand: dict[UUID, str] = {}
+        for recipe_id in dict.fromkeys(e.recipe.id for e in with_recipe):  # type: ignore[union-attr]
+            recipe = recipes.get_one(recipe_id, "id")
+            if recipe is not None:
+                _on_hand_foods(svc, target.id, recipe.recipe_ingredient, on_hand)
+        skipped_from_pantry = list(on_hand.values())
+
         svc.add_recipe_ingredients_to_list(target.id, params)
         recipes_added = [e.recipe.slug for e in with_recipe]  # type: ignore[union-attr]
 
     result = _list_dict(ctx, _load_list(ctx, str(target.id)))
     result["recipes_added"] = recipes_added
     result["entries_without_recipe"] = without_recipe
-    result["skipped_from_pantry"] = []
+    result["skipped_from_pantry"] = skipped_from_pantry
     return result
 
 
@@ -161,7 +188,7 @@ async def create_shopping_list_from_mealplan(
     merging with items already there. Returns the list (see get_shopping_list) plus recipes_added
     (slugs, one per planned entry, so repeats are possible),
     entries_without_recipe (titles of free-text entries, not added) and
-    skipped_from_pantry."""
+    skipped_from_pantry (names of foods left off because the household has them on hand)."""
     return await run_in_context(create_shopping_list_from_mealplan_impl, start_date, end_date, list_name, list_id)
 
 

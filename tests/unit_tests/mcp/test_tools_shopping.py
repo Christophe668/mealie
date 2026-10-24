@@ -16,6 +16,8 @@ from mealie.mcp.tools.shopping import (
 )
 from mealie.schema.household.group_shopping_list import ShoppingListItemCreate, ShoppingListSave
 from mealie.schema.meal_plan.new_meal import PlanEntryType, SavePlanEntry
+from mealie.schema.recipe.recipe import Recipe
+from mealie.schema.recipe.recipe_ingredient import RecipeIngredient, SaveIngredientFood
 from tests.utils import api_routes
 from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
@@ -76,6 +78,41 @@ async def test_create_list_from_mealplan_adds_recipe_ingredients(
     assert result["entries_without_recipe"] == ["Takeaway"]
     assert result["skipped_from_pantry"] == []
     assert result["url"].endswith(f"/shopping-lists/{result['id']}")
+
+
+@pytest.mark.asyncio
+async def test_create_list_reports_on_hand_foods_as_skipped(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user: TestUser
+):
+    repos = unique_user.repos
+    household = repos.households.get_by_slug_or_id(unique_user.household_id)
+    assert household
+    on_hand = repos.ingredient_foods.create(
+        SaveIngredientFood(
+            name=random_string(10), group_id=unique_user.group_id, households_with_ingredient_food=[household.slug]
+        )
+    )
+    other = repos.ingredient_foods.create(SaveIngredientFood(name=random_string(10), group_id=unique_user.group_id))
+    recipe = repos.recipes.create(
+        Recipe(
+            name=random_string(10),
+            user_id=unique_user.user_id,
+            group_id=unique_user.group_id,
+            recipe_ingredient=[
+                RecipeIngredient(note="", food=on_hand, quantity=1),
+                RecipeIngredient(note="", food=other, quantity=1),
+            ],
+        )
+    )
+    day = datetime.now().astimezone().date() + timedelta(days=502)
+    _plan(unique_user, day, recipe.slug)
+    _plan(unique_user, day, recipe.slug)  # planned twice: still reported once
+    _as_user(monkeypatch, session, unique_user)
+
+    result = await create_shopping_list_from_mealplan(day, day)
+
+    assert result["skipped_from_pantry"] == [on_hand.name]
+    assert [i["food"] for i in result["items"]] == [other.name]
 
 
 @pytest.mark.asyncio
