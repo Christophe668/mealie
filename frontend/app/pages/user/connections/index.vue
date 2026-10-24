@@ -1,5 +1,5 @@
 <template>
-  <v-container class="narrow-container">
+  <div class="links">
     <BaseDialog
       v-model="revokeDialog"
       :title="$t('settings.mcp.revoke')"
@@ -13,117 +13,81 @@
       </v-card-text>
     </BaseDialog>
 
-    <BasePageTitle divider>
-      <template #header>
-        <v-img
-          width="100%"
-          max-height="200px"
-          max-width="200px"
-          src="/svgs/manage-api-tokens.svg"
-        />
-      </template>
-      <template #title>
-        {{ $t("settings.mcp.title") }}
-      </template>
+    <p class="links__intro ds-body ds-muted">
       {{ $t("settings.mcp.description") }}
-    </BasePageTitle>
+    </p>
 
-    <section>
-      <v-card
-        class="mt-4 pa-4"
-        variant="outlined"
-      >
-        <v-card-title class="px-0">
-          {{ $t("settings.mcp.how-to") }}
-        </v-card-title>
-        <v-card-text class="px-0">
-          <v-text-field
-            :model-value="mcpUrl"
-            :label="$t('settings.mcp.server-url')"
-            readonly
-            variant="outlined"
-            density="comfortable"
-          >
-            <template #append-inner>
-              <v-btn
-                :icon="$globals.icons.contentCopy"
-                :aria-label="$t('general.copy')"
-                variant="text"
-                size="small"
-                @click="copyText(mcpUrl)"
-              />
-            </template>
-          </v-text-field>
-          <ol class="ml-5">
-            <li>{{ $t("settings.mcp.how-to-step-1") }}</li>
-            <li>{{ $t("settings.mcp.how-to-step-2") }}</li>
-            <li>{{ $t("settings.mcp.how-to-step-3") }}</li>
-          </ol>
-        </v-card-text>
-      </v-card>
-    </section>
-
-    <section class="mt-8">
-      <div
-        v-if="loading"
-        class="d-flex justify-center my-6"
-      >
-        <v-progress-circular
-          indeterminate
-          color="primary"
-        />
+    <DsCard class="links__howto">
+      <h2 class="links__h2">
+        {{ $t("settings.mcp.how-to") }}
+      </h2>
+      <label :for="urlId" class="links__label">{{ $t("settings.mcp.server-url") }}</label>
+      <div class="links__url">
+        <input
+          :id="urlId"
+          :value="mcpUrl"
+          readonly
+          class="links__url-input ds-focus"
+          @focus="($event.target as HTMLInputElement).select()"
+        >
+        <DsButton variant="line" icon="contentCopy" @click="copyText(mcpUrl)">
+          {{ $t("general.copy") }}
+        </DsButton>
       </div>
-      <p
-        v-else-if="!connections.length"
-        class="text-center text-medium-emphasis my-6"
-      >
-        {{ $t("settings.mcp.no-connections") }}
+      <ol class="links__steps">
+        <li>{{ $t("settings.mcp.how-to-step-1") }}</li>
+        <li>{{ $t("settings.mcp.how-to-step-2") }}</li>
+        <li>{{ $t("settings.mcp.how-to-step-3") }}</li>
+      </ol>
+    </DsCard>
+
+    <section class="links__list" :aria-busy="loading ? 'true' : undefined">
+      <p class="links__sr" role="status">
+        {{ loading ? $t("general.loading") : "" }}
       </p>
-      <v-table v-else>
-        <thead>
-          <tr>
-            <th>{{ $t("settings.mcp.client") }}</th>
-            <th>{{ $t("settings.mcp.scopes") }}</th>
-            <th>{{ $t("settings.mcp.created") }}</th>
-            <th>{{ $t("settings.mcp.last-used") }}</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="connection in connections"
-            :key="connection.grantId"
-          >
-            <td>{{ connectionLabel(connection) }}</td>
-            <td>
-              <v-chip
-                v-for="scope in connection.scopes"
-                :key="scope"
-                size="small"
-                class="ma-1"
-              >
-                {{ scopeLabel(scope) }}
-              </v-chip>
-            </td>
-            <td>{{ formatDate(connection.createdAt) }}</td>
-            <td>{{ connection.lastUsedAt ? formatDate(connection.lastUsedAt) : $t("settings.mcp.never-used") }}</td>
-            <td class="text-right">
-              <BaseButton
-                delete
-                small
-                @click="confirmRevoke(connection)"
-              >
-                {{ $t("settings.mcp.revoke") }}
-              </BaseButton>
-            </td>
-          </tr>
-        </tbody>
-      </v-table>
+      <DsEmpty
+        v-if="!loading && !connections.length"
+        :title="$t('settings.mcp.no-connections')"
+      />
+      <ul v-else-if="!loading" class="links__rows" role="list">
+        <li v-for="connection in connections" :key="connection.grantId">
+          <DsCard class="links__row">
+            <div class="links__row-main">
+              <h3 class="links__client">
+                {{ connectionLabel(connection) }}
+              </h3>
+              <div class="links__scopes" :aria-label="$t('settings.mcp.scopes')" role="group">
+                <DsChip v-for="scope in connection.scopes" :key="scope">
+                  {{ scopeLabel(scope) }}
+                </DsChip>
+              </div>
+              <dl class="links__facts">
+                <div>
+                  <dt>{{ $t("settings.mcp.created") }}</dt>
+                  <dd>{{ formatDate(connection.createdAt) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ $t("settings.mcp.last-used") }}</dt>
+                  <dd>{{ connection.lastUsedAt ? formatDate(connection.lastUsedAt) : $t("settings.mcp.never-used") }}</dd>
+                </div>
+              </dl>
+            </div>
+            <DsButton variant="line" icon="delete" class="links__revoke" @click="confirmRevoke(connection)">
+              {{ $t("settings.mcp.revoke") }}
+            </DsButton>
+          </DsCard>
+        </li>
+      </ul>
     </section>
-  </v-container>
+  </div>
 </template>
 
 <script setup lang="ts">
+import DsButton from "~/components/Design/DsButton.vue";
+import DsCard from "~/components/Design/DsCard.vue";
+import DsChip from "~/components/Design/DsChip.vue";
+import DsEmpty from "~/components/Design/DsEmpty.vue";
+import { useAppShellTitle } from "~/composables/use-app-shell-title";
 import { useUserApi } from "~/composables/api";
 import { useCopy } from "~/composables/use-copy";
 import { MCP_SCOPE_I18N_KEYS, type McpConnection } from "~/lib/api/user/mcp-connections";
@@ -139,6 +103,9 @@ const { copyText } = useCopy();
 useSeoMeta({
   title: i18n.t("settings.mcp.title"),
 });
+useAppShellTitle(() => i18n.t("settings.mcp.title"));
+
+const urlId = useId();
 
 const mcpUrl = computed(() => (import.meta.client ? `${window.location.origin}/mcp` : "/mcp"));
 
@@ -182,3 +149,132 @@ async function revokeConnection() {
 
 onMounted(refresh);
 </script>
+
+<style scoped>
+.links {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ds-space) * 3);
+  max-width: 820px;
+}
+
+.links__howto :deep(.ds-card__body) {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ds-space) * 1.5);
+}
+
+.links__h2 {
+  font-size: var(--ds-t-4);
+  font-weight: 700;
+  font-variation-settings: "wdth" 92;
+  letter-spacing: -0.015em;
+}
+
+.links__label {
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-1);
+  font-weight: 500;
+}
+
+.links__url {
+  display: flex;
+  gap: var(--ds-space);
+  margin-top: calc(var(--ds-space) * -1);
+}
+
+.links__url-input {
+  flex: 1;
+  min-width: 0;
+  padding: calc(var(--ds-space) * 1.25) calc(var(--ds-space) * 1.5);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-ctl);
+  background: var(--ds-bg);
+  color: var(--ds-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-t-2);
+}
+
+.links__steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space);
+  padding-left: calc(var(--ds-space) * 2.5);
+  font-size: var(--ds-t-2);
+  line-height: 1.5;
+  max-width: 70ch;
+}
+
+.links__rows {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ds-space) * 1.5);
+  padding: 0;
+  list-style: none;
+}
+
+.links__row :deep(.ds-card__body) {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--ds-space) * 2);
+}
+
+.links__row-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space);
+  min-width: 0;
+}
+
+.links__client {
+  font-size: var(--ds-t-3);
+  font-weight: 700;
+}
+
+.links__scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--ds-space) * 0.75);
+}
+
+.links__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--ds-space) * 0.5) calc(var(--ds-space) * 3);
+  margin: 0;
+  font-size: var(--ds-t-2);
+}
+
+.links__facts dt {
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-1);
+}
+
+.links__facts dd {
+  margin: 0;
+}
+
+.links__revoke {
+  flex: none;
+}
+
+.links__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 599px) {
+  .links__url {
+    flex-direction: column;
+  }
+
+  .links__row :deep(.ds-card__body) {
+    flex-direction: column;
+  }
+}
+</style>

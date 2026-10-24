@@ -1384,7 +1384,8 @@
     "language": "Language",
     "theme-light": "Light theme",
     "theme-dark": "Dark theme",
-    "theme-auto": "Match system theme"
+    "theme-auto": "Match system theme",
+    "display-settings": "Language and theme"
   },
   "home-today": {
     "tonight": "Tonight",

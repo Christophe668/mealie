@@ -1,225 +1,156 @@
 <template>
-  <v-container
-    fluid
-    class="d-flex justify-center align-center flex-column fill-height"
-    :class="{
-      'bg-off-white': !$vuetify.theme.current.dark && !isDark,
-    }"
-  >
-    <v-progress-circular
-      v-if="reverseProxyLoggingIn"
-      indeterminate
-      color="primary"
-      size="64"
-    />
-    <template v-else>
-      <v-alert
-        v-if="isFirstLogin"
-        class="my-4"
-        type="info"
-        :icon="$globals.icons.information"
-        :style="{ flex: 'none' }"
-      >
-        <div>
-          <p class="mb-3">
-            {{ $t('user.it-looks-like-this-is-your-first-time-logging-in') }}
+  <div class="login">
+    <p v-if="reverseProxyLoggingIn" class="login__wait" role="status">
+      <span class="login__spinner" aria-hidden="true" />
+      {{ $t("general.loading") }}
+    </p>
+    <div v-else class="login__column">
+      <div class="login__brand">
+        <img
+          v-if="$appInfo.brandingLogoUrl"
+          :src="$appInfo.brandingLogoUrl"
+          alt=""
+          class="login__logo"
+        >
+        <DsIcon v-else name="primary" :size="36" />
+        <span class="ds-display login__name">{{ $appInfo.brandingName || "Mealie" }}</span>
+      </div>
+
+      <section v-if="isFirstLogin" class="login__first" role="note">
+        <DsIcon name="information" :size="20" class="login__first-icon" />
+        <div class="login__first-body">
+          <p>{{ $t('user.it-looks-like-this-is-your-first-time-logging-in') }}</p>
+          <p class="login__cred">
+            <span><strong>{{ $t('user.username') }}:</strong> changeme@example.com</span>
+            <button
+              type="button"
+              class="login__copy ds-focus"
+              :aria-label="`${$t('general.copy')} ${$t('user.username')}`"
+              @click="copyText('changeme@example.com')"
+            >
+              <DsIcon name="contentCopy" :size="16" />
+            </button>
           </p>
-          <p class="mb-1">
-            <strong>{{ $t('user.username') }}: </strong>changeme@example.com
-            <AppButtonCopy
-              copy-text="changeme@example.com"
-              color="info"
-              btn-class="h-auto"
-            />
+          <p class="login__cred">
+            <span><strong>{{ $t('user.password') }}:</strong> MyPassword</span>
+            <button
+              type="button"
+              class="login__copy ds-focus"
+              :aria-label="`${$t('general.copy')} ${$t('user.password')}`"
+              @click="copyText('MyPassword')"
+            >
+              <DsIcon name="contentCopy" :size="16" />
+            </button>
           </p>
-          <p class="mb-3">
-            <strong>{{ $t('user.password') }}: </strong>MyPassword
-            <AppButtonCopy
-              copy-text="MyPassword"
-              color="info"
-              btn-class="h-auto"
-            />
-          </p>
-          <p>
+          <p class="ds-muted">
             {{ $t('user.dont-want-to-see-this-anymore-be-sure-to-change-your-email') }}
           </p>
         </div>
-      </v-alert>
-      <v-card
-        tag="section"
-        class="d-flex flex-column align-center w-100"
-        max-width="600"
-      >
-        <v-toolbar
-          color="primary"
-          class="d-flex justify-center mb-4"
-          dark
-        >
-          <v-toolbar-title class="text-h4 text-center">
-            Mealie
-          </v-toolbar-title>
-        </v-toolbar>
-        <AppLogo :size="100" />
-        <v-card-title class="text-h5 justify-center pb-3">
+      </section>
+
+      <DsCard class="login__card">
+        <h1 class="ds-title login__title">
           {{ $t('user.sign-in') }}
-        </v-card-title>
-        <v-card-text class="w-100">
-          <v-form @submit.prevent="authenticate">
+        </h1>
+        <form class="login__form" @submit.prevent="authenticate">
+          <template v-if="$appInfo.allowPasswordLogin">
             <v-text-field
-              v-if="$appInfo.allowPasswordLogin"
               id="username"
               v-model="form.email"
               :prepend-inner-icon="$globals.icons.email"
-              variant="solo-filled"
-              flat
-              width="100%"
               autofocus
               autocomplete="username"
               name="username"
               :label="$t('user.email-or-username')"
               type="text"
+              hide-details="auto"
             />
             <v-text-field
-              v-if="$appInfo.allowPasswordLogin"
               id="password"
               v-model="form.password"
               :prepend-inner-icon="$globals.icons.lock"
               :append-inner-icon="passwordIcon"
-              variant="solo-filled"
-              flat
               autocomplete="current-password"
               name="password"
               :label="$t('user.password')"
               :type="inputType"
+              hide-details="auto"
               @click:append-inner="togglePasswordShow"
             />
-            <v-checkbox
-              v-if="$appInfo.allowPasswordLogin"
-              v-model="form.remember"
-              class="ml-2 mt-n2"
-              :label="$t('user.remember-me')"
-            />
-            <v-card-actions v-if="$appInfo.allowPasswordLogin" class="justify-center pt-0">
-              <div class="max-button">
-                <v-btn
-                  :loading="loggingIn"
-                  :disabled="oidcLoggingIn"
-                  variant="elevated"
-                  color="primary"
-                  type="submit"
-                  size="large"
-                  rounded
-                  class="rounded-xl"
-                  block
-                >
-                  {{ $t("user.login") }}
-                </v-btn>
-              </div>
-            </v-card-actions>
+            <label class="login__remember">
+              <input v-model="form.remember" type="checkbox" class="login__remember-box ds-focus">
+              {{ $t('user.remember-me') }}
+            </label>
+            <DsButton
+              type="submit"
+              size="lg"
+              block
+              :disabled="loggingIn || oidcLoggingIn"
+              :aria-busy="loggingIn ? 'true' : undefined"
+            >
+              {{ $t("user.login") }}
+            </DsButton>
+          </template>
 
-            <div
-              v-if="$appInfo.enableOidc && $appInfo.allowPasswordLogin"
-              class="d-flex my-4 justify-center align-center"
-              width="80%"
-            >
-              <v-divider class="div-width" />
-              <span
-                class="absolute px-2"
-                :class="{
-                  'bg-white': !$vuetify.theme.current.dark && !isDark,
-                  'bg-grey-darken-4': $vuetify.theme.current.dark || isDark,
-                }"
-              >
-                {{ $t("user.or") }}
-              </span>
-            </div>
-            <v-card-actions
-              v-if="$appInfo.enableOidc"
-              class="justify-center"
-            >
-              <div class="max-button">
-                <v-btn
-                  :loading="oidcLoggingIn"
-                  color="primary"
-                  size="large"
-                  variant="elevated"
-                  rounded
-                  class="rounded-xl"
-                  block
-                  @click="() => oidcAuthenticate()"
-                >
-                  {{ $t("user.login-oidc") }} {{ $appInfo.oidcProviderName }}
-                </v-btn>
-              </div>
-            </v-card-actions>
-          </v-form>
-        </v-card-text>
-        <v-card-actions class="d-flex justify-center flex-column flex-sm-row">
-          <v-btn
+          <p v-if="$appInfo.enableOidc && $appInfo.allowPasswordLogin" class="login__or ds-muted">
+            {{ $t("user.or") }}
+          </p>
+          <DsButton
+            v-if="$appInfo.enableOidc"
+            :variant="$appInfo.allowPasswordLogin ? 'line' : 'primary'"
+            size="lg"
+            block
+            :disabled="oidcLoggingIn"
+            :aria-busy="oidcLoggingIn ? 'true' : undefined"
+            @click="() => oidcAuthenticate()"
+          >
+            {{ $t("user.login-oidc") }} {{ $appInfo.oidcProviderName }}
+          </DsButton>
+        </form>
+
+        <div class="login__links">
+          <NuxtLink
             v-if="$appInfo.allowSignup && $appInfo.allowPasswordLogin"
-            variant="text"
             to="/register"
+            class="login__link ds-focus"
           >
             {{ $t("user.register") }}
-          </v-btn>
-          <v-btn
-            v-else
-            variant="text"
-            disabled
-          >
-            {{ $t("user.invite-only") }}
-          </v-btn>
-          <v-btn
+          </NuxtLink>
+          <span v-else class="ds-muted">{{ $t("user.invite-only") }}</span>
+          <NuxtLink
             v-if="$appInfo.allowPasswordLogin"
-            class="mr-auto"
-            variant="text"
             to="/forgot-password"
+            class="login__link ds-focus"
           >
             {{ $t("user.reset-password") }}
-          </v-btn>
-        </v-card-actions>
+          </NuxtLink>
+        </div>
+      </DsCard>
 
-        <v-card-text class="d-flex justify-center flex-column flex-sm-row">
-          <div
-            v-for="link in [
-              {
-                text: $t('about.sponsor'),
-                icon: $globals.icons.heart,
-                href: 'https://github.com/sponsors/hay-kot',
-              },
-              {
-                text: $t('about.github'),
-                icon: $globals.icons.github,
-                href: 'https://github.com/mealie-recipes/mealie',
-              },
-              {
-                text: $t('about.docs'),
-                icon: $globals.icons.folderOutline,
-                href: 'https://docs.mealie.io/',
-              },
-            ]"
-            :key="link.text"
-            class="text-center"
-          >
-            <v-btn
-              variant="text"
-              :href="link.href"
-              target="_blank"
-            >
-              <v-icon start>
-                {{ link.icon }}
-              </v-icon>
-              {{ link.text }}
-            </v-btn>
-          </div>
-        </v-card-text>
-      </v-card>
-    </template>
-  </v-container>
+      <nav class="login__about" :aria-label="$t('about.about')">
+        <a
+          v-for="link in aboutLinks"
+          :key="link.href"
+          :href="link.href"
+          target="_blank"
+          rel="noopener"
+          class="login__about-link ds-focus"
+        >
+          <DsIcon :name="link.icon" :size="16" />
+          {{ link.text }}
+        </a>
+      </nav>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { useDark, useSessionStorage, whenever } from "@vueuse/core";
+import { useSessionStorage, whenever } from "@vueuse/core";
+import DsButton from "~/components/Design/DsButton.vue";
+import DsCard from "~/components/Design/DsCard.vue";
+import DsIcon from "~/components/Design/DsIcon.vue";
+import { useCopy } from "~/composables/use-copy";
+import type { Icon } from "~/lib/icons/icon-type";
 import { useLoggedInState } from "~/composables/use-logged-in-state";
 import { usePasswordField } from "~/composables/use-passwords";
 import { alert } from "~/composables/use-toast";
@@ -231,7 +162,7 @@ import { useUserActivityPreferences } from "~/composables/use-users/preferences"
 definePageMeta({
   layout: "blank",
 });
-const isDark = useDark();
+const { copyText } = useCopy();
 
 const router = useRouter();
 const route = useRoute();
@@ -251,6 +182,12 @@ const pendingShareRedirect = useSessionStorage<string | null>("pwa_share_redirec
 useSeoMeta({
   title: i18n.t("user.login"),
 });
+
+const aboutLinks = computed<{ text: string; icon: keyof Icon; href: string }[]>(() => [
+  { text: i18n.t("about.sponsor"), icon: "heart", href: "https://github.com/sponsors/hay-kot" },
+  { text: i18n.t("about.github"), icon: "github", href: "https://github.com/mealie-recipes/mealie" },
+  { text: i18n.t("about.docs"), icon: "folderOutline", href: "https://docs.mealie.io/" },
+]);
 
 const form = reactive({
   email: "",
@@ -413,13 +350,202 @@ function alertOnError(error: any) {
 }
 </script>
 
-<style lang="css" scoped>
+<style scoped>
+.login {
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: calc(var(--ds-space) * 8) calc(var(--ds-space) * 2) calc(var(--ds-space) * 4);
+  background: var(--ds-bg);
+  color: var(--ds-text);
+}
+
+.login__column {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ds-space) * 3);
+  width: 100%;
+  max-width: 440px;
+}
+
+.login__brand {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 1.5);
+}
+
+.login__logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+}
+
+.login__name {
+  font-size: var(--ds-t-7);
+}
+
+.login__first {
+  display: flex;
+  gap: calc(var(--ds-space) * 1.5);
+  padding: calc(var(--ds-space) * 2) calc(var(--ds-space) * 2.5);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-surface);
+  font-size: var(--ds-t-2);
+  line-height: 1.5;
+}
+
+.login__first-icon {
+  margin-top: 2px;
+  color: var(--ds-text-2);
+}
+
+.login__first-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space);
+  min-width: 0;
+}
+
+.login__cred {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space);
+  overflow-wrap: anywhere;
+}
+
+.login__copy {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: calc(var(--ds-space) * 4);
+  height: calc(var(--ds-space) * 4);
+  padding: 0;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-ctl);
+  background: var(--ds-surface);
+  color: var(--ds-text);
+  cursor: pointer;
+}
+
+.login__card :deep(.ds-card__body) {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ds-space) * 2.5);
+  padding: calc(var(--ds-space) * 3.5);
+}
+
+.login__form {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ds-space) * 2);
+}
+
+.login__remember {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space);
+  font-size: var(--ds-t-2);
+  cursor: pointer;
+}
+
+.login__remember-box {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--ds-text);
+}
+
+.login__or {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 1.5);
+  font-size: var(--ds-t-1);
+}
+
+.login__or::before,
+.login__or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--ds-border);
+}
+
+.login__links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--ds-space) calc(var(--ds-space) * 2);
+  padding-top: calc(var(--ds-space) * 2);
+  border-top: 1px solid var(--ds-border);
+  font-size: var(--ds-t-2);
+}
+
+.login__link {
+  color: var(--ds-text);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.login__about {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--ds-space) calc(var(--ds-space) * 2.5);
+}
+
+.login__about-link {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 0.75);
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-1);
+  text-decoration: none;
+}
+
+.login__about-link:hover {
+  color: var(--ds-text);
+}
+
+.login__wait {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 1.5);
+  align-self: center;
+  color: var(--ds-text-2);
+}
+
+.login__spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--ds-border);
+  border-top-color: var(--ds-text);
+  border-radius: 50%;
+  animation: login-spin 800ms linear infinite;
+}
+
+@keyframes login-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Fix password manager autofill detection - Vuetify uses opacity:0 during animation */
 :deep(.v-field__input) {
   opacity: 1 !important;
 }
+
+@media (max-width: 599px) {
+  .login {
+    padding-top: calc(var(--ds-space) * 4);
+  }
+
+  .login__card :deep(.ds-card__body) {
+    padding: calc(var(--ds-space) * 2.5);
+  }
+}
 </style>
 
+<!-- Legacy global classes kept as they were: AppLogo and other upstream components rely on them once this page has loaded. -->
 <style lang="css">
 .max-button {
   width: 300px;

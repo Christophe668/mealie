@@ -1384,7 +1384,8 @@
     "language": "Langue",
     "theme-light": "Thème clair",
     "theme-dark": "Thème sombre",
-    "theme-auto": "Thème du système"
+    "theme-auto": "Thème du système",
+    "display-settings": "Langue et thème"
   },
   "home-today": {
     "tonight": "Ce soir",

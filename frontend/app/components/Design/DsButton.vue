@@ -9,7 +9,7 @@
   </NuxtLink>
   <button
     v-else
-    type="button"
+    :type="type"
     :class="classes"
     :aria-disabled="disabled ? 'true' : undefined"
     @click="swallowWhenDisabled"
@@ -32,6 +32,8 @@ const props = withDefaults(defineProps<{
   block?: boolean;
   /** Uses aria-disabled rather than the native attribute so the button stays focusable and announced. */
   disabled?: boolean;
+  /** Native button type; "submit" lets a form submit on Enter. Ignored for links. */
+  type?: "button" | "submit";
 }>(), {
   variant: "primary",
   size: "md",
@@ -39,6 +41,7 @@ const props = withDefaults(defineProps<{
   icon: undefined,
   block: false,
   disabled: false,
+  type: "button",
 });
 
 const classes = computed(() => [
