@@ -20,7 +20,7 @@ docker compose up -d
 
 The compose file pulls `ghcr.io/christophe668/mealie:main` (built by `.github/workflows/fork-image.yml` on every push to `main`). To build locally instead: `docker compose up -d --build`.
 
-Mealie listens on host port `9925`. Create your admin account on first start (signup is disabled afterwards via `ALLOW_SIGNUP=false`).
+Mealie listens on host port `9925`. Signup is disabled from the start (`ALLOW_SIGNUP=false`). Log in with Mealie's default admin (`changeme@example.com` / `MyPassword`) and change both immediately.
 
 ## Reverse proxy
 

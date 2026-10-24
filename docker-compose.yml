@@ -10,10 +10,10 @@ services:
       - "9925:9000"
     environment:
       # Must be https://... (or localhost) for the MCP/OAuth routes to be registered.
-      BASE_URL: ${BASE_URL}
+      BASE_URL: ${BASE_URL:?set BASE_URL (see .env.example)}
       DB_ENGINE: postgres
       POSTGRES_USER: ${POSTGRES_USER:-mealie}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mealie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (see .env.example)}
       POSTGRES_SERVER: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-mealie}
@@ -32,7 +32,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mealie}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mealie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (see .env.example)}
       POSTGRES_DB: ${POSTGRES_DB:-mealie}
       TZ: Europe/Brussels
     volumes:
