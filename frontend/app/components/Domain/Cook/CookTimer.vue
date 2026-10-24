@@ -13,7 +13,7 @@
     </svg>
     <div class="cook-timer__text">
       <span class="cook-timer__time">{{ clock }}</span>
-      <span class="cook-timer__label">{{ timer.done ? $t("cook.timer-done") : caption }}</span>
+      <span class="cook-timer__label">{{ timer.done ? $t("cook.timer-done") : (timer.name ?? caption) }}</span>
     </div>
     <div class="cook-timer__actions">
       <button
@@ -51,7 +51,7 @@ import type { CookTimer } from "~/composables/use-cook-timers";
 
 const props = defineProps<{
   timer: CookTimer;
-  /** "10 minutes, step 3". */
+  /** "Fry the guanciale, 5 minutes, step 2" (or just "5 minutes, step 2"); shown when the timer has no name, always used for aria. */
   caption: string;
 }>();
 

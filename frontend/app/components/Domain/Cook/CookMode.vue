@@ -216,7 +216,7 @@ const MAX_TIMER_SECONDS = 24 * 3600;
 
 function stepTimers(step: number): CookTimerSpec[] {
   return findStepTimers(steps.value[step]?.text)
-    .map((timer, n) => ({ id: timerId(step, n), label: timer.text, total: timer.seconds }))
+    .map((timer, n) => ({ id: timerId(step, n), label: timer.text, name: timer.name ?? undefined, total: timer.seconds }))
     .filter(timer => timer.total <= MAX_TIMER_SECONDS);
 }
 
@@ -234,8 +234,10 @@ function toggleTimer(spec: CookTimerSpec) {
   toggle(spec);
 }
 
+/** "Fry the guanciale, 5 minutes, step 2" — the name first when the step gives one. */
 function timerCaption(timer: CookTimerState) {
-  return `${timer.label}, ${i18n.t("cook.timer-step", { n: stepOf(timer.id) })}`;
+  const detail = `${timer.label}, ${i18n.t("cook.timer-step", { n: stepOf(timer.id) })}`;
+  return timer.name ? `${timer.name}, ${detail}` : detail;
 }
 
 /*

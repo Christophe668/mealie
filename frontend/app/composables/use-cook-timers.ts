@@ -4,6 +4,8 @@ export interface CookTimer {
   id: string;
   /** What the step said, e.g. "10 minutes". */
   label: string;
+  /** The action it belongs to, e.g. "Fry the guanciale", when the step text gives one. */
+  name?: string;
   /** Seconds. */
   total: number;
   /** Seconds left, rounded up so "00:00" only shows once the time is really up. */
@@ -12,7 +14,7 @@ export interface CookTimer {
   done: boolean;
 }
 
-export type CookTimerSpec = Pick<CookTimer, "id" | "label" | "total">;
+export type CookTimerSpec = Pick<CookTimer, "id" | "label" | "name" | "total">;
 
 /** Durations in a step's text, in seconds; the step-timer parser is the single source. */
 export function parseDurations(text: string | null | undefined): number[] {
