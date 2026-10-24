@@ -1,0 +1,54 @@
+# Mealie fork on a NAS (Synology Container Manager, QNAP Container Station, Unraid, TrueNAS, plain Docker).
+# Pulls the published image (amd64 + arm64), keeps data in plain folders next to this file so NAS backups
+# pick them up, and publishes Mealie over HTTPS through a Cloudflare Tunnel (no port forwarding).
+# Guide: docs/fork/nas.md (it lists the .env values this file reads)
+
+services:
+  mealie:
+    image: ghcr.io/christophe668/mealie:main
+    restart: unless-stopped
+    environment:
+      # The public HTTPS address from the tunnel. MCP and OAuth only switch on with https://.
+      BASE_URL: ${BASE_URL:?set BASE_URL in .env}
+      DB_ENGINE: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-mealie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_SERVER: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-mealie}
+      ALLOW_SIGNUP: "false"
+      TZ: ${TZ:-Europe/Brussels}
+      HOST_IP: "*"
+    volumes:
+      - ./data:/app/data
+    # Optional: reach Mealie directly on the LAN at http://<nas-ip>:9925 (MCP stays on the HTTPS address).
+    ports:
+      - "9925:9000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mealie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-mealie}
+      TZ: ${TZ:-Europe/Brussels}
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+    depends_on:
+      - mealie

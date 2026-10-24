@@ -2,6 +2,8 @@
 
 This fork exposes an OAuth 2.1-protected MCP server at `https://<your-domain>/mcp`. claude.ai connects to it as a custom connector.
 
+Running on a NAS (Synology, QNAP, Unraid, TrueNAS)? Follow [nas.md](nas.md) instead: one compose project with a Cloudflare Tunnel, no port forwarding.
+
 ## Prerequisites
 
 - A domain name pointing at your host (or a Cloudflare Tunnel hostname).
