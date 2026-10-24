@@ -133,8 +133,10 @@ class RecipeModel(SqlAlchemyBase, BaseMixins):
         "RecipeTimelineEvent", back_populates="recipe", cascade="all, delete, delete-orphan"
     )
     # SQLite runs without foreign key enforcement, so the ORM deletes feedback with its recipe.
+    # Feedback is household-scoped while recipe query filters are group-scoped: the query filter builder
+    # refuses to walk this relationship (`info={"filterable": False}`).
     feedback: Mapped[list[RecipeFeedback]] = orm.relationship(
-        "RecipeFeedback", back_populates="recipe", cascade="all, delete, delete-orphan"
+        "RecipeFeedback", back_populates="recipe", cascade="all, delete, delete-orphan", info={"filterable": False}
     )
 
     # Mealie Specific

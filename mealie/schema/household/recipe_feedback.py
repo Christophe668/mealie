@@ -41,7 +41,7 @@ class RecipeFeedbackRecipe(MealieModel):
 
 
 class RecipeFeedbackOut(MealieModel):
-    """A stored feedback row. Read schemas carry no range validators, so an odd stored value still loads."""
+    """A stored feedback row. `effort` carries no range validator here, so an odd stored effort still loads."""
 
     id: UUID4
     group_id: UUID4

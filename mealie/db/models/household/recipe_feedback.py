@@ -5,7 +5,7 @@ from pydantic import ConfigDict
 from sqlalchemy import Date, ForeignKey, Integer, String, orm
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .._model_base import BaseMixins, FilterableColumn, SqlAlchemyBase
+from .._model_base import BaseMixins, SqlAlchemyBase
 from .._model_utils.auto_init import auto_init
 from .._model_utils.guid import GUID
 
@@ -16,31 +16,36 @@ if TYPE_CHECKING:
 
 
 class RecipeFeedback(SqlAlchemyBase, BaseMixins):
-    """How a cooked recipe went for the household: a verdict, optional effort and note."""
+    """How a cooked recipe went for the household: a verdict, optional effort and note.
+
+    No column is a `FilterableColumn`, and `RecipeModel.feedback` is marked non-filterable: recipe query filters
+    are group-scoped, so letting them reach this household-scoped table would leak other households' feedback.
+    Feedback is filtered through the repository's own methods instead.
+    """
 
     __tablename__ = "recipe_feedback"
 
     id: Mapped[GUID] = mapped_column(GUID, primary_key=True, default=GUID.generate)
 
-    group_id: FilterableColumn[GUID] = mapped_column(GUID, ForeignKey("groups.id"), nullable=False, index=True)
-    household_id: FilterableColumn[GUID] = mapped_column(GUID, ForeignKey("households.id"), nullable=False, index=True)
+    group_id: Mapped[GUID] = mapped_column(GUID, ForeignKey("groups.id"), nullable=False, index=True)
+    household_id: Mapped[GUID] = mapped_column(GUID, ForeignKey("households.id"), nullable=False, index=True)
     household: Mapped[Household] = orm.relationship("Household", back_populates="recipe_feedback")
 
-    recipe_id: FilterableColumn[GUID] = mapped_column(
+    recipe_id: Mapped[GUID] = mapped_column(
         GUID, ForeignKey("recipes.id", ondelete="CASCADE"), nullable=False, index=True
     )
     recipe: Mapped[RecipeModel] = orm.relationship("RecipeModel", back_populates="feedback")
 
-    user_id: FilterableColumn[GUID | None] = mapped_column(GUID, ForeignKey("users.id", ondelete="SET NULL"))
+    user_id: Mapped[GUID | None] = mapped_column(GUID, ForeignKey("users.id", ondelete="SET NULL"))
     user: Mapped[User | None] = orm.relationship("User", foreign_keys=[user_id])
 
-    for_whom: FilterableColumn[str | None] = mapped_column(String)
-    made_on: FilterableColumn[datetime.date] = mapped_column(Date, nullable=False)
-    verdict: FilterableColumn[str] = mapped_column(String, nullable=False)
-    effort: FilterableColumn[int | None] = mapped_column(Integer)
-    note: FilterableColumn[str | None] = mapped_column(String)
+    for_whom: Mapped[str | None] = mapped_column(String)
+    made_on: Mapped[datetime.date] = mapped_column(Date, nullable=False)
+    verdict: Mapped[str] = mapped_column(String, nullable=False)
+    effort: Mapped[int | None] = mapped_column(Integer)
+    note: Mapped[str | None] = mapped_column(String)
 
-    timeline_event_id: FilterableColumn[GUID | None] = mapped_column(
+    timeline_event_id: Mapped[GUID | None] = mapped_column(
         GUID, ForeignKey("recipe_timeline_events.id", ondelete="SET NULL")
     )
 

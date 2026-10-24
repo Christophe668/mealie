@@ -9,6 +9,9 @@ from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedb
 
 from .repository_generic import HouseholdRepositoryGeneric
 
+# Newest `made_on` first, then newest recorded; `id` makes ties (one flush, a coarse clock) deterministic.
+_NEWEST_FIRST = (RecipeFeedback.made_on.desc(), RecipeFeedback.created_at.desc(), RecipeFeedback.id.desc())
+
 
 class RepositoryRecipeFeedback(HouseholdRepositoryGeneric[RecipeFeedbackOut, RecipeFeedback]):
     def _with_scope(self, data: RecipeFeedbackOut | BaseModel | dict) -> dict:
@@ -41,7 +44,7 @@ class RepositoryRecipeFeedback(HouseholdRepositoryGeneric[RecipeFeedbackOut, Rec
         stmt = self._scope(select(RecipeFeedback).options(*self.schema.loader_options()))
         if recipe_id is not None:
             stmt = stmt.filter(RecipeFeedback.recipe_id == recipe_id)
-        stmt = stmt.order_by(RecipeFeedback.made_on.desc(), RecipeFeedback.created_at.desc())
+        stmt = stmt.order_by(*_NEWEST_FIRST)
         if limit is not None:
             stmt = stmt.limit(limit)
         rows = self.session.execute(stmt).unique().scalars().all()
@@ -73,7 +76,7 @@ class RepositoryRecipeFeedback(HouseholdRepositoryGeneric[RecipeFeedbackOut, Rec
             func.row_number()
             .over(
                 partition_by=RecipeFeedback.recipe_id,
-                order_by=(RecipeFeedback.made_on.desc(), RecipeFeedback.created_at.desc()),
+                order_by=_NEWEST_FIRST,
             )
             .label("rank")
         )

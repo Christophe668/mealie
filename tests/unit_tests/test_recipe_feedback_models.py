@@ -1,11 +1,15 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from mealie.db.models.recipe.recipe import RecipeModel
 from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedbackCreate
 from mealie.schema.recipe.recipe import Recipe
+from mealie.services.query_filter.builder import NonFilterableValueError, QueryFilterBuilder
+from tests.utils import api_routes
 from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
 
@@ -65,6 +69,24 @@ def test_for_recipe_orders_by_made_on_then_created_at(unique_user: TestUser):
     assert latest[0].recipe.id == other.id
 
 
+def test_ties_on_made_on_and_created_at_break_on_id(unique_user: TestUser):
+    recipe = _recipe(unique_user)
+    repo = unique_user.repos.recipe_feedback
+    stamp = datetime(2099, 2, 1, 12, 0, tzinfo=UTC)
+
+    rows = repo.create_many(
+        [
+            {**_row(recipe, FeedbackVerdict.ok, date(2099, 2, 1)), "created_at": stamp},
+            {**_row(recipe, FeedbackVerdict.loved, date(2099, 2, 1)), "created_at": stamp},
+            {**_row(recipe, FeedbackVerdict.never_again, date(2099, 2, 1)), "created_at": stamp},
+        ]
+    )
+    by_id_desc = sorted(rows, key=lambda row: str(row.id).replace("-", ""), reverse=True)
+
+    assert [row.id for row in repo.for_recipe(recipe.id)] == [row.id for row in by_id_desc]
+    assert repo.summaries([recipe.id])[recipe.id].last_verdict == by_id_desc[0].verdict
+
+
 def test_summaries_count_verdicts_and_keep_the_last_one(unique_user: TestUser):
     first = _recipe(unique_user)
     second = _recipe(unique_user)
@@ -91,7 +113,7 @@ def test_summaries_count_verdicts_and_keep_the_last_one(unique_user: TestUser):
     assert repo.summaries([]) == {}
 
 
-def test_recipe_feedback_is_scoped_to_household(unique_user: TestUser, h2_user: TestUser):
+def test_recipe_feedback_is_scoped_to_household(unique_user: TestUser, h2_user: TestUser, g2_user: TestUser):
     recipe = _recipe(unique_user)
     created = unique_user.repos.recipe_feedback.create(_row(recipe, FeedbackVerdict.loved, date(2026, 10, 24)))
     other = h2_user.repos.recipe_feedback
@@ -100,6 +122,12 @@ def test_recipe_feedback_is_scoped_to_household(unique_user: TestUser, h2_user: 
     assert other.for_recipe(recipe.id) == []
     assert created.id not in {row.id for row in other.latest(100)}
     assert other.summaries([recipe.id]) == {}
+
+    other_group = g2_user.repos.recipe_feedback
+    assert other_group.get_one(created.id) is None
+    assert other_group.for_recipe(recipe.id) == []
+    assert created.id not in {row.id for row in other_group.latest(100)}
+    assert other_group.summaries([recipe.id]) == {}
 
     # a scoped repository always writes its own scope, whatever the payload says
     forced = unique_user.repos.recipe_feedback.create(
@@ -134,3 +162,21 @@ def test_deleting_recipe_deletes_its_feedback(unique_user: TestUser):
     unique_user.repos.session.expire_all()
     assert unique_user.repos.recipe_feedback.get_one(created.id) is None
     assert unique_user.repos.recipe_feedback.summaries([recipe.id]) == {}
+
+
+@pytest.mark.parametrize(
+    "attr_string", ["feedback.verdict", "feedback.created_at", "feedback.household_id", "feedback.recipe.name"]
+)
+def test_recipe_query_filters_cannot_reach_feedback(attr_string: str):
+    """Recipe filters are group-scoped; feedback is per household, so no path into it may be filtered on."""
+    with pytest.raises(NonFilterableValueError):
+        QueryFilterBuilder.get_model_and_model_attr_from_attr_string(attr_string, RecipeModel)
+
+
+def test_recipe_api_rejects_a_feedback_query_filter(api_client: TestClient, unique_user: TestUser):
+    response = api_client.get(
+        api_routes.recipes,
+        params={"queryFilter": 'feedback.verdict = "never_again"'},
+        headers=unique_user.token,
+    )
+    assert response.status_code == 400
