@@ -13,7 +13,9 @@ Works on any NAS that runs Docker Compose: Synology (Container Manager, DSM 7.2+
 
 1. Cloudflare dashboard, **Zero Trust**, **Networks**, **Tunnels**, **Create a tunnel**, type **Cloudflared**, name it `mealie`.
 2. On the install screen choose **Docker** and copy the long token after `--token`. Do not run the command shown; the NAS project runs it.
-3. **Public hostname**: subdomain `mealie`, your domain, service type **HTTP**, URL `mealie:9000`. Save.
+3. **Leave the public hostname for later** (step 4). Until it exists the tunnel publishes nothing, which gives you time to replace Mealie's default admin password before the address goes public.
+
+The token is a password for this tunnel: anyone holding it can run a connector that answers for your hostname. Keep it only in the NAS settings (the `.env` file or Portainer's environment variables), never in the repository or a chat. If it leaks, open the tunnel in Cloudflare and refresh its token; the old one stops working.
 
 ## 2. Put the files on the NAS
 
@@ -62,9 +64,10 @@ Portainer can deploy the same file straight from GitHub, with the settings typed
 
 To update later: open the stack, **Pull and redeploy**, with **Re-pull image** switched on. Do not rely on Portainer's automatic GitOps polling for updates: it redeploys as soon as the repository changes, which is about 15 minutes before the new image finishes building, so it would restart on the old image.
 
-## 4. First login
+## 4. First login, then go public
 
-Open `https://mealie.yourdomain.com` and sign in with the default admin, `changeme@example.com` / `MyPassword`. Change the email and password straight away in your profile.
+1. On your home network, open `http://<nas-ip>:9925` and sign in with the default admin, `changeme@example.com` / `MyPassword`. Change the email and a strong password straight away in your profile. Do this before step 2: once the address is public, anyone who finds it can try the default login.
+2. Back in Cloudflare, open the tunnel, **Public hostname**, **Add**: subdomain `mealie`, your domain, service type **HTTP**, URL `mealie:9000`. Save. `https://mealie.yourdomain.com` now works from anywhere.
 
 To bring recipes from another Mealie instance (for example the one on your Mac), use **Settings**, **Backups** there to create a backup, download it, then upload and restore it on the NAS.
 
