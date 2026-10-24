@@ -4,12 +4,14 @@ import CookMode from "./CookMode.vue";
 import CookFinish from "./CookFinish.vue";
 import type { Recipe } from "~/lib/api/types/recipe";
 import { useLocales } from "~/composables/use-locales";
+import { alert } from "~/composables/use-toast";
 
 vi.mock("~/composables/use-locales");
 
 const updateLastMade = vi.fn(async () => ({ data: {} }));
+const createFeedback = vi.fn(async (): Promise<{ data: object | null; error: unknown }> => ({ data: {}, error: null }));
 vi.mock("~/composables/api", () => ({
-  useUserApi: () => ({ recipes: { updateLastMade } }),
+  useUserApi: () => ({ recipes: { updateLastMade }, recipeFeedback: { create: createFeedback } }),
 }));
 
 const replace = vi.fn();
@@ -57,6 +59,8 @@ beforeEach(() => {
   sessionStorage.clear();
   replace.mockReset();
   updateLastMade.mockClear();
+  createFeedback.mockReset();
+  createFeedback.mockImplementation(async () => ({ data: {}, error: null }));
   vi.stubGlobal("useRouter", () => ({ replace }));
   vi.mocked(useLocales).mockReturnValue({
     locales: [{ value: "en-US", pluralFoodHandling: "without-unit" }],
@@ -162,29 +166,96 @@ describe("CookMode", () => {
     wrapper.unmount();
   });
 
-  test("a verdict records last made, keeps the verdict and goes back", async () => {
+  const button = (wrapper: ReturnType<typeof render>, label: string) =>
+    wrapper.findAll("button").find(b => b.text() === label)!;
+
+  test("a verdict records the feedback and goes back", async () => {
     const wrapper = render();
     await press("End");
 
-    const loved = wrapper.findAll("button").find(b => b.text() === "Loved it")!;
-    await loved.trigger("click");
+    await button(wrapper, "Loved it").trigger("click");
     await flushPromises();
 
-    expect(updateLastMade).toHaveBeenCalledWith("onion-soup", expect.any(String));
-    expect(sessionStorage.getItem("pending-feedback:onion-soup")).toBe("loved");
+    expect(createFeedback).toHaveBeenCalledWith({ recipeId: "r-1", verdict: "loved" });
+    // The server sets last made when it records a verdict.
+    expect(updateLastMade).not.toHaveBeenCalled();
+    expect(sessionStorage.length).toBe(0);
     expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
     wrapper.unmount();
   });
 
-  test("Skip still records last made", async () => {
+  test("the effort chips are a single choice that can be cleared, sent with the verdict", async () => {
     const wrapper = render();
     await press("End");
 
-    await wrapper.findAll("button").find(b => b.text() === "Skip")!.trigger("click");
+    expect(wrapper.text()).toContain("How much work?");
+    const chips = () => wrapper.findAll(".cook-finish__effort button");
+    expect(chips().map(c => c.text())).toEqual(["Easy", "Fine", "A lot of work"]);
+    expect(chips().every(c => c.attributes("aria-pressed") === "false")).toBe(true);
+
+    await button(wrapper, "Easy").trigger("click");
+    await button(wrapper, "A lot of work").trigger("click");
+    expect(chips().map(c => c.attributes("aria-pressed"))).toEqual(["false", "false", "true"]);
+
+    await button(wrapper, "A lot of work").trigger("click");
+    expect(chips().every(c => c.attributes("aria-pressed") === "false")).toBe(true);
+
+    await button(wrapper, "A lot of work").trigger("click");
+    await button(wrapper, "It was fine").trigger("click");
+    await flushPromises();
+
+    expect(createFeedback).toHaveBeenCalledWith({ recipeId: "r-1", verdict: "ok", effort: 3 });
+    wrapper.unmount();
+  });
+
+  test("Not again is sent as never_again", async () => {
+    const wrapper = render();
+    await press("End");
+
+    await button(wrapper, "Not again").trigger("click");
+    await flushPromises();
+
+    expect(createFeedback).toHaveBeenCalledWith({ recipeId: "r-1", verdict: "never_again" });
+    wrapper.unmount();
+  });
+
+  test("a failed save says so, stays on the page and lets you try again", async () => {
+    const error = vi.spyOn(alert, "error").mockImplementation(() => {});
+    let resolve!: (value: { data: null; error: unknown }) => void;
+    createFeedback.mockImplementation(() => new Promise((r) => {
+      resolve = r;
+    }));
+    const wrapper = render();
+    await press("End");
+
+    await button(wrapper, "Loved it").trigger("click");
+    await flushPromises();
+    // Every answer is disabled while the save is in flight.
+    expect(button(wrapper, "Not again").attributes("aria-disabled")).toBe("true");
+    expect(button(wrapper, "Skip").attributes("aria-disabled")).toBe("true");
+    await button(wrapper, "Not again").trigger("click");
+    expect(createFeedback).toHaveBeenCalledTimes(1);
+
+    resolve({ data: null, error: new Error("offline") });
+    await flushPromises();
+
+    expect(error).toHaveBeenCalledWith("Couldn’t record that you made it.");
+    expect(replace).not.toHaveBeenCalled();
+    expect(button(wrapper, "Loved it").attributes("aria-disabled")).toBeUndefined();
+    error.mockRestore();
+    wrapper.unmount();
+  });
+
+  test("Skip only records last made", async () => {
+    const wrapper = render();
+    await press("End");
+
+    await button(wrapper, "Skip").trigger("click");
     await flushPromises();
 
     expect(updateLastMade).toHaveBeenCalledTimes(1);
-    expect(sessionStorage.getItem("pending-feedback:onion-soup")).toBeNull();
+    expect(updateLastMade).toHaveBeenCalledWith("onion-soup", expect.any(String));
+    expect(createFeedback).not.toHaveBeenCalled();
     expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
     wrapper.unmount();
   });
@@ -209,6 +280,8 @@ describe("CookMode", () => {
     await flushPromises();
 
     expect(updateLastMade).not.toHaveBeenCalled();
+    expect(createFeedback).not.toHaveBeenCalled();
+    expect(wrapper.text()).not.toContain("How much work?");
     expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
     wrapper.unmount();
   });

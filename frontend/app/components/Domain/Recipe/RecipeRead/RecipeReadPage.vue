@@ -77,6 +77,13 @@
           </div>
         </section>
 
+        <RecipeReadFeedback
+          v-if="isOwnGroup && recipe.id"
+          class="read__feedback read__block"
+          :recipe-id="recipe.id"
+          :signed-in="isOwnGroup"
+        />
+
         <RecipeReadNutrition
           v-if="recipe.settings.showNutrition"
           class="read__nutrition read__block"
@@ -180,6 +187,7 @@ import { useId, useTemplateRef } from "vue";
 import { useClipboard, useElementSize, useMediaQuery, useShare, useWindowSize } from "@vueuse/core";
 import RecipeReadActions from "./RecipeReadActions.vue";
 import RecipeReadFacts from "./RecipeReadFacts.vue";
+import RecipeReadFeedback from "./RecipeReadFeedback.vue";
 import RecipeReadHero from "./RecipeReadHero.vue";
 import RecipeReadIngredients from "./RecipeReadIngredients.vue";
 import RecipeReadNutrition from "./RecipeReadNutrition.vue";
@@ -614,6 +622,7 @@ async function deleteRecipe() {
     order: 6;
   }
   .read__notes,
+  .read__feedback,
   .read__nutrition {
     order: 7;
   }

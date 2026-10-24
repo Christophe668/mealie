@@ -1506,6 +1506,27 @@
     "timeline": "Timeline",
     "source": "From {host}"
   },
+  "recipe-feedback": {
+    "title": "How it went",
+    "verdict": {
+      "loved": "Loved it",
+      "ok": "It was fine",
+      "never_again": "Not again"
+    },
+    "effort": {
+      "1": "Easy",
+      "2": "Fine",
+      "3": "A lot of work"
+    },
+    "when-for": "{when}, for {who}",
+    "see-all": "See all",
+    "delete": "Delete",
+    "delete-title": "Delete this entry?",
+    "delete-text": "Its timeline entry goes too. Last made and your rating stay as they are.",
+    "delete-failed": "Couldn’t delete that entry.",
+    "load-failed": "Couldn’t load the history.",
+    "close": "Close"
+  },
   "cook": {
     "exit": "Exit",
     "exit-label": "Exit cook mode",
@@ -1530,9 +1551,7 @@
     "timer-done": "Time’s up",
     "timer-done-announce": "{time} timer for step {n} is done",
     "how-was-it": "How was it?",
-    "loved": "Loved it",
-    "fine": "It was fine",
-    "not-again": "Not again",
+    "how-much-work": "How much work?",
     "skip": "Skip",
     "done": "Done",
     "last-step": "That’s the last step.",

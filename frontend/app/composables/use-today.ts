@@ -143,6 +143,27 @@ export function useToday() {
       : null;
   }
 
+  /**
+   * Drops the recipes the household last marked "never again", in one summary call. When that call
+   * fails the shelf is kept whole: a stale suggestion is better than an empty shelf.
+   */
+  async function withoutNeverAgain(recipes: RecipeSummary[]): Promise<RecipeSummary[]> {
+    const ids = recipes.map(recipe => recipe.id).filter((id): id is string => !!id);
+    if (!ids.length) {
+      return recipes;
+    }
+    try {
+      const { data } = await api.recipeFeedback.summaries(ids);
+      if (!data) {
+        return recipes;
+      }
+      return recipes.filter(recipe => !recipe.id || data[recipe.id]?.lastVerdict !== "never_again");
+    }
+    catch {
+      return recipes;
+    }
+  }
+
   async function loadShelves(): Promise<() => Promise<void>> {
     const stamp = ++seq.shelves;
     const cutoff = ymd(subDays(today.value, MAKE_AGAIN_AFTER_DAYS));
@@ -158,7 +179,11 @@ export function useToday() {
     if (stamp !== seq.shelves) {
       return async () => {};
     }
-    makeAgain.value = again.data?.items ?? [];
+    const againItems = await withoutNeverAgain(again.data?.items ?? []);
+    if (stamp !== seq.shelves) {
+      return async () => {};
+    }
+    makeAgain.value = againItems;
     recent.value = latest.data?.items ?? [];
     failed.shelves = (!again.data && !!again.error) || (!latest.data && !!latest.error);
     lastMade.value = {};

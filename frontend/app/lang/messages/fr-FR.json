@@ -1506,6 +1506,27 @@
     "timeline": "Historique",
     "source": "Source : {host}"
   },
+  "recipe-feedback": {
+    "title": "Comment c’était",
+    "verdict": {
+      "loved": "On a adoré",
+      "ok": "C’était correct",
+      "never_again": "À ne pas refaire"
+    },
+    "effort": {
+      "1": "Facile",
+      "2": "Correct",
+      "3": "Beaucoup de travail"
+    },
+    "when-for": "{when}, pour {who}",
+    "see-all": "Tout voir",
+    "delete": "Supprimer",
+    "delete-title": "Supprimer cette entrée ?",
+    "delete-text": "Son entrée dans l’historique est aussi supprimée. La date de dernière préparation et votre note restent telles quelles.",
+    "delete-failed": "Impossible de supprimer cette entrée.",
+    "load-failed": "Impossible de charger l’historique.",
+    "close": "Fermer"
+  },
   "cook": {
     "exit": "Quitter",
     "exit-label": "Quitter le mode cuisine",
@@ -1530,9 +1551,7 @@
     "timer-done": "C’est prêt",
     "timer-done-announce": "Le minuteur de {time} de l’étape {n} est terminé",
     "how-was-it": "C’était comment ?",
-    "loved": "On a adoré",
-    "fine": "C’était correct",
-    "not-again": "À ne pas refaire",
+    "how-much-work": "Combien de travail ?",
     "skip": "Passer",
     "done": "Terminé",
     "last-step": "C’est la dernière étape.",
