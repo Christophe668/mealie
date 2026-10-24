@@ -10,6 +10,7 @@ from mcp.server.auth.provider import (
     AuthorizeError,
     OAuthAuthorizationServerProvider,
     RefreshToken,
+    RegistrationError,
     TokenError,
     construct_redirect_uri,
 )
@@ -20,12 +21,21 @@ from sqlalchemy.orm import Session
 from mealie.core.config import get_app_settings
 from mealie.db.db_setup import session_context
 from mealie.mcp.oauth import tokens
+from mealie.mcp.oauth.redirects import is_allowed_redirect_uri
 from mealie.mcp.oauth.store import OAuthStore
 from mealie.mcp.scopes import ALL_SCOPES
 
 
 class McpAuthCode(AuthorizationCode):
     user_id: str
+
+
+class UnsafeRedirectError(Exception):
+    """The redirect URI of a pending authorization fails the https/loopback rule, so it must not be followed."""
+
+
+def _redirects_allowed(client: OAuthClientInformationFull) -> bool:
+    return all(is_allowed_redirect_uri(str(uri)) for uri in client.redirect_uris or [])
 
 
 class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshToken, AccessToken]):
@@ -41,9 +51,17 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         with self._session_factory() as session:
-            return OAuthStore(session).get_client(client_id)
+            client = OAuthStore(session).get_client(client_id)
+        # rows registered before redirect URIs were validated are treated as unknown, so the SDK never
+        # redirects to them (it answers with a plain error instead)
+        return client if client is not None and _redirects_allowed(client) else None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        if not client_info.redirect_uris or not _redirects_allowed(client_info):
+            raise RegistrationError(
+                error="invalid_redirect_uri",
+                error_description="redirect URIs must use https (plain http is only allowed on a loopback host)",
+            )
         with self._session_factory() as session:
             OAuthStore(session).save_client(client_info)
 
@@ -69,6 +87,7 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
 
         Raises:
             KeyError: if the request is unknown, expired or already completed.
+            UnsafeRedirectError: if the stored redirect URI is not https (or loopback http); the request is consumed.
         """
         owner = uuid.UUID(user_id)  # parsed first so a malformed id does not burn the pending request
         with self._session_factory() as session:
@@ -79,6 +98,8 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
 
             client_id, params = pending
             redirect_uri = str(params.redirect_uri)
+            if not is_allowed_redirect_uri(redirect_uri):
+                raise UnsafeRedirectError(redirect_uri)
             if not approve:
                 return construct_redirect_uri(redirect_uri, error="access_denied", state=params.state)
 
@@ -168,7 +189,8 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
             if row.client_id != client.client_id:
                 return None
 
-            grant = store.get_grant(row.grant_id)
+            # None for revoked grants and for grants older than the user's last password change
+            grant = store.get_active_grant(row.grant_id)
             if grant is None:
                 return None
 
@@ -187,13 +209,13 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
         with self._session_factory() as session:
             store = OAuthStore(session)
             current = store.peek_refresh_token(refresh_token.token)
-            grant = store.get_grant(current.grant_id) if current else None
+            grant = store.get_active_grant(current.grant_id) if current else None
 
             # a spent token still has to reach consume_refresh_token so that replay revokes the grant
             if current is None:
                 store.consume_refresh_token(refresh_token.token)
                 raise TokenError(error="invalid_grant", error_description="refresh token is invalid or used")
-            if grant is None:  # defensive: load_refresh_token already filters revoked grants
+            if grant is None:  # defensive: load_refresh_token already filters revoked and stale grants
                 raise TokenError(error="invalid_grant", error_description="grant has been revoked")
 
             requested = scopes or list(grant.scopes)
@@ -222,7 +244,8 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
 
         with self._session_factory() as session:
             store = OAuthStore(session)
-            if store.get_grant(claims.gid) is None:
+            # rejects revoked grants and grants from before the user's last password change
+            if store.get_active_grant(claims.gid) is None:
                 return None
 
             store.touch_grant(claims.gid)

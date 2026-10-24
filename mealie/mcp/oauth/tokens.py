@@ -12,6 +12,8 @@ ACCESS_TOKEN_TTL = timedelta(hours=1)
 REFRESH_TOKEN_TTL = timedelta(days=90)
 AUTH_CODE_TTL = timedelta(minutes=10)
 PENDING_AUTH_TTL = timedelta(minutes=10)
+# a rotated refresh token presented again within this window is refused without revoking the grant (retries)
+REFRESH_REUSE_GRACE = timedelta(seconds=60)
 
 
 class McpTokenClaims(BaseModel):

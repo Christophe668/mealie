@@ -158,3 +158,41 @@ def test_revoked_grant_invalidates_live_access_token(api_client: TestClient, uni
 
     assert response.status_code == 200
     assert asyncio.run(provider.load_access_token(token)) is None
+
+
+def _make_pending_to(store: OAuthStore, redirect_uri: str) -> str:
+    params = AuthorizationParams(
+        state="s1",
+        scopes=["recipes:read"],
+        code_challenge="challenge",
+        redirect_uri=redirect_uri,
+        redirect_uri_provided_explicitly=True,
+        resource="https://mealie.example/mcp",
+    )
+    return store.create_pending("legacy-client", params)
+
+
+def test_unsafe_stored_redirect_is_refused(api_client: TestClient, unique_user, session: Session):
+    # a pending request created before redirect URIs were validated
+    request_id = _make_pending_to(OAuthStore(session), "javascript:alert(1)//")
+
+    response = api_client.get(api_routes.users_mcp_authorize_request_id(request_id), headers=unique_user.token)
+    assert response.status_code == 200
+    assert response.json()["redirectHost"] == "javascript:alert(1)//"
+
+    for approve in (False, True):
+        response = api_client.post(
+            api_routes.users_mcp_authorize,
+            json={"requestId": request_id, "approve": approve},
+            headers=unique_user.token,
+        )
+        assert response.status_code == (400 if not approve else 404)
+        assert "redirectUrl" not in response.json()
+
+
+def test_redirect_host_ignores_userinfo(api_client: TestClient, unique_user, session: Session):
+    request_id = _make_pending_to(OAuthStore(session), "https://claude.ai@evil.example:8443/cb")
+
+    response = api_client.get(api_routes.users_mcp_authorize_request_id(request_id), headers=unique_user.token)
+
+    assert response.json()["redirectHost"] == "evil.example:8443"

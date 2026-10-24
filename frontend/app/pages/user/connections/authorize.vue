@@ -145,15 +145,32 @@ async function decide(approve: boolean) {
   submitting.value = true;
   const { data, error } = await api.mcpConnections.decide(request.value.requestId, approve);
   if (data?.redirectUrl) {
-    window.location.assign(data.redirectUrl);
+    if (isWebUrl(data.redirectUrl)) {
+      window.location.assign(data.redirectUrl);
+      return;
+    }
+    // Never navigate to javascript:, data: or other schemes: they would run in the Mealie origin.
+    request.value = null;
+    submitting.value = false;
     return;
   }
 
-  // A 404 means the request expired (or was already used) between page load and the click.
-  // Any other failure leaves the page as is so the user can retry.
-  if (error?.response?.status === 404) {
+  // A 404 means the request expired (or was already used) between page load and the click; a 400 means
+  // the server refused the client's redirect URI. Any other failure leaves the page as is so the user can retry.
+  const status = error?.response?.status;
+  if (status === 404 || status === 400) {
     request.value = null;
   }
   submitting.value = false;
+}
+
+function isWebUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "https:" || protocol === "http:";
+  }
+  catch {
+    return false;
+  }
 }
 </script>

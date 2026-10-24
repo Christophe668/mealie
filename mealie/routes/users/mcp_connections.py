@@ -1,8 +1,7 @@
-from urllib.parse import urlparse
-
 from fastapi import HTTPException, status
 
-from mealie.mcp.oauth.provider import get_provider
+from mealie.mcp.oauth.provider import UnsafeRedirectError, get_provider
+from mealie.mcp.oauth.redirects import redirect_host
 from mealie.mcp.oauth.store import OAuthStore
 from mealie.mcp.schemas import (
     McpAuthorizeDecision,
@@ -37,7 +36,7 @@ class UserMcpConnectionsController(BaseUserController):
             client_name=client.client_name if client else None,
             client_id=client_id,
             scopes=list(params.scopes or []),
-            redirect_host=urlparse(str(params.redirect_uri)).netloc,
+            redirect_host=redirect_host(str(params.redirect_uri)),
         )
 
     @router.post("/authorize", response_model=McpAuthorizeRedirect)
@@ -49,6 +48,8 @@ class UserMcpConnectionsController(BaseUserController):
             )
         except KeyError as e:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Authorization request not found or expired") from e
+        except UnsafeRedirectError as e:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "The client's redirect URI is not allowed") from e
 
         return McpAuthorizeRedirect(redirect_url=redirect_url)
 

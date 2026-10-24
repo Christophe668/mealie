@@ -1,9 +1,9 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, exists, or_, select, update
 from sqlalchemy.orm import Session
 
 from mealie.db.models._model_base import SqlAlchemyBase
@@ -15,7 +15,11 @@ from mealie.db.models.mcp.oauth import (
     McpOAuthPendingAuth,
     McpOAuthRefreshToken,
 )
+from mealie.db.models.users.users import User
 from mealie.mcp.oauth import tokens
+
+# how long rotated refresh tokens and never-used clients are kept before purge_expired removes them
+STALE_ROW_RETENTION = timedelta(days=1)
 
 
 def _now() -> datetime:
@@ -148,14 +152,29 @@ class OAuthStore:
             select(McpOAuthGrant).where(McpOAuthGrant.grant_id == grant_id, McpOAuthGrant.revoked_at.is_(None))
         ).first()
 
+    def get_active_grant(self, grant_id: str) -> McpOAuthGrant | None:
+        """A grant that is unrevoked and newer than the owner's last password change.
+
+        A password change stamps `users.tokens_valid_after` (upstream eviction rule); grants created before it are
+        revoked here on first sight, which also deletes their refresh tokens.
+        """
+        grant = self.get_grant(grant_id)
+        if grant is None:
+            return None
+
+        valid_after = self.session.scalars(select(User.tokens_valid_after).where(User.id == grant.user_id)).first()
+        if valid_after is not None and grant.created_at is not None and grant.created_at < valid_after:
+            self._revoke(grant)
+            return None
+        return grant
+
     def list_grants(self, user_id: uuid.UUID) -> list[McpOAuthGrant]:
-        return list(
-            self.session.scalars(
-                select(McpOAuthGrant)
-                .where(McpOAuthGrant.user_id == user_id, McpOAuthGrant.revoked_at.is_(None))
-                .order_by(McpOAuthGrant.created_at)
-            )
-        )
+        valid_after = self.session.scalars(select(User.tokens_valid_after).where(User.id == user_id)).first()
+        query = select(McpOAuthGrant).where(McpOAuthGrant.user_id == user_id, McpOAuthGrant.revoked_at.is_(None))
+        if valid_after is not None:
+            # grants from before the last password change no longer work, so they are not listed either
+            query = query.where(McpOAuthGrant.created_at >= valid_after)
+        return list(self.session.scalars(query.order_by(McpOAuthGrant.created_at)))
 
     def revoke_grant(self, grant_id: str, user_id: uuid.UUID) -> bool:
         grant = self.get_grant(grant_id)
@@ -229,7 +248,11 @@ class OAuthStore:
             return row
 
         if row.used_at is not None and row.expires_at > now:
-            # reuse of a rotated token: assume theft and kill the whole family
+            if now - row.used_at <= tokens.REFRESH_REUSE_GRACE:
+                # a retry or a concurrent refresh right after rotation: refuse it but keep the grant,
+                # so the successor token the other request received keeps working
+                return None
+            # reuse of a rotated token after the grace window: assume theft and kill the whole family
             grant = self.get_grant(row.grant_id)
             if grant is not None:
                 self._revoke(grant)
@@ -238,7 +261,31 @@ class OAuthStore:
     # housekeeping
 
     def purge_expired(self) -> None:
+        """Deletes rows that can no longer be used. `/register` and `/authorize` are unauthenticated, so this is
+        what keeps anonymous callers from growing the tables without bound.
+
+        Removes expired pending requests and codes (used codes are already deleted on exchange), refresh tokens
+        that expired or were rotated more than `STALE_ROW_RETENTION` ago, and clients older than that with no
+        active grant and no live pending request or code.
+        """
         now = _now()
-        for model in (McpOAuthPendingAuth, McpOAuthCode, McpOAuthRefreshToken):
+        cutoff = now - STALE_ROW_RETENTION
+        for model in (McpOAuthPendingAuth, McpOAuthCode):
             self.session.execute(delete(model).where(model.expires_at <= now))
+
+        self.session.execute(
+            delete(McpOAuthRefreshToken).where(
+                or_(McpOAuthRefreshToken.expires_at <= now, McpOAuthRefreshToken.used_at <= cutoff)
+            )
+        )
+
+        client_id = McpOAuthClient.client_id
+        self.session.execute(
+            delete(McpOAuthClient).where(
+                McpOAuthClient.created_at <= cutoff,
+                ~exists().where(McpOAuthGrant.client_id == client_id, McpOAuthGrant.revoked_at.is_(None)),
+                ~exists().where(McpOAuthPendingAuth.client_id == client_id, McpOAuthPendingAuth.expires_at > now),
+                ~exists().where(McpOAuthCode.client_id == client_id, McpOAuthCode.expires_at > now),
+            )
+        )
         self.session.commit()
