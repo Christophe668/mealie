@@ -368,3 +368,16 @@ def test_update_and_remove_refuse_another_households_row(unique_user: TestUser, 
     row = h2_user.repos.pantry_items.get_one(theirs.id)
     assert row is not None
     assert row.name == theirs.name
+
+
+def test_put_away_blank_shopping_item_gets_a_name(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    shopping_list = _list(unique_user)
+    item = unique_user.repos.group_shopping_list_item.create(
+        ShoppingListItemCreate(shopping_list_id=shopping_list.id, note="   ", quantity=0, is_food=False, checked=True)
+    )
+
+    result = service.put_away(shopping_list.id, [item.id], today=DAY_2)
+
+    (row,) = result.created
+    assert row.name.strip() != ""

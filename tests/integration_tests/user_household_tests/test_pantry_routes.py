@@ -206,3 +206,19 @@ def test_pantry_isolated_between_households(api_client: TestClient, unique_user:
     assert item_id not in [item["id"] for item in listed["items"]]
 
     assert api_client.get(item_route, headers=unique_user.token).status_code == 200
+
+
+def test_blank_name_rejected(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    for name in ("", "   "):
+        response = api_client.post(api_routes.households_pantry, json={"name": name}, headers=user.token)
+        assert response.status_code == 422
+
+    response = api_client.post(api_routes.households_pantry, json={"name": "  Milk "}, headers=user.token)
+    assert response.status_code == 201
+    item_id = response.json()["id"]
+    assert response.json()["name"] == "Milk"
+
+    response = api_client.put(api_routes.households_pantry_item_id(item_id), json={"name": " "}, headers=user.token)
+    assert response.status_code == 422
+    assert api_client.get(api_routes.households_pantry_item_id(item_id), headers=user.token).json()["name"] == "Milk"

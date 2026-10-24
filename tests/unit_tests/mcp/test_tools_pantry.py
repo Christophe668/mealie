@@ -14,7 +14,7 @@ from mealie.mcp.tools import pantry as pantry_tools
 from mealie.mcp.tools.pantry import get_pantry, put_away_shopping_items, update_pantry
 from mealie.schema.household.group_shopping_list import ShoppingListItemCreate, ShoppingListSave
 from mealie.schema.household.pantry import PantryItemCreate, PantryLocation
-from mealie.schema.recipe.recipe_ingredient import SaveIngredientFood
+from mealie.schema.recipe.recipe_ingredient import SaveIngredientFood, SaveIngredientUnit
 from mealie.services.claude_context.pantry_service import PantryService
 from tests.utils import api_routes
 from tests.utils.factories import random_string
@@ -269,3 +269,86 @@ async def test_put_away_tool_unchecked_ids_error(
 
     assert (await get_pantry())["items"] == []
     assert len(user.repos.group_shopping_lists.get_one(list_id).list_items) == 2
+
+
+@pytest.mark.asyncio
+async def test_update_pantry_rejects_blank_names_before_writing(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    keep = _add(user, name="Keep me")
+    _as_user(monkeypatch, session, user)
+
+    with pytest.raises(McpToolError, match=r"add\[1\].*name"):
+        await update_pantry(add=[{"name": "Cheese"}, {"name": "   "}], remove=[keep])
+    with pytest.raises(McpToolError, match=r"update\[0\].*name"):
+        await update_pantry(update=[{"id": keep, "name": ""}], add=[{"name": "Cheese"}])
+
+    assert [i["name"] for i in (await get_pantry())["items"]] == ["Keep me"]
+
+
+@pytest.mark.asyncio
+async def test_update_pantry_rejects_repeated_and_conflicting_ids(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    a = _add(user, name="Apples")
+    b = _add(user, name="Bananas")
+    _as_user(monkeypatch, session, user)
+
+    with pytest.raises(McpToolError, match=f"update: repeated id {a}"):
+        await update_pantry(update=[{"id": a, "note": "first"}, {"id": a, "location": "fridge"}])
+    with pytest.raises(McpToolError, match=f"remove: repeated id.*{b}"):
+        await update_pantry(remove=[b, b])
+    with pytest.raises(McpToolError, match=f"{a} is also in remove"):
+        await update_pantry(update=[{"id": a, "note": "x"}], remove=[a])
+
+    items = (await get_pantry())["items"]
+    assert sorted(i["name"] for i in items) == ["Apples", "Bananas"]
+    assert all(i["note"] is None and i["location"] == "cupboard" for i in items)
+
+
+@pytest.mark.asyncio
+async def test_update_pantry_keeps_omitted_fields_and_null_clears(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    milk = _add(
+        user,
+        name="Milk",
+        quantity=2,
+        location=PantryLocation.fridge,
+        bought_on=TODAY - timedelta(days=1),
+        use_by=TODAY + timedelta(days=5),
+        note="semi-skimmed",
+    )
+    _as_user(monkeypatch, session, user)
+
+    result = await update_pantry(update=[{"id": milk, "opened_on": TODAY.isoformat(), "note": None}])
+
+    (item,) = result["items"]
+    assert item["opened_on"] == TODAY.isoformat()
+    assert item["note"] is None
+    assert item["name"] == "Milk"
+    assert item["quantity"] == 2
+    assert item["location"] == "fridge"
+    assert item["bought_on"] == (TODAY - timedelta(days=1)).isoformat()
+    assert item["use_by"] == (TODAY + timedelta(days=5)).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_update_pantry_unit_by_name(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    unit = user.repos.ingredient_units.create(
+        SaveIngredientUnit(name=random_string(8), abbreviation=random_string(3), group_id=user.group_id)
+    )
+    _as_user(monkeypatch, session, user)
+
+    with pytest.raises(McpToolError, match="either unit or unit_id"):
+        await update_pantry(add=[{"name": "Flour", "unit": unit.name, "unit_id": str(unit.id)}])
+
+    result = await update_pantry(add=[{"name": "Flour", "quantity": 500, "unit": unit.abbreviation.upper()}])
+
+    assert result["items"][0]["unit"] == unit.name

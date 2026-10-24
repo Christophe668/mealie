@@ -44,6 +44,9 @@ class PantryItemsNotChecked(ValueError):
         super().__init__(f"items not checked: {', '.join(item_ids)}")
 
 
+_UNNAMED_ITEM = "Unnamed item"
+
+
 def _format_quantity(quantity: float) -> str:
     return f"{quantity:g}"
 
@@ -252,7 +255,8 @@ class PantryService(BaseService):
         if item.food is not None:
             name, note = item.food.name, item.note or None
         else:
-            name, note = (item.note or item.display).strip(), None
+            # a blank shopping item still needs a pantry name (the schema refuses empty names)
+            name, note = (item.note or item.display or "").strip() or _UNNAMED_ITEM, None
         return PantryItemCreate(
             name=name,
             food_id=item.food_id,

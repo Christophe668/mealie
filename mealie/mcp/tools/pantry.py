@@ -1,3 +1,4 @@
+from collections import Counter
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID
@@ -103,22 +104,37 @@ def _check_keys(entry: Any, allowed: frozenset[str], where: str) -> dict[str, An
     return dict(entry)
 
 
-def _resolve_unit(ctx: McpContext, fields: dict[str, Any], where: str) -> None:
-    """Turns a `unit` name into `unit_id` (case-insensitive match on name, plural or abbreviation)."""
-    if "unit" not in fields:
-        return
-    name = fields.pop("unit")
-    if name is None:
-        fields["unit_id"] = None
-        return
-    wanted = str(name).strip().casefold()
-    units: list[IngredientUnit] = ctx.repos.ingredient_units.get_all()
-    for unit in units:
-        names = (unit.name, unit.plural_name, unit.abbreviation, unit.plural_abbreviation)
-        if any(n and n.strip().casefold() == wanted for n in names):
-            fields["unit_id"] = unit.id
+class _UnitLookup:
+    """Resolves unit names for one call, loading the group's units at most once."""
+
+    def __init__(self, ctx: McpContext):
+        self._ctx = ctx
+        self._units: list[IngredientUnit] | None = None
+
+    def resolve(self, fields: dict[str, Any], where: str) -> None:
+        """Turns a `unit` name into `unit_id` (case-insensitive match on name, plural or abbreviation)."""
+        if "unit" not in fields:
             return
-    raise McpToolError(f"{where}: unit not found: {name}")
+        if "unit_id" in fields:
+            raise McpToolError(f"{where}: give either unit or unit_id, not both")
+        name = fields.pop("unit")
+        if name is None:
+            fields["unit_id"] = None
+            return
+        if self._units is None:
+            self._units = self._ctx.repos.ingredient_units.get_all()
+        wanted = str(name).strip().casefold()
+        for unit in self._units:
+            names = (unit.name, unit.plural_name, unit.abbreviation, unit.plural_abbreviation)
+            if any(n and n.strip().casefold() == wanted for n in names):
+                fields["unit_id"] = unit.id
+                return
+        raise McpToolError(f"{where}: unit not found: {name}")
+
+
+def _duplicates(ids: list[UUID]) -> list[str]:
+    counts = Counter(ids)
+    return [str(i) for i in dict.fromkeys(ids) if counts[i] > 1]
 
 
 def _validate[M: PantryItemCreate](model: type[M], fields: dict[str, Any], where: str) -> M:
@@ -158,9 +174,12 @@ def update_pantry_impl(
     remove: list[str] | None = None,
 ) -> dict[str, Any]:
     service = PantryService(ctx.repos)
+    units = _UnitLookup(ctx)
 
     # 1. validate everything; nothing is written unless every entry is valid
-    remove_ids = list(dict.fromkeys(_parse_id("pantry_item", item_id) for item_id in remove or []))
+    remove_ids = [_parse_id("pantry_item", item_id) for item_id in remove or []]
+    if repeated := _duplicates(remove_ids):
+        raise McpToolError(f"remove: repeated id(s) {', '.join(repeated)}")
     for item_id in remove_ids:
         if ctx.repos.pantry_items.get_one(item_id) is None:
             raise not_found("pantry_item", str(item_id))
@@ -173,12 +192,14 @@ def update_pantry_impl(
             raise McpToolError(f"{where}: missing id")
         raw_id = fields.pop("id")
         item_id = _parse_id("pantry_item", raw_id)
+        if any(item_id == done for done, _ in updates):
+            raise McpToolError(f"update: repeated id {raw_id}; put all changes to one item in a single entry")
+        if item_id in remove_ids:
+            raise McpToolError(f"{where}: pantry item {raw_id} is also in remove")
         existing = ctx.repos.pantry_items.get_one(item_id)
         if existing is None:
             raise not_found("pantry_item", str(raw_id))
-        if item_id in remove_ids:
-            raise McpToolError(f"{where}: pantry item {raw_id} is also in remove")
-        _resolve_unit(ctx, fields, where)
+        units.resolve(fields, where)
         # partial update: fields not given keep their current value
         current = existing.model_dump(include=set(_ITEM_FIELDS))
         changes = _validate(PantryItemUpdate, current | fields, where)
@@ -189,7 +210,7 @@ def update_pantry_impl(
     for n, entry in enumerate(add or []):
         where = f"add[{n}]"
         fields = _check_keys(entry, _ADD_KEYS, where)
-        _resolve_unit(ctx, fields, where)
+        units.resolve(fields, where)
         data = _validate(PantryItemCreate, fields, where)
         _check_references(ctx, data, where)
         adds.append(data)
@@ -208,7 +229,8 @@ def update_pantry_impl(
             if str(item.id) not in merged_ids and str(item.id) not in added_ids:
                 target.append(str(item.id))
     except NoEntryFound as e:
-        raise McpToolError(str(e)) from e
+        # only reachable if the pantry changed between validation and write
+        raise not_found("pantry_item", str(e)) from e
 
     return {
         "items": _pantry_items(ctx),
@@ -221,6 +243,8 @@ def update_pantry_impl(
 
 def put_away_impl(ctx: McpContext, list_id: str, item_ids: list[str] | None = None) -> dict[str, Any]:
     list_uuid = _parse_id("shopping_list", list_id)
+    if ctx.repos.group_shopping_lists.get_one(list_uuid) is None:
+        raise not_found("shopping_list", list_id)
     ids = None if item_ids is None else [_parse_id("shopping_list_item", item_id) for item_id in item_ids]
     today = _today()
     try:
@@ -230,9 +254,7 @@ def put_away_impl(ctx: McpContext, list_id: str, item_ids: list[str] | None = No
             f"these items are not checked, so they were not put away (nothing was moved): {', '.join(e.item_ids)}; "
             "check them first or leave them out"
         ) from e
-    except NoEntryFound as e:
-        if str(e) == "Shopping list not found.":
-            raise not_found("shopping_list", list_id) from e
+    except NoEntryFound as e:  # an item id that is not on this list
         raise McpToolError(str(e)) from e
     return {
         "created": [_item_dict(item, today) for item in result.created],

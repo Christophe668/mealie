@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from enum import StrEnum
 
-from pydantic import UUID4, ConfigDict
+from pydantic import UUID4, ConfigDict, field_validator
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.orm.interfaces import LoaderOption
 
@@ -37,6 +37,14 @@ class PantryItemCreate(MealieModel):
     use_by: date | None = None
     source: PantrySource = PantrySource.manual
     note: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be empty")
+        return value
 
 
 class PantryItemUpdate(PantryItemCreate):
