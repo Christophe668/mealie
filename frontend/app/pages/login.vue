@@ -390,7 +390,7 @@ function alertOnError(error: any) {
   padding: calc(var(--ds-space) * 2) calc(var(--ds-space) * 2.5);
   border: 1px solid var(--ds-border);
   border-radius: var(--ds-radius-card);
-  background: var(--ds-surface);
+  background: var(--ds-bg);
   font-size: var(--ds-t-2);
   line-height: 1.5;
 }
@@ -526,6 +526,13 @@ function alertOnError(error: any) {
 @keyframes login-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login__spinner {
+    animation: none;
+    border-top-color: var(--ds-text-2);
   }
 }
 

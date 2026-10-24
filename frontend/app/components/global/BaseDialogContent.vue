@@ -34,7 +34,6 @@
       <slot name="card-actions">
         <v-btn
           variant="text"
-          color="grey"
           @click="emit('cancel')"
         >
           {{ cancelLabel }}
@@ -58,8 +57,11 @@
           </template>
           {{ $t("general.confirm") }}
         </BaseButton>
+        <!-- Ink rather than Base's green: saffron stays for one pointer per screen, and the
+             confirm path keeps the dialog's own colour (red for deletes). -->
         <BaseButton
           v-if="canSubmit"
+          :color="color === 'primary' ? 'accent' : color"
           type="submit"
           :disabled="submitDisabled || loading"
           @click="emit('submit')"

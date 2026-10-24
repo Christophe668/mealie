@@ -45,11 +45,16 @@
       <p class="links__sr" role="status">
         {{ loading ? $t("general.loading") : "" }}
       </p>
+      <div v-if="loading" class="links__skeleton" aria-hidden="true">
+        <span class="links__bar links__bar--title" />
+        <span class="links__bar" />
+        <span class="links__bar links__bar--short" />
+      </div>
       <DsEmpty
-        v-if="!loading && !connections.length"
+        v-else-if="!connections.length"
         :title="$t('settings.mcp.no-connections')"
       />
-      <ul v-else-if="!loading" class="links__rows" role="list">
+      <ul v-else class="links__rows" role="list">
         <li v-for="connection in connections" :key="connection.grantId">
           <DsCard class="links__row">
             <div class="links__row-main">
@@ -72,7 +77,13 @@
                 </div>
               </dl>
             </div>
-            <DsButton variant="line" icon="delete" class="links__revoke" @click="confirmRevoke(connection)">
+            <DsButton
+              variant="line"
+              icon="delete"
+              class="links__revoke"
+              :aria-label="`${$t('settings.mcp.revoke')} ${connectionLabel(connection)}`"
+              @click="confirmRevoke(connection)"
+            >
               {{ $t("settings.mcp.revoke") }}
             </DsButton>
           </DsCard>
@@ -257,6 +268,33 @@ onMounted(refresh);
 
 .links__revoke {
   flex: none;
+}
+
+.links__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ds-space) * 1.5);
+  padding: calc(var(--ds-space) * 2.25) calc(var(--ds-space) * 2.5);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-surface);
+}
+
+.links__bar {
+  display: block;
+  width: 70%;
+  height: 0.875rem;
+  border-radius: var(--ds-radius-ctl);
+  background: var(--ds-border);
+}
+
+.links__bar--title {
+  width: 35%;
+  height: 1.125rem;
+}
+
+.links__bar--short {
+  width: 45%;
 }
 
 .links__sr {

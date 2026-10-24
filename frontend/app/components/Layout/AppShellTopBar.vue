@@ -262,8 +262,12 @@ defineExpose({ focus });
     margin-bottom: calc(var(--ds-space) * 2);
   }
 
+  /* One line on mobile: a long title ellipsizes instead of crowding the brand. */
   .ds-topbar__title {
+    overflow: hidden;
     font-size: var(--ds-t-5);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 </style>
