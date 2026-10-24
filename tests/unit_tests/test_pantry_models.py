@@ -124,3 +124,27 @@ def test_deleting_household_deletes_its_pantry_items(unique_user: TestUser):
     group_repos.households.delete(household.id)
 
     assert get_repositories(session, group_id=None, household_id=None).pantry_items.get_one(item.id) is None
+
+
+def test_create_always_uses_the_repository_scope(unique_user: TestUser, h2_user: TestUser):
+    created = unique_user.repos.pantry_items.create(
+        {"name": random_string(10), "group_id": h2_user.group_id, "household_id": h2_user.household_id}
+    )
+
+    assert str(created.household_id) == str(unique_user.household_id)
+    assert str(created.group_id) == str(unique_user.group_id)
+    assert h2_user.repos.pantry_items.get_one(created.id) is None
+
+
+def test_create_many_fills_and_enforces_the_repository_scope(unique_user: TestUser, h2_user: TestUser):
+    tag = random_string(8)
+    created = unique_user.repos.pantry_items.create_many(
+        [
+            PantryItemCreate(name=f"{tag} plain"),
+            {"name": f"{tag} foreign", "group_id": h2_user.group_id, "household_id": h2_user.household_id},
+        ]
+    )
+
+    assert sorted(item.name for item in created) == [f"{tag} foreign", f"{tag} plain"]
+    assert {str(item.household_id) for item in created} == {str(unique_user.household_id)}
+    assert {str(item.group_id) for item in created} == {str(unique_user.group_id)}

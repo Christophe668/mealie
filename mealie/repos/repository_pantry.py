@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -10,14 +11,24 @@ from .repository_generic import HouseholdRepositoryGeneric
 
 
 class RepositoryPantryItems(HouseholdRepositoryGeneric[PantryItemOut, PantryItem]):
-    def create(self, data: PantryItemOut | BaseModel | dict) -> PantryItemOut:
-        """Create a pantry item, filling `group_id`/`household_id` from the repository scope."""
+    def _with_scope(self, data: PantryItemOut | BaseModel | dict) -> dict:
+        """Return `data` as a dict carrying this repository's scope.
+
+        A scoped repository always writes its own `group_id`/`household_id`, whatever the caller passed;
+        only an unscoped repository honours the ids in `data`.
+        """
         values = dict(data) if isinstance(data, dict) else data.model_dump()
-        if values.get("group_id") is None:
+        if self.group_id is not None:
             values["group_id"] = self.group_id
-        if values.get("household_id") is None:
+        if self.household_id is not None:
             values["household_id"] = self.household_id
-        return super().create(values)
+        return values
+
+    def create(self, data: PantryItemOut | BaseModel | dict) -> PantryItemOut:
+        return super().create(self._with_scope(data))
+
+    def create_many(self, data: Iterable[PantryItemOut | BaseModel | dict]) -> list[PantryItemOut]:
+        return super().create_many([self._with_scope(item) for item in data])
 
     def _scoped_select(self) -> Select[tuple[PantryItem]]:
         stmt = select(PantryItem).options(*self.schema.loader_options())
