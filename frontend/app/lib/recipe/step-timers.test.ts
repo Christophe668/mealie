@@ -20,6 +20,18 @@ describe("findStepTimers", () => {
     expect(findStepTimers("Chill 1/2 hour")).toMatchObject([{ text: "1/2 hour", minutes: 30, seconds: 1800 }]);
   });
 
+  test("reads Thermomix-style steps", () => {
+    expect(findStepTimers("Sauté 3 min/120°C/speed 1, then cook 2 min 30 sec/100°C/speed 2.")).toMatchObject([
+      { text: "3 min", seconds: 180, name: "Sauté" },
+      { text: "2 min 30 sec", seconds: 150, name: "Cook" },
+    ]);
+    expect(findStepTimers("Mixer 5 sec/vitesse 5, puis cuire 10 min/100°C/sens inverse/vitesse 1.")).toMatchObject([
+      { text: "5 sec", seconds: 5, name: "Mixer" },
+      { text: "10 min", seconds: 600, name: "Cuire" },
+    ]);
+    expect(seconds("Turbo/1 sec/3 times")).toEqual([]);
+  });
+
   test("reads French units", () => {
     expect(findStepTimers("Laisser mijoter 1 heure")).toMatchObject([{ text: "1 heure", minutes: 60, seconds: 3600 }]);
     expect(seconds("Cuire 2 heures, puis encore 1 heure 15.")).toEqual([7200, 4500]);

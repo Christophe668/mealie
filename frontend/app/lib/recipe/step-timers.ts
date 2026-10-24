@@ -21,8 +21,10 @@ const MINUTE_UNIT = String.raw`min(?:ute)?s?\b`;
 const HOUR_UNIT = String.raw`h(?:(?:ou)?rs?|eures?)?`;
 const SECOND_UNIT = String.raw`s(?:ec(?:onde?)?s?)?\b`;
 const EXTRA_MINUTES = String.raw`\s*(\d{1,2})(?:\s*${MINUTE_UNIT}|(?![\d/]|[.,]\d|\s*\p{L}))`;
+// Minutes may carry seconds after them ("2 min 30 sec", Thermomix style), always with an explicit unit.
+const EXTRA_SECONDS = String.raw`\s*(\d{1,2})\s*${SECOND_UNIT}`;
 const TIMER_PATTERN = new RegExp(
-  String.raw`(?<![\d.,/])(?:(${AMOUNT})\s*(?:[-–—]|to|à)\s*)?(${AMOUNT})\s*(?:(${HOUR_UNIT})\b(?:${EXTRA_MINUTES})?|${MINUTE_UNIT}|(${SECOND_UNIT}))`,
+  String.raw`(?<![\d.,/])(?:(${AMOUNT})\s*(?:[-–—]|to|à)\s*)?(${AMOUNT})\s*(?:(${HOUR_UNIT})\b(?:${EXTRA_MINUTES})?|${MINUTE_UNIT}(?:${EXTRA_SECONDS})?|(${SECOND_UNIT}))`,
   "giu",
 );
 
@@ -43,8 +45,8 @@ export function findStepTimers(text: string | null | undefined): StepTimer[] {
   }
   return Array.from(text.matchAll(TIMER_PATTERN), (match) => {
     const amount = parseAmount(match[2]!);
-    const unitSeconds = match[3] ? 3600 : match[5] ? 1 : 60;
-    const seconds = Math.round(amount * unitSeconds + Number(match[4] ?? 0) * 60);
+    const unitSeconds = match[3] ? 3600 : match[6] ? 1 : 60;
+    const seconds = Math.round(amount * unitSeconds + Number(match[4] ?? 0) * 60 + Number(match[5] ?? 0));
     const index = match.index ?? 0;
     return { text: match[0], minutes: Math.round(seconds / 60), seconds, index, name: timerName(text, index) };
   }).filter(timer => timer.seconds > 0);
