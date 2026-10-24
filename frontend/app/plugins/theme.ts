@@ -15,6 +15,27 @@ export interface ThemeConfig {
   darkError: string;
 }
 
+/**
+ * Colours the backend reports when no THEME_* env var is set (mealie/core/settings/themes.py).
+ * They are Mealie's stock palette, not a choice made by the admin, so they must not override the
+ * design-system defaults below. Any other value from the API is a deliberate override and wins.
+ */
+const STOCK_THEME: Partial<ThemeConfig> = {
+  lightPrimary: "#E58325",
+  lightAccent: "#007A99",
+  lightSecondary: "#973542",
+  darkPrimary: "#E58325",
+  darkAccent: "#007A99",
+  darkSecondary: "#973542",
+};
+
+function themeColor(theme: ThemeConfig | undefined, key: keyof ThemeConfig, fallback: string): string {
+  const value = theme?.[key];
+  if (!value || value.toUpperCase() === STOCK_THEME[key]?.toUpperCase())
+    return fallback;
+  return value;
+}
+
 let __cachedTheme: ThemeConfig | undefined;
 
 async function fetchTheme(): Promise<ThemeConfig | undefined> {
@@ -48,27 +69,31 @@ export default defineNuxtPlugin(async (nuxtApp) => {
         light: {
           dark: false,
           colors: {
-            primary: theme?.lightPrimary ?? "#E58325",
-            accent: theme?.lightAccent ?? "#007A99",
-            secondary: theme?.lightSecondary ?? "#973542",
-            success: theme?.lightSuccess ?? "#43A047",
-            info: theme?.lightInfo ?? "#1976d2",
-            warning: theme?.lightWarning ?? "#FF6D00",
-            error: theme?.lightError ?? "#EF5350",
+            "primary": themeColor(theme, "lightPrimary", "#F2B01E"),
+            "on-primary": "#17201B",
+            "accent": themeColor(theme, "lightAccent", "#17201B"),
+            "secondary": themeColor(theme, "lightSecondary", "#5B655F"),
+            "success": themeColor(theme, "lightSuccess", "#43A047"),
+            "info": themeColor(theme, "lightInfo", "#1976d2"),
+            "warning": themeColor(theme, "lightWarning", "#FF6D00"),
+            "error": themeColor(theme, "lightError", "#EF5350"),
+            "background": "#F4F5F3",
+            "surface": "#FFFFFF",
           },
         },
         dark: {
           dark: true,
           colors: {
-            primary: theme?.darkPrimary ?? "#E58325",
-            accent: theme?.darkAccent ?? "#007A99",
-            secondary: theme?.darkSecondary ?? "#973542",
-            success: theme?.darkSuccess ?? "#43A047",
-            info: theme?.darkInfo ?? "#1976d2",
-            warning: theme?.darkWarning ?? "#FF6D00",
-            error: theme?.darkError ?? "#EF5350",
-            background: "#1E1E1E",
-            surface: "#1E1E1E",
+            "primary": themeColor(theme, "darkPrimary", "#F2B01E"),
+            "on-primary": "#17201B",
+            "accent": themeColor(theme, "darkAccent", "#ECEEEA"),
+            "secondary": themeColor(theme, "darkSecondary", "#9AA49E"),
+            "success": themeColor(theme, "darkSuccess", "#43A047"),
+            "info": themeColor(theme, "darkInfo", "#1976d2"),
+            "warning": themeColor(theme, "darkWarning", "#FF6D00"),
+            "error": themeColor(theme, "darkError", "#EF5350"),
+            "background": "#121714",
+            "surface": "#1B211D",
           },
         },
       },
