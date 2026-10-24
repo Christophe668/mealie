@@ -26,7 +26,7 @@
         <h3 v-if="section.title" class="read-ingredients__section-title">
           {{ section.title }}
         </h3>
-        <ul class="read-ingredients__items">
+        <ul class="read-ingredients__items" role="list">
           <li
             v-for="row in section.rows"
             :key="row.key"
@@ -58,17 +58,21 @@
 import { useId } from "vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
 import { useIngredientTextParser } from "~/composables/recipes";
-import { sanitizeIngredientHTML } from "~/composables/recipes/use-recipe-ingredients";
+import { marked } from "marked";
 import type { RecipeIngredient } from "~/lib/api/types/recipe";
+import { sanitizeMarkdownHtml } from "~/lib/sanitize/markdown";
 
 const props = withDefaults(defineProps<{
   ingredients: RecipeIngredient[];
   scale?: number;
   recipeSlug: string;
+  /** For links to referenced sub-recipes. */
+  groupSlug?: string;
   /** Mobile: the heading becomes a disclosure button, open by default. */
   collapsible?: boolean;
 }>(), {
   scale: 1,
+  groupSlug: "",
   collapsible: false,
 });
 
@@ -76,7 +80,7 @@ const headingId = useId();
 const listId = useId();
 const open = ref(true);
 
-const { parseIngredientText } = useIngredientTextParser();
+const { useParsedIngredientText } = useIngredientTextParser();
 
 interface Row {
   key: string;
@@ -85,16 +89,26 @@ interface Row {
   note: string;
 }
 
-/** Quantity, unit and food in ink; the note ("halved", "about 1.6 kg") follows in the secondary colour. */
-function lineParts(ingredient: RecipeIngredient) {
-  // An unparsed line keeps all its words in the note, so the note is the ingredient.
-  if (!ingredient.note || !(ingredient.food || ingredient.referencedRecipe)) {
-    return { html: parseIngredientText(ingredient, props.scale), note: "" };
+/** Notes are markdown upstream (SafeMarkdown); inline here so the line keeps flowing. */
+function inlineMarkdown(source: string): string {
+  return sanitizeMarkdownHtml(marked.parseInline(source, { async: false }) as string, []);
+}
+
+const join = (parts: (string | undefined)[]) => parts.filter(Boolean).join(" ");
+
+/**
+ * Quantity, unit and food (or the linked sub-recipe) in ink, from the shared parser so scaling and
+ * fractions match upstream; the note ("halved", "about 1.6 kg") follows in the secondary colour.
+ */
+function lineParts(ingredient: RecipeIngredient): Pick<Row, "html" | "note"> {
+  const parsed = useParsedIngredientText(ingredient, props.scale, true, props.groupSlug);
+  const note = ingredient.note?.trim() ? inlineMarkdown(ingredient.note) : "";
+  const subject = parsed.recipeLink ? sanitizeMarkdownHtml(parsed.recipeLink, []) : parsed.name;
+  if (!subject) {
+    // An unparsed line keeps all its words in the note, so the note is the ingredient.
+    return { html: join([parsed.quantity, parsed.unit, note]), note: "" };
   }
-  return {
-    html: parseIngredientText({ ...ingredient, note: "" }, props.scale),
-    note: sanitizeIngredientHTML(ingredient.note),
-  };
+  return { html: join([parsed.quantity, parsed.unit, subject]), note };
 }
 
 const sections = computed(() => {
@@ -241,6 +255,12 @@ export function ingredientTicksKey(recipeSlug: string): string {
 
 .read-ingredients__note {
   color: var(--ds-text-2);
+}
+
+.read-ingredients__label :deep(a) {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .checked .read-ingredients__label {

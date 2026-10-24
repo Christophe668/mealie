@@ -1,20 +1,26 @@
 <template>
   <!-- With no facts, only the desktop button is left; mobile has its own sticky one. -->
   <div class="read-facts" :class="{ 'ds-desktop-only': !hasFacts }">
-    <ul v-if="hasFacts" class="read-facts__list">
+    <ul v-if="hasFacts" class="read-facts__list" role="list">
       <li v-for="line in lines" :key="line.key" class="read-facts__line">
         {{ line.text }}
       </li>
       <li v-if="servingsBase" class="read-facts__line read-facts__servings">
-        <span>{{ $t("recipe-read.serves", { servings: servingsShown }) }}</span>
+        <i18n-t keypath="recipe-read.serves" :plural="servings.scaledAmount" tag="span" class="read-facts__serves" scope="global">
+          <template #servings>
+            <!-- Fraction markup from useScaledAmount, built from numbers only. -->
+            <!-- eslint-disable-next-line vue/no-v-html -->
+            <span v-html="servings.scaledAmountDisplay" />
+          </template>
+        </i18n-t>
         <span v-if="canScale" class="read-facts__stepper">
           <button
             type="button"
             class="read-facts__step ds-focus"
             :aria-label="$t('recipe-read.fewer-servings')"
             :title="$t('recipe-read.fewer-servings')"
-            :aria-disabled="servingsShown <= 1 ? 'true' : undefined"
-            @click="servingsShown > 1 && setServings(servingsShown - 1)"
+            :aria-disabled="servings.scaledAmount <= 1 ? 'true' : undefined"
+            @click="servings.scaledAmount > 1 && setServings(servings.scaledAmount - 1)"
           >
             <DsIcon name="minus" :size="18" />
           </button>
@@ -23,14 +29,11 @@
             class="read-facts__step ds-focus"
             :aria-label="$t('recipe-read.more-servings')"
             :title="$t('recipe-read.more-servings')"
-            @click="setServings(servingsShown + 1)"
+            @click="setServings(servings.scaledAmount + 1)"
           >
             <DsIcon name="createAlt" :size="18" />
           </button>
         </span>
-      </li>
-      <li v-if="lastMadeLine" class="read-facts__line read-facts__line--muted">
-        {{ lastMadeLine }}
       </li>
     </ul>
 
@@ -50,18 +53,14 @@
 import DsButton from "~/components/Design/DsButton.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
 import { calculateScaleFromYield, useScaledAmount } from "~/composables/recipes/use-scaled-amount";
-import { relativeAgo } from "~/composables/use-today";
 import type { Recipe } from "~/lib/api/types/recipe";
 
 const props = withDefaults(defineProps<{
   recipe: Recipe;
   /** Link for the desktop "Start cooking" button (the screen's one accent); empty hides it. */
   cookTo?: string;
-  /** ISO timestamp; null or undefined says nothing. */
-  lastMade?: string | null;
 }>(), {
   cookTo: "",
-  lastMade: undefined,
 });
 
 const scale = defineModel<number>("scale", { default: 1 });
@@ -99,7 +98,7 @@ const lines = computed(() => {
 });
 
 const servingsBase = computed(() => props.recipe.recipeServings || 0);
-const servingsShown = computed(() => useScaledAmount(servingsBase.value, scale.value).scaledAmount);
+const servings = computed(() => useScaledAmount(servingsBase.value, scale.value));
 // Scaling only changes parsed quantities, so the stepper needs at least one parsed food or unit.
 const canScale = computed(() => (props.recipe.recipeIngredient ?? []).some(i => i.food || i.unit));
 
@@ -110,11 +109,7 @@ function setServings(value: number) {
   }
 }
 
-const hasFacts = computed(() => !!(lines.value.length || servingsBase.value || lastMadeLine.value));
-
-const lastMadeLine = computed(() =>
-  props.lastMade ? i18n.t("recipe-read.last-made", { when: relativeAgo(props.lastMade, new Date(), i18n.locale.value) }) : "",
-);
+const hasFacts = computed(() => !!(lines.value.length || servingsBase.value));
 </script>
 
 <style scoped>
@@ -128,12 +123,6 @@ const lastMadeLine = computed(() =>
   font-size: var(--ds-t-3);
   font-weight: 500;
   line-height: 1.5;
-}
-
-.read-facts__line--muted {
-  margin-top: calc(var(--ds-space) * 0.5);
-  color: var(--ds-text-2);
-  font-weight: 400;
 }
 
 .read-facts__servings {
@@ -167,6 +156,11 @@ const lastMadeLine = computed(() =>
 .read-facts__step[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.read-facts__serves :deep(sup),
+.read-facts__serves :deep(sub) {
+  font-size: 0.7em;
 }
 
 .read-facts__list + .read-facts__cook {

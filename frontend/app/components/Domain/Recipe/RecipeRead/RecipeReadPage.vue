@@ -1,14 +1,14 @@
 <template>
   <article class="read" :aria-labelledby="titleId">
     <div class="read__layout d-print-none">
-      <aside ref="aside" class="read__aside" :style="asideStyle">
+      <!-- On mobile the column dissolves into the main flow (display: contents), so it is no landmark there. -->
+      <component :is="isMobile ? 'div' : 'aside'" ref="aside" class="read__aside" :style="asideStyle">
         <RecipeReadHero class="read__hero" :name="recipe.name || ''" :image-url="imageUrl" />
         <RecipeReadFacts
           v-model:scale="scale"
           class="read__facts"
           :recipe="recipe"
           :cook-to="cookTo"
-          :last-made="lastMade"
         />
         <RecipeReadIngredients
           v-if="recipe.recipeIngredient.length"
@@ -16,16 +16,29 @@
           :ingredients="recipe.recipeIngredient"
           :scale="scale"
           :recipe-slug="recipe.slug"
+          :group-slug="groupSlug"
           :collapsible="isMobile"
         />
-      </aside>
+      </component>
 
       <div class="read__main">
         <header class="read__header">
           <h1 :id="titleId" class="read__title ds-display">
             {{ recipe.name }}
           </h1>
+          <RecipeReadRating
+            class="read__rating"
+            :can-rate="isOwnGroup"
+            :rating="userRating"
+            :average="recipe.rating || 0"
+            :favorite="isFavorite"
+            @rate="rate"
+            @toggle-favorite="toggleFavorite"
+          />
           <SafeMarkdown v-if="recipe.description" class="read__description ds-body ds-muted" :source="recipe.description" />
+          <p v-if="lastMadeLine" class="read__last-made">
+            {{ lastMadeLine }}
+          </p>
         </header>
 
         <RecipeReadActions
@@ -38,6 +51,8 @@
           @list="openShoppingListDialog"
           @share="share"
           @print="print"
+          @duplicate="openDuplicateDialog"
+          @download="download"
           @delete="deleteDialog = true"
         />
 
@@ -55,12 +70,18 @@
           </div>
         </section>
 
+        <RecipeReadNutrition
+          v-if="recipe.settings.showNutrition"
+          class="read__nutrition read__block"
+          :nutrition="recipe.nutrition"
+        />
+
         <div v-if="organizers.length" class="read__organizers read__block">
           <section v-for="org in organizers" :key="org.key" class="read__organizer" :aria-labelledby="`${titleId}-${org.key}`">
             <h2 :id="`${titleId}-${org.key}`" class="read__organizer-title">
               {{ org.label }}
             </h2>
-            <ul class="read__chips">
+            <ul class="read__chips" role="list">
               <li v-for="item in org.items" :key="item.id">
                 <NuxtLink :to="item.to" class="read__chip-link ds-focus">
                   <DsChip>{{ item.name }}</DsChip>
@@ -112,6 +133,20 @@
         {{ isAdminAndNotOwner ? $t("recipe.admin-delete-confirmation") : $t("recipe.delete-confirmation") }}
       </v-card-text>
     </BaseDialog>
+    <BaseDialog
+      v-if="isOwnGroup"
+      v-model="duplicateDialog"
+      bottom-sheet
+      :title="$t('recipe-read.duplicate-title')"
+      color="primary"
+      :icon="$globals.icons.duplicate"
+      can-confirm
+      @confirm="duplicateRecipe"
+    >
+      <v-card-text>
+        <v-text-field v-model="duplicateName" density="compact" :label="$t('recipe-read.recipe-name')" autofocus />
+      </v-card-text>
+    </BaseDialog>
     <RecipePrintContainer :recipe="recipe" :scale="scale" />
   </article>
 </template>
@@ -123,6 +158,8 @@ import RecipeReadActions from "./RecipeReadActions.vue";
 import RecipeReadFacts from "./RecipeReadFacts.vue";
 import RecipeReadHero from "./RecipeReadHero.vue";
 import RecipeReadIngredients from "./RecipeReadIngredients.vue";
+import RecipeReadNutrition from "./RecipeReadNutrition.vue";
+import RecipeReadRating from "./RecipeReadRating.vue";
 import RecipeReadSteps from "./RecipeReadSteps.vue";
 import DsButton from "~/components/Design/DsButton.vue";
 import DsChip from "~/components/Design/DsChip.vue";
@@ -133,12 +170,15 @@ import RecipeDialogShare from "~/components/Domain/Recipe/RecipeDialogShare.vue"
 import RecipePrintContainer from "~/components/Domain/Recipe/RecipePrintContainer.vue";
 import RecipePageComments from "~/components/Domain/Recipe/RecipePage/RecipePageParts/RecipePageComments.vue";
 import { useStaticRoutes, useUserApi } from "~/composables/api";
+import { useDownloader } from "~/composables/api/use-downloader";
 import { useRecipePermissions } from "~/composables/recipes";
 import { useAddToShoppingListDialog } from "~/composables/shopping-list-page/use-add-to-shopping-list-dialog";
 import { useGroupSelf } from "~/composables/use-groups";
 import { useHouseholdSelf } from "~/composables/use-households";
 import { useLoggedInState } from "~/composables/use-logged-in-state";
 import { alert } from "~/composables/use-toast";
+import { relativeAgo } from "~/composables/use-today";
+import { useUserSelfRatings } from "~/composables/use-users";
 import type { HouseholdSummary } from "~/lib/api/types/household";
 import type { NoUndefinedField } from "~/lib/api/types/non-generated";
 import type { Recipe } from "~/lib/api/types/recipe";
@@ -228,6 +268,42 @@ watch(
   { immediate: true },
 );
 
+const lastMadeLine = computed(() =>
+  lastMade.value ? i18n.t("recipe-read.last-made", { when: relativeAgo(lastMade.value, new Date(), i18n.locale.value) }) : "",
+);
+
+/* Rating and favourite: per user, through the same calls as upstream's RecipeRating and RecipeFavoriteBadge. */
+const { userRatings, setRating, refreshUserRatings } = useUserSelfRatings();
+const ownRating = computed(() => userRatings.value.find(r => r.recipeId === recipe.value.id));
+// Shown straight away; a refetch that still reports the old value while a write is in flight is ignored.
+const pendingRating = ref<number | null>(null);
+const userRating = computed(() => pendingRating.value ?? ownRating.value?.rating ?? 0);
+const isFavorite = computed(() => !!ownRating.value?.isFavorite);
+
+async function rate(value: number) {
+  pendingRating.value = value;
+  try {
+    await setRating(recipe.value.slug, value, null);
+  }
+  finally {
+    pendingRating.value = null;
+  }
+}
+
+async function toggleFavorite() {
+  const userId = auth.user.value?.id;
+  if (!userId) {
+    return;
+  }
+  if (isFavorite.value) {
+    await api.users.removeFavorite(userId, recipe.value.id);
+  }
+  else {
+    await api.users.addFavorite(userId, recipe.value.id);
+  }
+  await refreshUserRatings();
+}
+
 const notes = computed(() => recipe.value.notes.filter(note => note.title?.trim() || note.text?.trim()));
 
 const organizers = computed(() => {
@@ -289,6 +365,32 @@ function print() {
   window.print();
 }
 
+const duplicateDialog = ref(false);
+const duplicateName = ref("");
+
+function openDuplicateDialog() {
+  duplicateName.value = recipe.value.name || "";
+  duplicateDialog.value = true;
+}
+
+async function duplicateRecipe() {
+  const { data } = await api.recipes.duplicateOne(recipe.value.slug, duplicateName.value);
+  if (data?.slug) {
+    router.push(`/g/${groupSlug.value}/r/${data.slug}`);
+  }
+}
+
+const downloader = useDownloader();
+
+async function download() {
+  const { data: token } = await api.recipes.share.createOne({ recipeId: recipe.value.id });
+  if (!token) {
+    alert.error(i18n.t("events.something-went-wrong"));
+    return;
+  }
+  downloader(api.recipes.share.getZipRedirectUrl(token.id), `${recipe.value.slug}.zip`);
+}
+
 async function deleteRecipe() {
   const { data } = await api.recipes.deleteOne(recipe.value.slug);
   if (data?.slug) {
@@ -325,8 +427,18 @@ async function deleteRecipe() {
   overflow-wrap: anywhere;
 }
 
+.read__rating {
+  margin-top: calc(var(--ds-space) * 1.5);
+}
+
 .read__description {
   margin-top: calc(var(--ds-space) * 1.5);
+}
+
+.read__last-made {
+  margin: var(--ds-space) 0 0;
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-2);
 }
 
 .read__description :deep(p) {
@@ -425,7 +537,8 @@ async function deleteRecipe() {
   .read__steps {
     order: 6;
   }
-  .read__notes {
+  .read__notes,
+  .read__nutrition {
     order: 7;
   }
   .read__organizers {
@@ -446,10 +559,10 @@ async function deleteRecipe() {
     margin-top: 0;
   }
 
-  /* Sits 12 px above the floating tab bar (12 px inset + its ~70 px height). */
+  /* The shell's tab-bar clearance: pinned just above the floating tab bar. */
   .read__cook-bar {
     position: sticky;
-    bottom: calc(var(--ds-space) * 12 + env(safe-area-inset-bottom));
+    bottom: var(--ds-tabbar-clearance);
     z-index: 2;
   }
 

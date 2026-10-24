@@ -3,7 +3,7 @@
     <h2 :id="headingId" class="read-steps__heading">
       {{ $t("recipe-read.method") }}
     </h2>
-    <ol class="read-steps__list">
+    <ol class="read-steps__list" role="list">
       <li v-for="(step, index) in items" :key="step.key" class="read-steps__item">
         <h3 v-if="step.title" class="read-steps__section">
           {{ step.title }}
@@ -12,7 +12,7 @@
           <span class="read-steps__number ds-title" aria-hidden="true">{{ index + 1 }}</span>
           <div class="read-steps__body">
             <SafeMarkdown class="read-steps__text ds-body" :source="step.text" />
-            <ul v-if="step.timers.length" class="read-steps__timers">
+            <ul v-if="step.timers.length" class="read-steps__timers" role="list">
               <li v-for="(timer, tIndex) in step.timers" :key="tIndex">
                 <DsChip>
                   <DsIcon name="clockOutline" :size="14" />

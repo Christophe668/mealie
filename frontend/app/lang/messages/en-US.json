@@ -1486,8 +1486,17 @@
     "tools": "Tools",
     "last-made": "Last made {when}",
     "loading": "Loading the recipe…",
-    "load-failed": "The recipe couldn’t load.",
-    "try-again": "Try again",
-    "delete-title": "Delete this recipe?"
+    "delete-title": "Delete this recipe?",
+    "your-rating": "Your rating",
+    "star-label": "{n} star | {n} stars",
+    "rated": "Rated {rating} out of 5",
+    "favourite": "Favourite",
+    "nutrition": "Nutrition",
+    "duplicate": "Duplicate",
+    "download": "Download",
+    "duplicate-title": "Duplicate this recipe",
+    "recipe-name": "Name of the copy",
+    "not-found": "This recipe couldn’t be found.",
+    "browse-recipes": "Browse recipes"
   }
 }

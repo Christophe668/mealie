@@ -226,6 +226,9 @@ function search(query: string) {
 .ds-shell {
   --ds-shell-rail: 232px;
   --ds-shell-content: 1200px;
+  /* Room the floating mobile tab bar takes at the bottom (12 px inset + ~70 px bar + 14 px air). Pages pin
+     their own floating actions at this offset. */
+  --ds-tabbar-clearance: calc(var(--ds-space) * 12 + env(safe-area-inset-bottom));
 
   background: var(--ds-bg);
   color: var(--ds-text);
@@ -254,8 +257,7 @@ function search(query: string) {
 
   .ds-shell__column {
     /* Bottom padding clears the floating tab bar. */
-    padding: calc(var(--ds-space) * 2) calc(var(--ds-space) * 2)
-      calc(var(--ds-space) * 12 + env(safe-area-inset-bottom));
+    padding: calc(var(--ds-space) * 2) calc(var(--ds-space) * 2) var(--ds-tabbar-clearance);
   }
 }
 </style>

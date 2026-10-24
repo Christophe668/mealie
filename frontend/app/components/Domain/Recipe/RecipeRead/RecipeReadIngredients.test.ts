@@ -32,7 +32,7 @@ const lemon: RecipeIngredient = {
 
 function render(props: Partial<{ ingredients: RecipeIngredient[]; scale: number; recipeSlug: string; collapsible: boolean }> = {}) {
   return mount(RecipeReadIngredients, {
-    props: { ingredients: [flour, butter, lemon], scale: 1, recipeSlug: "lemon-cake", ...props },
+    props: { ingredients: [flour, butter, lemon], scale: 1, recipeSlug: "lemon-cake", groupSlug: "home", ...props },
     global: { stubs },
     attachTo: document.body,
   });
@@ -70,6 +70,30 @@ describe("RecipeReadIngredients", () => {
 
     expect(rows(wrapper)[0]!.text()).toBe("2 lemon halved");
     expect(wrapper.find(".read-ingredients__note").text()).toBe("halved");
+  });
+
+  test("notes render inline markdown, as upstream does", () => {
+    const zest: RecipeIngredient = { referenceId: "ing-z", quantity: 1, food: { id: "f-lemon", name: "lemon" }, note: "**unwaxed**, zested" };
+    const unparsed: RecipeIngredient = { referenceId: "ing-u", quantity: 0, note: "a *pinch* of salt" };
+    const wrapper = render({ ingredients: [zest, unparsed] });
+
+    expect(wrapper.find(".read-ingredients__note strong").text()).toBe("unwaxed");
+    expect(rows(wrapper)[0]!.text()).toBe("1 lemon unwaxed, zested");
+    expect(rows(wrapper)[1]!.find("em").text()).toBe("pinch");
+    expect(rows(wrapper)[1]!.text()).toBe("a pinch of salt");
+  });
+
+  test("a referenced recipe keeps its link", () => {
+    const pastry: RecipeIngredient = {
+      referenceId: "ing-p",
+      quantity: 1,
+      referencedRecipe: { id: "r-pastry", name: "Shortcrust pastry", slug: "shortcrust-pastry" },
+    };
+    const wrapper = render({ ingredients: [pastry] });
+
+    const link = rows(wrapper)[0]!.find("a");
+    expect(link.attributes("href")).toBe("/g/home/r/shortcrust-pastry");
+    expect(link.text()).toBe("Shortcrust pastry");
   });
 
   test("scaling multiplies the quantities", async () => {

@@ -1468,7 +1468,7 @@
     "hours": "{n} heure | {n} heures",
     "minutes": "{n} minute | {n} minutes",
     "duration": "{hours} {minutes}",
-    "serves": "Pour {servings} personnes",
+    "serves": "Pour {servings} personne | Pour {servings} personnes",
     "fewer-servings": "Moins de portions",
     "more-servings": "Plus de portions",
     "start-cooking": "Commencer à cuisiner",
@@ -1486,8 +1486,17 @@
     "tools": "Ustensiles",
     "last-made": "Cuisinée pour la dernière fois {when}",
     "loading": "Chargement de la recette…",
-    "load-failed": "La recette n’a pas pu être chargée.",
-    "try-again": "Réessayer",
-    "delete-title": "Supprimer cette recette ?"
+    "delete-title": "Supprimer cette recette ?",
+    "your-rating": "Votre note",
+    "star-label": "{n} étoile | {n} étoiles",
+    "rated": "Noté {rating} sur 5",
+    "favourite": "Favori",
+    "nutrition": "Valeurs nutritionnelles",
+    "duplicate": "Dupliquer",
+    "download": "Télécharger",
+    "duplicate-title": "Dupliquer cette recette",
+    "recipe-name": "Nom de la copie",
+    "not-found": "Cette recette est introuvable.",
+    "browse-recipes": "Parcourir les recettes"
   }
 }
