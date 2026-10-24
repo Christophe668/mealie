@@ -471,4 +471,23 @@ const moreItems = computed<AppShellMenuItem[]>(() => [
 .shop-page__recipes {
   margin-top: calc(var(--ds-space) * 2);
 }
+
+/* Upstream RecipeList, kept as is; only its sheets move onto the tokens (hairline, no shadow). */
+.shop-page__recipes :deep(.v-list) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space);
+  padding: 0;
+  background: transparent;
+}
+
+.shop-page__recipes :deep(.v-sheet) {
+  margin: 0 !important;
+  overflow: hidden;
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-card);
+  box-shadow: none;
+  color: var(--ds-text);
+}
 </style>

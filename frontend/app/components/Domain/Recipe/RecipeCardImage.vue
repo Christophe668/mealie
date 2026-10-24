@@ -18,7 +18,7 @@
     @click="$emit('click')"
   >
     <v-icon
-      color="primary"
+      color="secondary"
       class="icon-position"
       :size="iconSize"
     >

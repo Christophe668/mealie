@@ -91,27 +91,6 @@ export default defineNuxtConfig({
       // ==============================================
       // Theme Runtime Config
       useDark: Boolean(process.env.THEME_USE_DARK) || false,
-      themes: {
-        dark: {
-          primary: process.env.THEME_DARK_PRIMARY || "#E58325",
-          accent: process.env.THEME_DARK_ACCENT || "#007A99",
-          secondary: process.env.THEME_DARK_SECONDARY || "#973542",
-          success: process.env.THEME_DARK_SUCCESS || "#43A047",
-          info: process.env.THEME_DARK_INFO || "#1976d2",
-          warning: process.env.THEME_DARK_WARNING || "#FF6D00",
-          error: process.env.THEME_DARK_ERROR || "#EF5350",
-          background: "#1E1E1E",
-        },
-        light: {
-          primary: process.env.THEME_LIGHT_PRIMARY || "#E58325",
-          accent: process.env.THEME_LIGHT_ACCENT || "#007A99",
-          secondary: process.env.THEME_LIGHT_SECONDARY || "#973542",
-          success: process.env.THEME_LIGHT_SUCCESS || "#43A047",
-          info: process.env.THEME_LIGHT_INFO || "#1976d2",
-          warning: process.env.THEME_LIGHT_WARNING || "#FF6D00",
-          error: process.env.THEME_LIGHT_ERROR || "#EF5350",
-        },
-      },
     },
   },
 
@@ -296,6 +275,14 @@ export default defineNuxtConfig({
           elevation: 0,
           rounded: "lg",
           border: true,
+        },
+        // Dialog headers that do not pick a colour sit on the stone surface with ink text, the same
+        // neutral header BaseDialog uses, instead of Vuetify's default grey bar.
+        VDialog: {
+          VToolbar: { color: "surface" },
+        },
+        VBottomSheet: {
+          VToolbar: { color: "surface" },
         },
         VTextField: {
           variant: "outlined",
