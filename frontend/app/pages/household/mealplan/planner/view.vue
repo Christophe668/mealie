@@ -39,7 +39,18 @@
       </AppShellMenu>
     </div>
 
-    <p v-if="isEmpty" class="plan__hint">
+    <p class="plan__sr" role="status">
+      {{ loading ? $t("planner.loading") : "" }}
+    </p>
+
+    <p v-if="failed" class="plan__hint plan__hint--error">
+      <span class="plan__hint-title">{{ $t("planner.load-failed") }}</span>
+      <button type="button" class="plan__retry ds-focus" @click="reload()">
+        {{ $t("planner.try-again") }}
+      </button>
+    </p>
+
+    <p v-else-if="isEmpty" class="plan__hint">
       <span class="plan__hint-title">{{ $t("planner.empty-week") }}</span>
       <span class="ds-muted">{{ $t("planner.empty-week-hint") }}</span>
     </p>
@@ -53,7 +64,7 @@
       :aria-busy="loading ? 'true' : undefined"
       @move="moveEntry"
       @add="addEntry"
-      @remove="actions.deleteOne($event)"
+      @remove="remove($event)"
       @edit="editEntry"
     />
 
@@ -62,8 +73,8 @@
       :entry="dialog.entry"
       :date="dialog.date"
       :default-entry-type="dialog.type"
-      @create="actions.createOne($event)"
-      @update="actions.updateOne($event)"
+      @create="create($event)"
+      @update="update($event)"
     />
     <RecipeDialogAddToShoppingList
       v-if="shoppingLists"
@@ -77,6 +88,7 @@
 </template>
 
 <script setup lang="ts">
+import { nextTick } from "vue";
 import { addDays, format, isValid, parseISO, startOfDay } from "date-fns";
 import DsButton from "~/components/Design/DsButton.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
@@ -86,13 +98,13 @@ import GroupMealPlanCalendarDialog from "~/components/Domain/Household/GroupMeal
 import GroupMealPlanEntryDialog from "~/components/Domain/Household/GroupMealPlanEntryDialog.vue";
 import RecipeDialogAddToShoppingList from "~/components/Domain/Recipe/RecipeDialogAddToShoppingList.vue";
 import AppShellMenu from "~/components/Layout/AppShellMenu.vue";
-import { useUserApi } from "~/composables/api";
 import { useAddToShoppingListDialog } from "~/composables/shopping-list-page/use-add-to-shopping-list-dialog";
 import { useAppShellTitle } from "~/composables/use-app-shell-title";
-import { getScaledRecipes, useMealplans, usePlanTypeOptions } from "~/composables/use-group-mealplan";
+import { useDayRollover } from "~/composables/use-day-rollover";
+import { getScaledRecipes, usePlanTypeOptions } from "~/composables/use-group-mealplan";
 import { useHouseholdSelf } from "~/composables/use-households";
 import { useMealieAuth } from "~/composables/use-mealie-auth";
-import { alert } from "~/composables/use-toast";
+import { usePlannerWeek } from "~/composables/use-planner-week";
 import { startOfHouseholdWeek } from "~/composables/use-today";
 import type { PlanEntryType, ReadPlanEntry } from "~/lib/api/types/meal-plan";
 import type { AppShellMenuItem } from "~/types/application-types";
@@ -100,7 +112,6 @@ import type { AppShellMenuItem } from "~/types/application-types";
 const route = useRoute();
 const router = useRouter();
 const i18n = useI18n();
-const api = useUserApi();
 const auth = useMealieAuth();
 const { household, actions: householdActions } = useHouseholdSelf();
 const { shoppingLists, open: shoppingListDialog, addAllToList, addShoppingList } = useAddToShoppingListDialog();
@@ -108,7 +119,7 @@ const { shoppingLists, open: shoppingListDialog, addAllToList, addShoppingList }
 const ymd = (date: Date) => format(date, "yyyy-MM-dd");
 
 const groupSlug = computed(() => auth.user.value?.groupSlug || "");
-const today = ref(startOfDay(new Date()));
+const today = useDayRollover();
 const firstDayOfWeek = computed(() => household.value?.preferences?.firstDayOfWeek ?? 0);
 const mealTypes = usePlanTypeOptions().map(option => option.value);
 
@@ -126,18 +137,22 @@ const weekStart = computed(() => startOfHouseholdWeek(anchor.value, firstDayOfWe
 const range = computed(() => ({ start: weekStart.value, end: addDays(weekStart.value, 6) }));
 const isThisWeek = computed(() => ymd(weekStart.value) === ymd(startOfHouseholdWeek(today.value, firstDayOfWeek.value)));
 
-const { mealplans, actions, loading } = useMealplans(range);
-const entries = computed(() => mealplans.value ?? []);
-const isEmpty = computed(() => mealplans.value !== null && mealplans.value !== undefined && entries.value.length === 0);
+const { entries, loading, failed, reload, create, update, remove } = usePlannerWeek(range);
+const isEmpty = computed(() => !loading.value && !failed.value && entries.value.length === 0);
 const weekRecipes = computed(() => getScaledRecipes(entries.value));
 
+/** The query without the planner's own keys; `end` is left over from the classic planner. */
+function otherQuery() {
+  const { start: _start, end: _end, ...query } = route.query;
+  return query;
+}
+
 function goToWeek(step: number) {
-  router.push({ query: { ...route.query, start: ymd(addDays(weekStart.value, step * 7)) } });
+  router.push({ query: { ...otherQuery(), start: ymd(addDays(weekStart.value, step * 7)) } });
 }
 
 function goToThisWeek() {
-  const { start: _start, ...query } = route.query;
-  router.push({ query });
+  router.push({ query: otherQuery() });
 }
 
 const weekTitle = computed(() => {
@@ -170,12 +185,13 @@ async function moveEntry(move: PlannerMove) {
   if (!entry) {
     return;
   }
-  const { error } = await api.mealplans.updateOne(entry.id, { ...entry, date: move.date, entryType: move.entryType });
-  if (error) {
-    alert.error(i18n.t("planner.save-failed"));
-  }
-  // Reload either way: a failed move snaps the card back to where it is saved.
-  await actions.refreshAll();
+  // Reloads either way, so a failed move snaps the card back to where it is saved.
+  await update({ ...entry, date: move.date, entryType: move.entryType });
+  // The card re-rendered in its new cell; keep keyboard users on it rather than dropping focus to the page.
+  await nextTick();
+  const kebab = [...document.querySelectorAll<HTMLElement>(`[data-entry-id="${move.entryId}"] [aria-haspopup="menu"]`)]
+    .find(el => el.offsetParent !== null);
+  kebab?.focus();
 }
 
 const moreItems = computed<AppShellMenuItem[]>(() => [
@@ -246,6 +262,28 @@ const calendarDialog = ref(false);
 
 .plan__hint-title {
   font-weight: 600;
+}
+
+.plan__retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ds-text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.plan__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 @media (max-width: 1023px) {

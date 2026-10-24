@@ -1455,6 +1455,7 @@
     "load-failed": "The plan couldn’t load.",
     "save-failed": "Couldn’t save that change. Try again.",
     "try-again": "Try again",
-    "note": "Note"
+    "loading": "Loading the week…",
+    "cell-label": "{type} on {day}"
   }
 }

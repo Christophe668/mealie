@@ -97,6 +97,9 @@ describe("PlannerWeek", () => {
     expect(cell(wrapper, "2026-10-21", "dessert").text()).toContain("Tarte tatin");
     expect(cell(wrapper, "2026-10-23", "dinner").text()).toContain("Roast chicken");
     expect(cell(wrapper, "2026-10-21", "dinner").text()).not.toContain("Roast chicken");
+    // The row labels are visual; each cell names its own meal type and day for screen readers.
+    expect(cell(wrapper, "2026-10-21", "lunch").attributes("role")).toBe("group");
+    expect(cell(wrapper, "2026-10-21", "lunch").attributes("aria-label")).toMatch(/^Lunch on Wednesday.*21/);
   });
 
   test("emits move with the entry and the target day when an entry is dropped on another day", async () => {

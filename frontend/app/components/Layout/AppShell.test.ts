@@ -205,7 +205,7 @@ describe("AppShell", () => {
     expect(items.map(i => i.attributes("href"))).toEqual([
       "/g/home/r/create/url",
       "/g/home/r/create/new",
-      "/household/mealplan/planner/edit",
+      "/household/mealplan/planner/view",
       "/shopping-lists",
     ]);
     expect(document.activeElement).toBe(items[0]!.element);
@@ -260,7 +260,7 @@ describe("AppShell", () => {
 
     await wrapper.find(".ds-tabbar button[aria-haspopup=menu]").trigger("click");
     const hrefs = wrapper.findAll("[role=menuitem]").map(i => i.attributes("href"));
-    expect(hrefs).toEqual(["/household/mealplan/planner/edit", "/shopping-lists"]);
+    expect(hrefs).toEqual(["/household/mealplan/planner/view", "/shopping-lists"]);
     expect(link(wrapper, ".ds-rail", "Today").attributes("aria-current")).toBe("page");
   });
 

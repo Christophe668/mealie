@@ -15,6 +15,8 @@
       v-for="row in rows"
       :key="row.type"
       class="planner-cell"
+      role="group"
+      :aria-label="$t('planner.cell-label', { type: row.label, day: longDay })"
       :data-date="dateKey"
       :data-type="row.type"
     >
@@ -25,6 +27,7 @@
         :data-type="row.type"
         group="planner-week"
         :sort="false"
+        :empty-insert-threshold="32"
         :animation="reduceMotion ? 0 : 150"
         force-fallback
         :fallback-tolerance="4"
@@ -172,16 +175,17 @@ function onAdd(event: { item: HTMLElement }, type: PlanEntryType) {
   position: relative;
   display: flex;
   min-width: 0;
-  min-height: calc(var(--ds-space) * 13);
+  min-height: calc(var(--ds-space) * 8);
   flex-direction: column;
   gap: var(--ds-space);
   padding: var(--ds-space) 0;
   border-top: 1px solid var(--ds-border);
 }
 
+/* The "+" follows the cards rather than sinking to the bottom of a tall row. */
 .planner-cell__list {
   display: flex;
-  flex: 1;
+  min-height: var(--ds-space);
   flex-direction: column;
   gap: var(--ds-space);
 }

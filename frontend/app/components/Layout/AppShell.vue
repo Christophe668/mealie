@@ -171,7 +171,7 @@ const addItems = computed<AppShellMenuItem[]>(() => {
     );
   }
   items.push(
-    { key: "plan", label: i18n.t("app-shell.add-to-plan"), to: "/household/mealplan/planner/edit", icon: "calendar" },
+    { key: "plan", label: i18n.t("app-shell.add-to-plan"), to: PLAN_PATH, icon: "calendar" },
     { key: "list", label: i18n.t("app-shell.add-to-shopping-list"), to: SHOP_PATH, icon: "formatListCheck" },
   );
   return items;

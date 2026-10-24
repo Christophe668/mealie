@@ -1433,7 +1433,7 @@
     "today": "Aujourd’hui",
     "add": "Ajouter",
     "add-to-day": "Ajouter à {day}",
-    "add-type-to-day": "Ajouter un {type} le {day}",
+    "add-type-to-day": "Ajouter ({type}) le {day}",
     "for-servings": "pour {servings}",
     "scaled": "×{scale}",
     "entry-actions": "Actions pour {title}",
@@ -1455,6 +1455,7 @@
     "load-failed": "Le planning n’a pas pu être chargé.",
     "save-failed": "Impossible d’enregistrer ce changement. Réessayez.",
     "try-again": "Réessayer",
-    "note": "Note"
+    "loading": "Chargement de la semaine…",
+    "cell-label": "{type} le {day}"
   }
 }
