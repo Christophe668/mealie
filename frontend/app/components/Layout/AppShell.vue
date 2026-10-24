@@ -83,9 +83,8 @@ const brandName = computed(() => nuxtApp.$appInfo?.brandingName || "Mealie");
 // Same resolution as DefaultLayout: the slug in the URL wins (public group pages), else the user's own group.
 const groupSlug = computed(() => (route.params.groupSlug as string) || auth.user.value?.groupSlug || "");
 const todayPath = computed(() => (groupSlug.value ? `/g/${groupSlug.value}` : "/"));
-// The recipe explorer still lives on the group index; Task 3 moves it to /g/:slug/recipes and
-// only this line (plus the search target, which follows it) has to change.
-const recipesPath = computed(() => todayPath.value);
+// The group index is Home ("Today"); the recipe explorer lives under /recipes. Search follows it.
+const recipesPath = computed(() => (groupSlug.value ? `/g/${groupSlug.value}/recipes` : "/"));
 
 // "/g/home/" and "/g/home" are the same page; "/" stays "/".
 const currentPath = computed(() => (route.path.length > 1 ? route.path.replace(/\/$/, "") : route.path));

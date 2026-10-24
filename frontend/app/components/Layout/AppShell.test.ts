@@ -114,7 +114,7 @@ describe("AppShell", () => {
     const wrapper = render();
 
     expect(link(wrapper, ".ds-rail", "Today").attributes("href")).toBe("/g/home");
-    expect(link(wrapper, ".ds-rail", "Recipes").attributes("href")).toBe("/g/home");
+    expect(link(wrapper, ".ds-rail", "Recipes").attributes("href")).toBe("/g/home/recipes");
     expect(link(wrapper, ".ds-rail", "Plan").attributes("href")).toBe("/household/mealplan/planner/view");
     expect(link(wrapper, ".ds-rail", "Shop").attributes("href")).toBe("/shopping-lists");
     expect(link(wrapper, ".ds-rail", "Connections").attributes("href")).toBe("/user/connections");
@@ -176,7 +176,7 @@ describe("AppShell", () => {
     await wrapper.find("input[type=search]").setValue("  chicken  ");
     await wrapper.find("form[role=search]").trigger("submit");
 
-    expect(mocks.push).toHaveBeenCalledWith({ path: "/g/home", query: { search: "chicken" } });
+    expect(mocks.push).toHaveBeenCalledWith({ path: "/g/home/recipes", query: { search: "chicken" } });
   });
 
   test("an empty search does nothing", async () => {
