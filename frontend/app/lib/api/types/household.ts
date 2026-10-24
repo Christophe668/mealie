@@ -7,6 +7,8 @@
 
 export type GroupRecipeActionType = "link" | "post";
 export type WebhookType = "mealplan";
+export type PantryLocation = "fridge" | "freezer" | "cupboard" | "other";
+export type PantrySource = "shopping" | "manual" | "leftover";
 
 export interface CreateGroupRecipeAction {
   actionType: GroupRecipeActionType;
@@ -263,6 +265,114 @@ export interface HouseholdSummary {
   slug: string;
   preferences?: ReadHouseholdPreferences | null;
 }
+export interface PantryItemCreate {
+  name: string;
+  foodId?: string | null;
+  quantity?: number | null;
+  unitId?: string | null;
+  location?: PantryLocation;
+  boughtOn?: string | null;
+  openedOn?: string | null;
+  useBy?: string | null;
+  source?: PantrySource;
+  note?: string | null;
+}
+export interface PantryItemOut {
+  name: string;
+  foodId?: string | null;
+  quantity?: number | null;
+  unitId?: string | null;
+  location?: PantryLocation;
+  boughtOn?: string | null;
+  openedOn?: string | null;
+  useBy?: string | null;
+  source?: PantrySource;
+  note?: string | null;
+  id: string;
+  groupId: string;
+  householdId: string;
+  food?: IngredientFood | null;
+  unit?: IngredientUnit | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export interface IngredientFood {
+  id: string;
+  name: string;
+  pluralName?: string | null;
+  description?: string;
+  extras?: {
+    [k: string]: unknown;
+  } | null;
+  labelId?: string | null;
+  aliases?: IngredientFoodAlias[];
+  substitutions?: IngredientFoodSubstitution[];
+  householdsWithIngredientFood?: string[];
+  label?: MultiPurposeLabelSummary | null;
+  recipeCount?: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export interface IngredientFoodAlias {
+  name: string;
+}
+export interface IngredientFoodSubstitution {
+  substituteFoodId?: string | null;
+  note?: string | null;
+  substituteFood?: IngredientFoodSummary | null;
+}
+export interface IngredientFoodSummary {
+  id: string;
+  name: string;
+  pluralName?: string | null;
+}
+export interface MultiPurposeLabelSummary {
+  name: string;
+  color?: string;
+  groupId: string;
+  id: string;
+}
+export interface IngredientUnit {
+  id: string;
+  name: string;
+  pluralName?: string | null;
+  description?: string;
+  extras?: {
+    [k: string]: unknown;
+  } | null;
+  fraction?: boolean;
+  abbreviation?: string;
+  pluralAbbreviation?: string | null;
+  useAbbreviation?: boolean;
+  aliases?: IngredientUnitAlias[];
+  standardQuantity?: number | null;
+  standardUnit?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export interface IngredientUnitAlias {
+  name: string;
+}
+export interface PantryItemUpdate {
+  name: string;
+  foodId?: string | null;
+  quantity?: number | null;
+  unitId?: string | null;
+  location?: PantryLocation;
+  boughtOn?: string | null;
+  openedOn?: string | null;
+  useBy?: string | null;
+  source?: PantrySource;
+  note?: string | null;
+}
+export interface PutAwayRequest {
+  itemIds?: string[] | null;
+}
+export interface PutAwayResult {
+  created: PantryItemOut[];
+  merged: PantryItemOut[];
+  removedItemIds: string[];
+}
 export interface ReadInviteToken {
   token: string;
   usesLeft: number;
@@ -326,27 +436,6 @@ export interface RecipeIngredient {
   substitutions?: RecipeIngredientSubstitution[];
   referenceId?: string;
 }
-export interface IngredientUnit {
-  id: string;
-  name: string;
-  pluralName?: string | null;
-  description?: string;
-  extras?: {
-    [k: string]: unknown;
-  } | null;
-  fraction?: boolean;
-  abbreviation?: string;
-  pluralAbbreviation?: string | null;
-  useAbbreviation?: boolean;
-  aliases?: IngredientUnitAlias[];
-  standardQuantity?: number | null;
-  standardUnit?: string | null;
-  createdAt?: string | null;
-  updatedAt?: string | null;
-}
-export interface IngredientUnitAlias {
-  name: string;
-}
 export interface CreateIngredientUnit {
   id?: string | null;
   name: string;
@@ -365,42 +454,6 @@ export interface CreateIngredientUnit {
 }
 export interface CreateIngredientUnitAlias {
   name: string;
-}
-export interface IngredientFood {
-  id: string;
-  name: string;
-  pluralName?: string | null;
-  description?: string;
-  extras?: {
-    [k: string]: unknown;
-  } | null;
-  labelId?: string | null;
-  aliases?: IngredientFoodAlias[];
-  substitutions?: IngredientFoodSubstitution[];
-  householdsWithIngredientFood?: string[];
-  label?: MultiPurposeLabelSummary | null;
-  recipeCount?: number;
-  createdAt?: string | null;
-  updatedAt?: string | null;
-}
-export interface IngredientFoodAlias {
-  name: string;
-}
-export interface IngredientFoodSubstitution {
-  substituteFoodId?: string | null;
-  note?: string | null;
-  substituteFood?: IngredientFoodSummary | null;
-}
-export interface IngredientFoodSummary {
-  id: string;
-  name: string;
-  pluralName?: string | null;
-}
-export interface MultiPurposeLabelSummary {
-  name: string;
-  color?: string;
-  groupId: string;
-  id: string;
 }
 export interface CreateIngredientFood {
   id?: string | null;

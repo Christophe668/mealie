@@ -37,6 +37,11 @@ def _client(redirect_uri: str = CALLBACK) -> OAuthClientInformationFull:
     )
 
 
+def _with_all_scopes(client: OAuthClientInformationFull) -> OAuthClientInformationFull:
+    """What `get_client` returns for a stored client: the same client, allowed every current scope."""
+    return client.model_copy(update={"scope": " ".join(ALL_SCOPES)})
+
+
 def _params(scopes: list[str] | None = None, redirect_uri: str = CALLBACK) -> AuthorizationParams:
     return AuthorizationParams(
         state="s1",
@@ -212,7 +217,7 @@ def test_register_and_get_client(session: Session):
     async def run():
         assert await provider.get_client(client.client_id) is None
         await provider.register_client(client)
-        assert await provider.get_client(client.client_id) == client
+        assert await provider.get_client(client.client_id) == _with_all_scopes(client)
 
     asyncio.run(run())
 
@@ -305,7 +310,24 @@ def test_register_accepts_https_and_loopback(session: Session, redirect_uri: str
 
     asyncio.run(provider.register_client(client))
 
-    assert asyncio.run(provider.get_client(client.client_id)) == client
+    assert asyncio.run(provider.get_client(client.client_id)) == _with_all_scopes(client)
+
+
+def test_get_client_widens_a_client_stored_with_the_old_scopes(session: Session):
+    old_scopes = ["recipes:read", "recipes:write", "mealplan:write", "shopping:write", "household:write"]
+    client = _client().model_copy(update={"scope": " ".join(old_scopes)})
+    OAuthStore(session).save_client(client)  # as registered (DCR without a scope) before pantry:write existed
+    with pytest.raises(Exception, match="pantry:write"):
+        client.validate_scope("pantry:write")  # what the SDK's authorize handler would have refused
+
+    loaded = asyncio.run(_provider(session).get_client(client.client_id))
+
+    assert loaded is not None
+    assert loaded.scope is not None
+    assert sorted(loaded.scope.split()) == sorted(ALL_SCOPES)
+    assert len(ALL_SCOPES) == 6
+    assert loaded.validate_scope("recipes:read pantry:write") == ["recipes:read", "pantry:write"]
+    assert loaded.redirect_uris == client.redirect_uris
 
 
 def test_get_client_hides_legacy_unsafe_client(session: Session):

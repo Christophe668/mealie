@@ -54,7 +54,14 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
             client = OAuthStore(session).get_client(client_id)
         # rows registered before redirect URIs were validated are treated as unknown, so the SDK never
         # redirects to them (it answers with a plain error instead)
-        return client if client is not None and _redirects_allowed(client) else None
+        if client is None or not _redirects_allowed(client):
+            return None
+        # A client registered without an explicit scope was stored with the scopes that existed then, and the
+        # SDK refuses (invalid_scope) any scope outside that set, so a connection made before a new scope was
+        # added could never obtain it. This is a single-user fork with no per-client scope restrictions:
+        # every client may ask for every current scope, and the user still approves each grant on the
+        # consent page.
+        return client.model_copy(update={"scope": " ".join(ALL_SCOPES)})
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         if not client_info.redirect_uris or not _redirects_allowed(client_info):

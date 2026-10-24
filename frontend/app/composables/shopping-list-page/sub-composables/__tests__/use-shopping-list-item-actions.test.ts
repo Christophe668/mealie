@@ -32,6 +32,7 @@ describe("useShoppingListItemActions", () => {
     deleteItem,
     updateItem,
     process,
+    hasQueuedChanges,
     __testing__: { queue, clearQueueItems },
   } = useShoppingListItemActions("list_id");
 
@@ -42,6 +43,13 @@ describe("useShoppingListItemActions", () => {
     clearQueueItems("all");
   });
 
+  test("hasQueuedChanges follows the queue", () => {
+    expect(hasQueuedChanges.value).toBe(false);
+    updateItem(MOCK_ITEM);
+    expect(hasQueuedChanges.value).toBe(true);
+    clearQueueItems("all");
+    expect(hasQueuedChanges.value).toBe(false);
+  });
   test("getList returns a shopping list", async () => {
     const list = await getList();
     expect(list).toBe(MOCK_SHOPPING_LIST);
@@ -124,6 +132,7 @@ describe("useShoppingListItemActions", () => {
       expect(queue.update).include(updatedItem);
       expect(queue.create).include(createdItem);
       expect(queue.delete).include(deletedItem);
+      expect(hasQueuedChanges.value).toBe(true);
     });
     test("doesn't do anything if the queue is empty", async () => {
       await process();

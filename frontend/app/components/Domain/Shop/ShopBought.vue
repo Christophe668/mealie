@@ -13,9 +13,22 @@
           <DsIcon name="chevronDown" :size="22" class="shop-bought__chevron" :class="{ 'shop-bought__chevron--open': open }" />
         </button>
       </h2>
-      <DsButton variant="line" icon="delete" class="shop-bought__clear" @click="$emit('clear')">
-        {{ $t("shop.clear-bought") }}
-      </DsButton>
+      <div class="shop-bought__actions">
+        <DsButton variant="line" icon="delete" class="shop-bought__clear" @click="$emit('clear')">
+          {{ $t("shop.clear-bought") }}
+        </DsButton>
+        <!-- Ink, not saffron: the open-count badge is this screen's one accent. -->
+        <DsButton
+          variant="dark"
+          icon="archiveArrowDown"
+          class="shop-bought__put-away"
+          :disabled="putting"
+          :aria-label="$t('shop.put-away-label', { count: items.length }, items.length)"
+          @click="$emit('put-away')"
+        >
+          {{ $t("shop.put-away") }}
+        </DsButton>
+      </div>
     </div>
     <!-- v-if: bought rows (each running the ingredient parser) only exist while the section is open. -->
     <ul v-if="open" :id="listId" class="shop-bought__list" role="list">
@@ -38,14 +51,16 @@ import DsButton from "~/components/Design/DsButton.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
 import type { ShoppingListItemOut } from "~/lib/api/types/household";
 
-defineProps<{
+withDefaults(defineProps<{
   items: ShoppingListItemOut[];
   recipeNames: Map<string, string>;
-}>();
+  /** A put away is running: the button stays focusable but does nothing. */
+  putting?: boolean;
+}>(), { putting: false });
 
 defineEmits<{
   (e: "toggle" | "edit", item: ShoppingListItemOut): void;
-  (e: "clear"): void;
+  (e: "clear" | "put-away"): void;
 }>();
 
 const headingId = useId();
@@ -67,6 +82,12 @@ const open = ref(false);
   justify-content: space-between;
   gap: var(--ds-space);
   padding: calc(var(--ds-space) * 0.5) 0;
+}
+
+.shop-bought__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-space);
 }
 
 .shop-bought__heading {

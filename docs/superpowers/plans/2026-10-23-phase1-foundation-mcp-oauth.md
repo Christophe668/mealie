@@ -95,15 +95,25 @@ In `pyproject.toml` → `dependencies`, add `"mcp==2.3.0",`. Run: `uv lock && uv
 # tests/unit_tests/mcp/test_oauth_models.py
 from mealie.db.models.mcp.oauth import McpOAuthClient, McpOAuthGrant
 
+
 def test_oauth_client_roundtrip(session):
-    session.add(McpOAuthClient(client_id="c1", client_name="Claude", redirect_uris=["https://claude.ai/api/mcp/auth_callback"], metadata_json={"client_id": "c1"}))
+    session.add(
+        McpOAuthClient(
+            client_id="c1",
+            client_name="Claude",
+            redirect_uris=["https://claude.ai/api/mcp/auth_callback"],
+            metadata_json={"client_id": "c1"},
+        )
+    )
     session.commit()
     row = session.query(McpOAuthClient).filter_by(client_id="c1").one()
     assert row.redirect_uris == ["https://claude.ai/api/mcp/auth_callback"]
 
+
 def test_grant_defaults(session, unique_user):
     g = McpOAuthGrant(grant_id="g1", user_id=unique_user.user_id, client_id="c1", scopes=["recipes:read"])
-    session.add(g); session.commit()
+    session.add(g)
+    session.commit()
     assert g.revoked_at is None and g.last_used_at is None
 ```
 
@@ -138,20 +148,32 @@ def test_grant_defaults(session, unique_user):
 
 ```python
 def test_issue_and_decode_roundtrip():
-    tok, exp = issue_access_token(user_id="u", client_id="c", grant_id="g", scopes=["recipes:read"], resource="http://x/mcp")
+    tok, exp = issue_access_token(
+        user_id="u", client_id="c", grant_id="g", scopes=["recipes:read"], resource="http://x/mcp"
+    )
     claims = decode_access_token(tok)
-    assert claims and claims.sub == "u" and claims.scope == ["recipes:read"] and claims.aud == "http://x/mcp" and claims.exp == exp
+    assert (
+        claims
+        and claims.sub == "u"
+        and claims.scope == ["recipes:read"]
+        and claims.aud == "http://x/mcp"
+        and claims.exp == exp
+    )
+
 
 def test_decode_rejects_session_token():
-    tok, _ = create_access_token({"sub": "u"})   # regular Mealie token
+    tok, _ = create_access_token({"sub": "u"})  # regular Mealie token
     assert decode_access_token(tok) is None
+
 
 def test_decode_rejects_expired(monkeypatch):
     monkeypatch.setattr(tokens, "ACCESS_TOKEN_TTL", timedelta(seconds=-1))
     assert decode_access_token(issue_access_token(...)[0]) is None
 
+
 def test_hash_token_is_stable_and_not_identity():
-    raw = new_opaque_token(); assert hash_token(raw) == hash_token(raw) and hash_token(raw) != raw
+    raw = new_opaque_token()
+    assert hash_token(raw) == hash_token(raw) and hash_token(raw) != raw
 ```
 
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → PASS. **Step 5: Commit** `feat(mcp): token issuance and decoding`
@@ -168,7 +190,9 @@ def test_hash_token_is_stable_and_not_identity():
 
 ```python
 def test_mcp_token_rejected_on_api(api_client, unique_user):
-    tok, _ = issue_access_token(user_id=str(unique_user.user_id), client_id="c", grant_id="g", scopes=list(ALL_SCOPES), resource=None)
+    tok, _ = issue_access_token(
+        user_id=str(unique_user.user_id), client_id="c", grant_id="g", scopes=list(ALL_SCOPES), resource=None
+    )
     r = api_client.get(api_routes.users_self, headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 401
 ```

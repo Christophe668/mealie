@@ -26,6 +26,7 @@ import { MealPlanRulesApi } from "./user/group-mealplan-rules";
 import { GroupDataSeederApi } from "./user/group-seeder";
 import { AIProvidersAPI } from "./user/group-ai-providers";
 import { McpConnectionsApi } from "./user/mcp-connections";
+import { HouseholdPantryApi } from "./user/household-pantry";
 import type { ApiRequestInstance } from "~/lib/api/types/non-generated";
 
 export class UserApiClient {
@@ -57,6 +58,7 @@ export class UserApiClient {
   public seeders: GroupDataSeederApi;
   public aiProviders: AIProvidersAPI;
   public mcpConnections: McpConnectionsApi;
+  public householdPantry: HouseholdPantryApi;
 
   constructor(requests: ApiRequestInstance) {
     // Recipes
@@ -78,6 +80,7 @@ export class UserApiClient {
     this.mealplans = new MealPlanAPI(requests);
     this.mealplanRules = new MealPlanRulesApi(requests);
     this.mcpConnections = new McpConnectionsApi(requests);
+    this.householdPantry = new HouseholdPantryApi(requests);
 
     // Group
     this.groupMigration = new GroupMigrationApi(requests);

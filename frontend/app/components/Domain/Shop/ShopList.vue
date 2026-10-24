@@ -3,7 +3,7 @@
     <!-- First in the DOM (it is the main action); CSS pins it at the bottom on mobile. -->
     <ShopQuickAdd ref="quickAdd" class="shop-list__add" @add="$emit('add', $event)" />
 
-    <div v-if="!aisles.length" class="shop-list__empty">
+    <div v-if="!aisles.length" ref="empty" class="shop-list__empty" tabindex="-1">
       <p class="shop-list__empty-title">
         {{ bought.length ? $t("shop.all-bought") : $t("shop.nothing-to-buy") }}
       </p>
@@ -26,9 +26,11 @@
       v-if="bought.length"
       :items="bought"
       :recipe-names="recipeNames"
+      :putting="putting"
       @toggle="onToggle"
       @edit="$emit('edit', $event)"
       @clear="$emit('clearBought')"
+      @put-away="onPutAway"
     />
   </div>
 </template>
@@ -46,12 +48,14 @@ const props = defineProps<{
   list: ShoppingListOut;
   /** The upstream composable's label grouping, mapped with `toByLabel`. */
   byLabel: ShopAisleGroup[];
+  /** A put away is running. */
+  putting?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "toggle" | "edit", item: ShoppingListItemOut): void;
   (e: "add", text: string): void;
-  (e: "clearBought"): void;
+  (e: "clearBought" | "putAway"): void;
 }>();
 
 const aisles = computed(() => shopAisles(props.list, props.byLabel));
@@ -108,6 +112,41 @@ async function onToggle(item: ShoppingListItemOut) {
   }
   (quickAdd.value?.$el as HTMLElement | undefined)?.querySelector("input")?.focus();
 }
+
+// Put away empties the Bought section, taking the focused button with it. Land on the first open row,
+// else on the empty state (not the quick-add field, which would pop the keyboard on a phone).
+const emptyState = useTemplateRef<HTMLElement>("empty");
+let refocusAfterPutAway = false;
+
+function onPutAway() {
+  refocusAfterPutAway = !!root.value?.querySelector(".shop-bought")?.contains(document.activeElement);
+  emit("putAway");
+}
+
+// A put away that ends with the items still there (it failed) leaves focus alone from then on. Checked a
+// tick later, so a successful reload has already emptied the section and moved focus.
+watch(() => props.putting, async (busy) => {
+  if (busy) {
+    return;
+  }
+  await nextTick();
+  if (bought.value.length) {
+    refocusAfterPutAway = false;
+  }
+});
+
+watch(bought, async (items) => {
+  if (items.length || !refocusAfterPutAway) {
+    return;
+  }
+  refocusAfterPutAway = false;
+  await nextTick();
+  if (document.activeElement && document.activeElement !== document.body) {
+    return;
+  }
+  const firstRow = root.value?.querySelector<HTMLElement>(".shop-aisle input[type=checkbox]");
+  (firstRow ?? emptyState.value)?.focus();
+});
 </script>
 
 <style scoped>
@@ -118,6 +157,7 @@ async function onToggle(item: ShoppingListItemOut) {
 }
 
 .shop-list__empty {
+  outline: none;
   padding: calc(var(--ds-space) * 3);
   border: 1px dashed var(--ds-border);
   border-radius: var(--ds-radius-card);

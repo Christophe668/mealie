@@ -127,9 +127,20 @@ describe("AppShell", () => {
     expect(link(wrapper, ".ds-rail", "Recipes").attributes("href")).toBe("/g/home/recipes");
     expect(link(wrapper, ".ds-rail", "Plan").attributes("href")).toBe("/household/mealplan/planner/view");
     expect(link(wrapper, ".ds-rail", "Shop").attributes("href")).toBe("/shopping-lists");
+    expect(link(wrapper, ".ds-rail", "Pantry").attributes("href")).toBe("/household/pantry");
     expect(link(wrapper, ".ds-rail", "Connections").attributes("href")).toBe("/user/connections");
     expect(link(wrapper, ".ds-rail", "Settings").attributes("href")).toBe("/user/profile");
     expect(wrapper.find(".ds-rail").text()).toContain("Christophe");
+  });
+
+  test("the rail puts Pantry right after Shop and marks it on pantry pages", async () => {
+    route.path = "/household/pantry";
+    const wrapper = render();
+
+    const labels = wrapper.findAll(".ds-rail nav").at(0)!.findAll("a").map(a => a.text().trim());
+    expect(labels).toEqual(["Today", "Recipes", "Plan", "Shop", "Pantry"]);
+    expect(link(wrapper, ".ds-rail", "Pantry").attributes("aria-current")).toBe("page");
+    expect(link(wrapper, ".ds-rail", "Shop").attributes("aria-current")).toBeUndefined();
   });
 
   test("the tab bar carries the four primary destinations", () => {
@@ -211,12 +222,14 @@ describe("AppShell", () => {
       "Create recipe",
       "Add to plan",
       "Add to shopping list",
+      "Add to pantry",
     ]);
     expect(items.map(i => i.attributes("href"))).toEqual([
       "/g/home/r/create/url",
       "/g/home/r/create/new",
       "/household/mealplan/planner/view",
       "/shopping-lists",
+      "/household/pantry?add=1",
     ]);
     expect(document.activeElement).toBe(items[0]!.element);
 
@@ -235,7 +248,7 @@ describe("AppShell", () => {
     expect(document.activeElement).toBe(items[1]!.element);
     await menu.trigger("keydown", { key: "ArrowUp" });
     await menu.trigger("keydown", { key: "ArrowUp" });
-    expect(document.activeElement).toBe(items[3]!.element);
+    expect(document.activeElement).toBe(items[4]!.element);
   });
 
   test("visitors see neither household pages nor the add button", () => {
@@ -246,6 +259,7 @@ describe("AppShell", () => {
     expect(labels).toEqual(["Recipes"]);
     expect(wrapper.find(".ds-tabbar button[aria-haspopup=menu]").exists()).toBe(false);
     expect(wrapper.find(".ds-rail").text()).not.toContain("Connections");
+    expect(wrapper.find(".ds-rail").text()).not.toContain("Pantry");
     expect(wrapper.find(".ds-rail").text()).toContain("Log in");
   });
 
@@ -259,6 +273,7 @@ describe("AppShell", () => {
       "Create recipe",
       "Add to plan",
       "Add to shopping list",
+      "Add to pantry",
     ]);
   });
 
@@ -270,7 +285,7 @@ describe("AppShell", () => {
 
     await wrapper.find(".ds-tabbar button[aria-haspopup=menu]").trigger("click");
     const hrefs = wrapper.findAll("[role=menuitem]").map(i => i.attributes("href"));
-    expect(hrefs).toEqual(["/household/mealplan/planner/view", "/shopping-lists"]);
+    expect(hrefs).toEqual(["/household/mealplan/planner/view", "/shopping-lists", "/household/pantry?add=1"]);
     expect(link(wrapper, ".ds-rail", "Today").attributes("aria-current")).toBe("page");
   });
 

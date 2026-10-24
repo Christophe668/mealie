@@ -42,10 +42,12 @@
       v-if="shoppingList"
       :list="shoppingList"
       :by-label="byLabel"
+      :putting="putting"
       @toggle="toggle"
       @edit="openEditor"
       @add="add"
       @clear-bought="openDeleteChecked"
+      @put-away="putAway"
     />
 
     <!-- Recipes whose ingredients are on the list: upstream's controls to add or take a recipe off again. -->
@@ -181,12 +183,13 @@ import RecipeList from "~/components/Domain/Recipe/RecipeList.vue";
 import MultiPurposeLabelSection from "~/components/Domain/ShoppingList/MultiPurposeLabelSection.vue";
 import ShoppingListItemEditor from "~/components/Domain/ShoppingList/ShoppingListItemEditor.vue";
 import AppShellMenu from "~/components/Layout/AppShellMenu.vue";
+import { useUserApi } from "~/composables/api";
 import { useShoppingListPage } from "~/composables/shopping-list-page/use-shopping-list-page";
 import { resolveFood } from "~/composables/shopping-list-page/use-shopping-list-item-editor";
 import { useLabelStore, useUnitStore, useFoodStore } from "~/composables/store";
 import { useAppShellTitle } from "~/composables/use-app-shell-title";
 import { openCount, toByLabel } from "~/composables/use-shop";
-import { alert } from "~/composables/use-toast";
+import { alert, alertUnreportedError } from "~/composables/use-toast";
 import { useUserExperiencePreferences } from "~/composables/use-users/preferences";
 import { useWakeLock } from "~/composables/use-wake-lock";
 import type { ShoppingListItemOut } from "~/lib/api/types/household";
@@ -200,6 +203,7 @@ const i18n = useI18n();
 const route = useRoute();
 const router = useRouter();
 const id = route.params.id as string;
+const api = useUserApi();
 
 // The upstream composable stays the single source of truth for items, label grouping and the offline queue.
 const shoppingListPage = useShoppingListPage(id);
@@ -234,6 +238,7 @@ const {
   removeRecipeReferenceToList,
   addRecipeReferenceToList,
   refresh,
+  hasQueuedChanges,
 } = shoppingListPage;
 
 const byLabel = computed(() => toByLabel(itemsByLabel.value, shoppingList.value));
@@ -334,6 +339,45 @@ function deleteEditor() {
     deleteListItem(editor.source);
   }
   editor.open = false;
+}
+
+// =====================================================
+// Put away: every bought item goes into the pantry and off the list, then the list reloads.
+
+const putting = ref(false);
+
+async function putAway() {
+  if (putting.value) {
+    return;
+  }
+  putting.value = true;
+  try {
+    // A tick is only queued locally until the next refresh or poll; send the queue first so the server
+    // sees what is on screen as bought.
+    await refresh();
+    if (hasQueuedChanges.value) {
+      // The flush could not reach the server; putting away now would move a stale set of items.
+      alert.error(i18n.t("shop.put-away-unsynced"));
+      return;
+    }
+    const { data, error } = await api.householdPantry.putAway(id, null);
+    if (!data) {
+      // The list is left as it is; nothing was moved.
+      alertUnreportedError(error, i18n.t("shop.put-away-failed"));
+      return;
+    }
+    // Items that left the list, not pantry rows: several bought lines can merge into one row.
+    const count = data.removedItemIds.length;
+    alert.info(i18n.t("shop.put-away-done", { count }, count), undefined, {
+      timeout: 6000,
+      action: { message: i18n.t("shop.open-pantry"), onClick: () => router.push("/household/pantry") },
+    });
+    // Stay busy until the reloaded list no longer shows the items, so a second press cannot repeat it.
+    await refresh();
+  }
+  finally {
+    putting.value = false;
+  }
 }
 
 // =====================================================

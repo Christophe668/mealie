@@ -4,6 +4,7 @@
 > Phase 1 plan: [docs/superpowers/plans/2026-10-23-phase1-foundation-mcp-oauth.md](docs/superpowers/plans/2026-10-23-phase1-foundation-mcp-oauth.md)
 > Deploy and connect to claude.ai: [docs/fork/deploy.md](docs/fork/deploy.md)
 > UI redesigned ("Mise en place"): see [docs/superpowers/specs/2026-10-24-ui-redesign-design.md](docs/superpowers/specs/2026-10-24-ui-redesign-design.md)
+> Pantry: track what you have and put the shopping away; Claude reads it and estimates freshness. See [docs/superpowers/specs/2026-10-24-pantry-slice-design.md](docs/superpowers/specs/2026-10-24-pantry-slice-design.md)
 > Upstream: [mealie-recipes/mealie](https://github.com/mealie-recipes/mealie), merged from `upstream/mealie-next`.
 
 [![Latest Release][latest-release-shield]][latest-release-url]

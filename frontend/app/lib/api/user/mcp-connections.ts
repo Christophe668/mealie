@@ -30,6 +30,7 @@ export const MCP_SCOPE_I18N_KEYS: Record<string, string> = {
   "mealplan:write": "settings.mcp.scope.mealplan-write",
   "shopping:write": "settings.mcp.scope.shopping-write",
   "household:write": "settings.mcp.scope.household-write",
+  "pantry:write": "settings.mcp.scope.pantry-write",
 };
 
 const prefix = "/api/users/mcp";

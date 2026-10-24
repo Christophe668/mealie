@@ -836,7 +836,8 @@
         "recipes-write": "Créer et modifier des recettes",
         "mealplan-write": "Modifier le planning des repas",
         "shopping-write": "Modifier les listes de courses",
-        "household-write": "Modifier les paramètres du foyer"
+        "household-write": "Modifier les paramètres du foyer",
+        "pantry-write": "Gérer le garde-manger"
       },
       "approve": "Autoriser",
       "deny": "Refuser",
@@ -1366,6 +1367,7 @@
     "recipes": "Recettes",
     "plan": "Planning",
     "shop": "Courses",
+    "pantry": "Garde-manger",
     "connections": "Connexions",
     "settings": "Paramètres",
     "announcements": "Annonces",
@@ -1377,6 +1379,7 @@
     "add-recipe-from-url": "Ajouter une recette depuis une URL",
     "add-to-plan": "Ajouter au planning",
     "add-to-shopping-list": "Ajouter à la liste de courses",
+    "add-to-pantry": "Ajouter au garde-manger",
     "create-recipe": "Créer une recette",
     "account": "Compte",
     "profile": "Profil",
@@ -1580,7 +1583,13 @@
     "untitled": "Liste sans nom",
     "recipe-less": "Retirer une fois {recipe}",
     "recipe-more": "Ajouter une fois de plus {recipe}",
-    "lists-load-failed": "Impossible de charger vos listes de courses."
+    "lists-load-failed": "Impossible de charger vos listes de courses.",
+    "put-away": "Ranger",
+    "put-away-label": "Ranger {count} article acheté dans le garde-manger | Ranger {count} articles achetés dans le garde-manger",
+    "put-away-done": "{count} article rangé | {count} articles rangés",
+    "open-pantry": "Ouvrir le garde-manger",
+    "put-away-failed": "Impossible de ranger ces articles. Réessayez.",
+    "put-away-unsynced": "Certains articles cochés n’ont pas encore pu être enregistrés. Réessayez dans un instant."
   },
   "recipes-links": {
     "label": "Parcourir les recettes",
@@ -1591,5 +1600,46 @@
     "favourites": "Favoris",
     "timeline": "Historique",
     "finder": "Chercher par ingrédients"
+  },
+  "pantry": {
+    "title": "Garde-manger",
+    "add-item": "Ajouter au garde-manger",
+    "add": "Ajouter",
+    "location": {
+      "fridge": "Frigo",
+      "freezer": "Congélateur",
+      "cupboard": "Placard",
+      "other": "Autre"
+    },
+    "item-count": "{count} article | {count} articles",
+    "use-by": "À utiliser avant le {date}",
+    "use-soon": "À utiliser vite",
+    "opened-ago": "Ouvert {when}",
+    "bought-ago": "Acheté {when}",
+    "actions-for": "Actions pour {name}",
+    "opened-today": "Ouvert aujourd’hui",
+    "edit": "Modifier",
+    "remove": "Retirer",
+    "removed": "{name} retiré",
+    "loading": "Chargement du garde-manger",
+    "load-failed": "Impossible de charger le garde-manger.",
+    "try-again": "Réessayer",
+    "save-failed": "Impossible d’enregistrer cette modification. Réessayez.",
+    "empty-title": "Rien dans le garde-manger pour l’instant",
+    "empty-text": "Rangez ce que vous avez acheté depuis une liste de courses, ou ajoutez les articles un par un.",
+    "put-away-last-shop": "Ranger vos dernières courses",
+    "add-an-item": "Ajouter un article",
+    "edit-dialog": "Modifier {name}",
+    "name": "Nom",
+    "where": "Rangé dans",
+    "quantity": "Quantité",
+    "unit": "Unité",
+    "no-unit": "Sans unité",
+    "bought-on": "Acheté le",
+    "opened-on": "Ouvert le",
+    "use-by-date": "À utiliser avant le",
+    "note": "Note",
+    "save": "Enregistrer",
+    "cancel": "Annuler"
   }
 }

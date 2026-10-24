@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         GroupRecipeAction,
         GroupWebhooksModel,
         HouseholdPreferencesModel,
+        PantryItem,
     )
 
 
@@ -66,6 +67,8 @@ class Household(SqlAlchemyBase, BaseMixins):
         "GroupEventNotifierModel", **COMMON_ARGS
     )
 
+    pantry_items: Mapped[list[PantryItem]] = orm.relationship("PantryItem", **COMMON_ARGS)
+
     made_recipes: Mapped[list[RecipeModel]] = orm.relationship(
         "RecipeModel", secondary=HouseholdToRecipe.__tablename__, back_populates="made_by"
     )
@@ -89,6 +92,7 @@ class Household(SqlAlchemyBase, BaseMixins):
             "group_event_notifiers",
             "group",
             "made_recipes",
+            "pantry_items",
         }
     )
 

@@ -7,6 +7,8 @@ import { useLocales } from "~/composables/use-locales";
 // The page wires the upstream composable to the Shop components. The composable is replaced by a stand-in that
 // keeps the same dialog contract (open* sets the state flag, the action is called on confirm).
 const page = vi.hoisted(() => ({ current: null as any }));
+const api = vi.hoisted(() => ({ householdPantry: { putAway: vi.fn() } }));
+const router = vi.hoisted(() => ({ push: vi.fn() }));
 
 vi.mock("~/composables/use-locales");
 vi.mock("~/composables/shopping-list-page/use-shopping-list-page", () => ({
@@ -18,7 +20,8 @@ vi.mock("~/composables/store", async () => {
   const store = () => ({ store: ref([]) });
   return { useLabelStore: store, useUnitStore: store, useFoodStore: store };
 });
-vi.mock("~/composables/use-toast", () => ({ alert: { info: vi.fn() } }));
+vi.mock("~/composables/use-toast", () => ({ alert: { info: vi.fn(), error: vi.fn() }, alertUnreportedError: vi.fn() }));
+vi.mock("~/composables/api", () => ({ useUserApi: () => api }));
 vi.mock("~/composables/use-users/preferences", async () => {
   const { ref } = await import("vue");
   return { useUserExperiencePreferences: () => ref({ lockScreen: false }) };
@@ -91,6 +94,7 @@ function fakePage() {
     removeRecipeReferenceToList: vi.fn(),
     addRecipeReferenceToList: vi.fn(),
     refresh: vi.fn(),
+    hasQueuedChanges: ref(false),
   };
 }
 
@@ -111,7 +115,9 @@ beforeEach(() => {
   vi.stubGlobal("definePageMeta", () => {});
   vi.stubGlobal("useSeoMeta", () => {});
   vi.stubGlobal("useRoute", () => ({ path: "/shopping-lists/list", params: { id: "list" }, query: {} }));
-  vi.stubGlobal("useRouter", () => ({ push: vi.fn() }));
+  vi.stubGlobal("useRouter", () => router);
+  router.push.mockReset();
+  api.householdPantry.putAway.mockReset();
   vi.stubGlobal("useState", (_key: string, init: () => unknown) => ref(init()));
 });
 
@@ -143,6 +149,96 @@ describe("shopping list page", () => {
 
     expect(wrapper.find(".shop-page__badge").text()).toBe("1 to buy");
     expect(wrapper.find(".shop-page__sr[role=status]").text()).toBe("1 to buy");
+  });
+
+  test("Put away moves every bought item to the pantry, says how many, offers the pantry and reloads the list", async () => {
+    const { alert } = await import("~/composables/use-toast");
+    vi.mocked(alert.info).mockClear();
+    let resolve!: (value: unknown) => void;
+    api.householdPantry.putAway.mockReturnValue(new Promise(r => (resolve = r)));
+    const wrapper = await render();
+
+    const button = () => wrapper.findAll(".shop-bought button").find(b => b.text() === "Put away")!;
+    await button().trigger("click");
+    expect(api.householdPantry.putAway).toHaveBeenCalledExactlyOnceWith("list", null);
+    // Busy while the request runs: a second click is swallowed.
+    expect(button().attributes("aria-disabled")).toBe("true");
+    await button().trigger("click");
+    expect(api.householdPantry.putAway).toHaveBeenCalledOnce();
+
+    // Three bought lines went into two pantry rows: the count is of the items that left the list.
+    resolve({ data: { created: [{ id: "p1" }], merged: [{ id: "p2" }], removedItemIds: ["b", "c", "d"] }, error: null });
+    await flushPromises();
+
+    const [text, , options] = vi.mocked(alert.info).mock.calls.at(-1)!;
+    expect(text).toBe("3 items put away");
+    expect(options!.action!.message).toBe("Open pantry");
+    options!.action!.onClick();
+    expect(router.push).toHaveBeenCalledWith("/household/pantry");
+    expect(page.current.refresh).toHaveBeenCalledTimes(2);
+    expect(button().attributes("aria-disabled")).toBeUndefined();
+  });
+
+  test("Put away first sends the queued ticks to the server, so items ticked a moment ago go too", async () => {
+    let flushed!: () => void;
+    page.current.refresh.mockReturnValueOnce(new Promise<void>(r => (flushed = r)));
+    api.householdPantry.putAway.mockResolvedValue({ data: { created: [], merged: [], removedItemIds: [] }, error: null });
+    const wrapper = await render();
+
+    await wrapper.findAll(".shop-bought button").find(b => b.text() === "Put away")!.trigger("click");
+    expect(page.current.refresh).toHaveBeenCalledOnce();
+    expect(api.householdPantry.putAway).not.toHaveBeenCalled();
+
+    flushed();
+    await flushPromises();
+    expect(api.householdPantry.putAway).toHaveBeenCalledOnce();
+    expect(page.current.refresh.mock.invocationCallOrder[0]).toBeLessThan(api.householdPantry.putAway.mock.invocationCallOrder[0]!);
+  });
+
+  test("a single item put away reads in the singular", async () => {
+    const { alert } = await import("~/composables/use-toast");
+    api.householdPantry.putAway.mockResolvedValue({ data: { created: [], merged: [{ id: "p2" }], removedItemIds: ["b"] }, error: null });
+    const wrapper = await render();
+
+    await wrapper.findAll(".shop-bought button").find(b => b.text() === "Put away")!.trigger("click");
+    await flushPromises();
+    expect(vi.mocked(alert.info).mock.calls.at(-1)![0]).toBe("1 item put away");
+  });
+
+  test("if the queued ticks could not be sent, Put away stops and says so instead of moving a stale list", async () => {
+    const { alert } = await import("~/composables/use-toast");
+    vi.mocked(alert.error).mockClear();
+    vi.mocked(alert.info).mockClear();
+    // The flush ran, but the server could not be reached: the ticks are still queued.
+    page.current.hasQueuedChanges.value = true;
+    const wrapper = await render();
+
+    const button = () => wrapper.findAll(".shop-bought button").find(b => b.text() === "Put away")!;
+    await button().trigger("click");
+    await flushPromises();
+
+    expect(page.current.refresh).toHaveBeenCalledOnce();
+    expect(api.householdPantry.putAway).not.toHaveBeenCalled();
+    expect(alert.error).toHaveBeenCalledWith("Some ticks could not be saved yet. Try again in a moment.");
+    expect(alert.info).not.toHaveBeenCalled();
+    expect(button().attributes("aria-disabled")).toBeUndefined();
+  });
+
+  test("a failed put away says so and leaves the list as it is", async () => {
+    const { alert, alertUnreportedError } = await import("~/composables/use-toast");
+    vi.mocked(alert.info).mockClear();
+    const error = { response: { status: 500 } };
+    api.householdPantry.putAway.mockResolvedValue({ data: null, error });
+    const wrapper = await render();
+
+    await wrapper.findAll(".shop-bought button").find(b => b.text() === "Put away")!.trigger("click");
+    await flushPromises();
+    expect(alertUnreportedError).toHaveBeenCalledWith(error, "Couldn’t put those items away. Try again.");
+    expect(alert.info).not.toHaveBeenCalled();
+    // Only the queue flush before the request; no reload after the failure.
+    expect(page.current.refresh).toHaveBeenCalledOnce();
+    expect(page.current.refresh.mock.invocationCallOrder[0]).toBeLessThan(api.householdPantry.putAway.mock.invocationCallOrder[0]!);
+    expect(wrapper.find(".shop-bought__toggle").text()).toBe("Bought (1)");
   });
 
   test("undo flips the item as it is now, keeping an edit made since the tick", async () => {

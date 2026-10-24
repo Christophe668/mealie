@@ -53,6 +53,14 @@ cloudflared tunnel run --url http://localhost:9925 <tunnel-name>
 4. You are redirected to Mealie: sign in and approve access.
 5. The connector's tools are now available in conversations.
 
+Reading the pantry (`get_pantry`) needs only `recipes:read`; changing it (`update_pantry`, `put_away_shopping_items`) needs the `pantry:write` permission. A connection made before that permission existed does not have it: remove the connector in claude.ai and add it again, then approve the new permission. If you see an `invalid_scope` error while reconnecting, that is why; removing and re-adding the connector clears it.
+
+## Pantry and freshness
+
+Each household has a pantry (the **Pantry** item in the side rail, just under **Shop**; on mobile, **+** then **Add to pantry**): what you have, where it is (fridge, freezer, cupboard, other), when it was bought and opened, and an optional "use by" date. On the shopping list, **Put away** moves the bought items into the pantry with today's date. A food that is in the pantry counts as "on hand", so shopping lists built from the meal plan skip it.
+
+Mealie only stores the dates. Claude estimates whether something is still good from those dates and general food knowledge, and gives that as guidance, never as food safety advice. The `pantry:write` permission Claude needs to change the pantry is shown as "Manage the pantry" on the consent page.
+
 ## Verify
 
 ```bash

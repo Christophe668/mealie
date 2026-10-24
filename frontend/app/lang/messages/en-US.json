@@ -836,7 +836,8 @@
         "recipes-write": "Create and edit recipes",
         "mealplan-write": "Edit the meal plan",
         "shopping-write": "Edit shopping lists",
-        "household-write": "Edit household settings"
+        "household-write": "Edit household settings",
+        "pantry-write": "Manage the pantry"
       },
       "approve": "Approve",
       "deny": "Deny",
@@ -1366,6 +1367,7 @@
     "recipes": "Recipes",
     "plan": "Plan",
     "shop": "Shop",
+    "pantry": "Pantry",
     "connections": "Connections",
     "settings": "Settings",
     "announcements": "Announcements",
@@ -1377,6 +1379,7 @@
     "add-recipe-from-url": "Add recipe from URL",
     "add-to-plan": "Add to plan",
     "add-to-shopping-list": "Add to shopping list",
+    "add-to-pantry": "Add to pantry",
     "create-recipe": "Create recipe",
     "account": "Account",
     "profile": "Profile",
@@ -1580,7 +1583,13 @@
     "untitled": "Untitled list",
     "recipe-less": "Remove one {recipe}",
     "recipe-more": "Add one more {recipe}",
-    "lists-load-failed": "Couldn’t load your shopping lists."
+    "lists-load-failed": "Couldn’t load your shopping lists.",
+    "put-away": "Put away",
+    "put-away-label": "Put away {count} bought item in the pantry | Put away {count} bought items in the pantry",
+    "put-away-done": "{count} item put away | {count} items put away",
+    "open-pantry": "Open pantry",
+    "put-away-failed": "Couldn’t put those items away. Try again.",
+    "put-away-unsynced": "Some ticks could not be saved yet. Try again in a moment."
   },
   "recipes-links": {
     "label": "Browse recipes",
@@ -1591,5 +1600,46 @@
     "favourites": "Favorites",
     "timeline": "Timeline",
     "finder": "Find by ingredients"
+  },
+  "pantry": {
+    "title": "Pantry",
+    "add-item": "Add to pantry",
+    "add": "Add",
+    "location": {
+      "fridge": "Fridge",
+      "freezer": "Freezer",
+      "cupboard": "Cupboard",
+      "other": "Other"
+    },
+    "item-count": "{count} item | {count} items",
+    "use-by": "Use by {date}",
+    "use-soon": "Use soon",
+    "opened-ago": "Opened {when}",
+    "bought-ago": "Bought {when}",
+    "actions-for": "Actions for {name}",
+    "opened-today": "Opened today",
+    "edit": "Edit",
+    "remove": "Remove",
+    "removed": "{name} removed",
+    "loading": "Loading the pantry",
+    "load-failed": "Couldn’t load the pantry.",
+    "try-again": "Try again",
+    "save-failed": "Couldn’t save that change. Try again.",
+    "empty-title": "Nothing in the pantry yet",
+    "empty-text": "Put away what you bought from a shopping list, or add things one at a time.",
+    "put-away-last-shop": "Put away your last shop",
+    "add-an-item": "Add an item",
+    "edit-dialog": "Edit {name}",
+    "name": "Name",
+    "where": "Where it’s kept",
+    "quantity": "Quantity",
+    "unit": "Unit",
+    "no-unit": "No unit",
+    "bought-on": "Bought on",
+    "opened-on": "Opened on",
+    "use-by-date": "Use by",
+    "note": "Note",
+    "save": "Save",
+    "cancel": "Cancel"
   }
 }
