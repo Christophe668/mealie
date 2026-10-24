@@ -821,7 +821,41 @@
     "recipe-scraper-version": "Recipe Scraper Version",
     "site-statistics": "Site Statistics",
     "uncategorized-recipes": "Uncategorized Recipes",
-    "untagged-recipes": "Untagged Recipes"
+    "untagged-recipes": "Untagged Recipes",
+    "mcp": {
+      "title": "Claude & MCP connections",
+      "description": "Apps such as Claude that you have allowed to access your Mealie account. Revoke a connection to cut off its access immediately.",
+      "profile-description": "See and revoke the apps, such as Claude, that can access your Mealie account.",
+      "manage-connections": "Manage your connections",
+      "authorize-title": "Authorize access",
+      "authorize-text": "{client} wants to access your Mealie account",
+      "authorize-scopes": "It will be able to:",
+      "authorize-redirect": "After your decision you will be sent back to {host}.",
+      "scope": {
+        "recipes-read": "Read recipes",
+        "recipes-write": "Create and edit recipes",
+        "mealplan-write": "Edit the meal plan",
+        "shopping-write": "Edit shopping lists",
+        "household-write": "Edit household settings"
+      },
+      "approve": "Approve",
+      "deny": "Deny",
+      "expired": "This authorization request has expired or is no longer valid. Start the connection again from your app.",
+      "back-home": "Back to home",
+      "no-connections": "No apps are connected to your account yet.",
+      "client": "App",
+      "scopes": "Permissions",
+      "created": "Connected on",
+      "last-used": "Last used",
+      "never-used": "Never",
+      "revoke": "Revoke",
+      "revoke-confirm": "{client} will lose access to your Mealie account. You can connect it again at any time.",
+      "how-to": "How to connect Claude",
+      "server-url": "MCP server URL",
+      "how-to-step-1": "In claude.ai, open Settings, then Connectors, and choose \"Add custom connector\".",
+      "how-to-step-2": "Paste the URL above and confirm.",
+      "how-to-step-3": "Sign in to Mealie when asked and approve the access request."
+    }
   },
   "shopping-list": {
     "all-lists": "All Lists",

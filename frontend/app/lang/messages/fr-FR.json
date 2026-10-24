@@ -821,7 +821,41 @@
     "recipe-scraper-version": "Version du Scraper de recette",
     "site-statistics": "Statistiques du site",
     "uncategorized-recipes": "Recettes non catégorisées",
-    "untagged-recipes": "Recettes sans mots-clés"
+    "untagged-recipes": "Recettes sans mots-clés",
+    "mcp": {
+      "title": "Connexions Claude et MCP",
+      "description": "Les applications, comme Claude, que vous avez autorisées à accéder à votre compte Mealie. Révoquez une connexion pour couper son accès immédiatement.",
+      "profile-description": "Consultez et révoquez les applications, comme Claude, qui peuvent accéder à votre compte Mealie.",
+      "manage-connections": "Gérer vos connexions",
+      "authorize-title": "Autoriser l’accès",
+      "authorize-text": "{client} souhaite accéder à votre compte Mealie",
+      "authorize-scopes": "Elle pourra :",
+      "authorize-redirect": "Après votre décision, vous serez renvoyé vers {host}.",
+      "scope": {
+        "recipes-read": "Lire les recettes",
+        "recipes-write": "Créer et modifier des recettes",
+        "mealplan-write": "Modifier le planning des repas",
+        "shopping-write": "Modifier les listes de courses",
+        "household-write": "Modifier les paramètres du foyer"
+      },
+      "approve": "Autoriser",
+      "deny": "Refuser",
+      "expired": "Cette demande d’autorisation a expiré ou n’est plus valide. Relancez la connexion depuis votre application.",
+      "back-home": "Retour à l’accueil",
+      "no-connections": "Aucune application n’est encore connectée à votre compte.",
+      "client": "Application",
+      "scopes": "Autorisations",
+      "created": "Connectée le",
+      "last-used": "Dernière utilisation",
+      "never-used": "Jamais",
+      "revoke": "Révoquer",
+      "revoke-confirm": "{client} perdra l’accès à votre compte Mealie. Vous pourrez la reconnecter à tout moment.",
+      "how-to": "Comment connecter Claude",
+      "server-url": "URL du serveur MCP",
+      "how-to-step-1": "Sur claude.ai, ouvrez Paramètres, puis Connecteurs, et choisissez « Ajouter un connecteur personnalisé ».",
+      "how-to-step-2": "Collez l’URL ci-dessus et confirmez.",
+      "how-to-step-3": "Connectez-vous à Mealie lorsque cela vous est demandé et approuvez la demande d’accès."
+    }
   },
   "shopping-list": {
     "all-lists": "Toutes les listes",

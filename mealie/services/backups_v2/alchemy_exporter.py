@@ -66,6 +66,9 @@ class AlchemyExporter(BaseService):
         "last_made",
         "completed_date",
         "tokens_valid_after",
+        "last_used_at",
+        "revoked_at",
+        "used_at",
     }
     """Column names restored back into datetimes. Anything stored as a `NaiveDateTime` and missing
     here comes back from a backup as a string; `test_every_datetime_column_survives_a_backup` guards
@@ -115,9 +118,13 @@ class AlchemyExporter(BaseService):
         """
         for key, value in data.items():
             if isinstance(value, dict):
-                data = self.convert_types(value)
-            elif isinstance(value, list):  # assume that this is a list of dictionaries
-                data[key] = [self.convert_types(item) for item in value]
+                # a nested dict is a JSON column's payload (e.g. mcp_oauth_clients.metadata_json);
+                # it is stored verbatim, so leave it untouched
+                continue
+            elif isinstance(value, list):
+                # either the table's list of rows, or a JSON column holding a list of scalars
+                # (e.g. mcp_oauth_clients.redirect_uris); only rows (dicts) are converted
+                data[key] = [self.convert_types(item) if isinstance(item, dict) else item for item in value]
             elif isinstance(value, str):
                 if self.is_uuid(value):
                     # convert the data to the current database's native GUID type
