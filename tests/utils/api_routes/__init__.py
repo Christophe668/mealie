@@ -117,6 +117,8 @@ households_mealplans_today = "/api/households/mealplans/today"
 """`/api/households/mealplans/today`"""
 households_members = "/api/households/members"
 """`/api/households/members`"""
+households_pantry = "/api/households/pantry"
+"""`/api/households/pantry`"""
 households_permissions = "/api/households/permissions"
 """`/api/households/permissions`"""
 households_preferences = "/api/households/preferences"
@@ -429,6 +431,11 @@ def households_mealplans_rules_item_id(item_id):
     return f"{prefix}/households/mealplans/rules/{item_id}"
 
 
+def households_pantry_item_id(item_id):
+    """`/api/households/pantry/{item_id}`"""
+    return f"{prefix}/households/pantry/{item_id}"
+
+
 def households_recipe_actions_item_id(item_id):
     """`/api/households/recipe-actions/{item_id}`"""
     return f"{prefix}/households/recipe-actions/{item_id}"
@@ -472,6 +479,11 @@ def households_shopping_lists_item_id_recipe_recipe_id(item_id, recipe_id):
 def households_shopping_lists_item_id_recipe_recipe_id_delete(item_id, recipe_id):
     """`/api/households/shopping/lists/{item_id}/recipe/{recipe_id}/delete`"""
     return f"{prefix}/households/shopping/lists/{item_id}/recipe/{recipe_id}/delete"
+
+
+def households_shopping_lists_list_id_put_away(list_id):
+    """`/api/households/shopping/lists/{list_id}/put-away`"""
+    return f"{prefix}/households/shopping/lists/{list_id}/put-away"
 
 
 def households_webhooks_item_id(item_id):
