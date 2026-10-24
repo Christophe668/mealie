@@ -173,8 +173,24 @@ describe("shopping list page", () => {
     expect(options!.action!.message).toBe("Open pantry");
     options!.action!.onClick();
     expect(router.push).toHaveBeenCalledWith("/household/pantry");
-    expect(page.current.refresh).toHaveBeenCalled();
+    expect(page.current.refresh).toHaveBeenCalledTimes(2);
     expect(button().attributes("aria-disabled")).toBeUndefined();
+  });
+
+  test("Put away first sends the queued ticks to the server, so items ticked a moment ago go too", async () => {
+    let flushed!: () => void;
+    page.current.refresh.mockReturnValueOnce(new Promise<void>(r => (flushed = r)));
+    api.householdPantry.putAway.mockResolvedValue({ data: { created: [], merged: [], removedItemIds: [] }, error: null });
+    const wrapper = await render();
+
+    await wrapper.findAll(".shop-bought button").find(b => b.text() === "Put away")!.trigger("click");
+    expect(page.current.refresh).toHaveBeenCalledOnce();
+    expect(api.householdPantry.putAway).not.toHaveBeenCalled();
+
+    flushed();
+    await flushPromises();
+    expect(api.householdPantry.putAway).toHaveBeenCalledOnce();
+    expect(page.current.refresh.mock.invocationCallOrder[0]).toBeLessThan(api.householdPantry.putAway.mock.invocationCallOrder[0]!);
   });
 
   test("a single item put away reads in the singular", async () => {
@@ -198,7 +214,9 @@ describe("shopping list page", () => {
     await flushPromises();
     expect(alertUnreportedError).toHaveBeenCalledWith(error, "Couldn’t put those items away. Try again.");
     expect(alert.info).not.toHaveBeenCalled();
-    expect(page.current.refresh).not.toHaveBeenCalled();
+    // Only the queue flush before the request; no reload after the failure.
+    expect(page.current.refresh).toHaveBeenCalledOnce();
+    expect(page.current.refresh.mock.invocationCallOrder[0]).toBeLessThan(api.householdPantry.putAway.mock.invocationCallOrder[0]!);
     expect(wrapper.find(".shop-bought__toggle").text()).toBe("Bought (1)");
   });
 

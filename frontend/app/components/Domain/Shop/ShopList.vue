@@ -123,6 +123,18 @@ function onPutAway() {
   emit("putAway");
 }
 
+// A put away that ends with the items still there (it failed) leaves focus alone from then on. Checked a
+// tick later, so a successful reload has already emptied the section and moved focus.
+watch(() => props.putting, async (busy) => {
+  if (busy) {
+    return;
+  }
+  await nextTick();
+  if (bought.value.length) {
+    refocusAfterPutAway = false;
+  }
+});
+
 watch(bought, async (items) => {
   if (items.length || !refocusAfterPutAway) {
     return;

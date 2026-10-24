@@ -1,5 +1,5 @@
 <template>
-  <v-dialog v-model="open" max-width="520" :aria-label="title">
+  <v-dialog v-model="open" max-width="520" :persistent="saving" :aria-label="title">
     <form v-if="draft" class="pantry-dialog" @submit.prevent="save">
       <h2 class="pantry-dialog__title">
         {{ title }}
@@ -63,7 +63,7 @@
       </label>
 
       <div class="pantry-dialog__actions">
-        <DsButton variant="line" @click="open = false">
+        <DsButton variant="line" :disabled="saving" @click="open = false">
           {{ $t("pantry.cancel") }}
         </DsButton>
         <DsButton variant="dark" type="submit" :disabled="saving || !draft.name.trim()">

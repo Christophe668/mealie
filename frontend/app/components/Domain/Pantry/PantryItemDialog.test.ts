@@ -30,6 +30,10 @@ describe("PantryItemDialog", () => {
     expect(wrapper.emitted("update:modelValue")).toBeUndefined();
     // A second submit while saving is ignored, and the button says it is busy.
     expect(wrapper.find("button[type=submit]").attributes("aria-disabled")).toBe("true");
+    const cancel = wrapper.findAll("button").find(b => b.text() === "Cancel")!;
+    expect(cancel.attributes("aria-disabled")).toBe("true");
+    await cancel.trigger("click");
+    expect(wrapper.emitted("update:modelValue")).toBeUndefined();
     await wrapper.find("form").trigger("submit");
     expect(save).toHaveBeenCalledOnce();
 

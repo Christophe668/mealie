@@ -78,4 +78,41 @@ describe("ShopBought", () => {
     await wrapper.vm.$nextTick();
     expect(document.activeElement?.id).toBe("shop-item-foil");
   });
+
+  test("when nothing is left open either, focus lands on the empty state, not the add field", async () => {
+    const wrapper = mount(ShopList, {
+      props: { list: list([butter]), byLabel: [] },
+      global: { stubs },
+      attachTo: document.body,
+    });
+
+    const button = putAwayButton(wrapper);
+    (button.element as HTMLElement).focus();
+    await button.trigger("click");
+    await wrapper.setProps({ list: list([]) });
+    await wrapper.vm.$nextTick();
+    expect(document.activeElement).toBe(wrapper.find(".shop-list__empty").element);
+  });
+
+  test("a put away that ends with the items still there does not move focus later on", async () => {
+    const wrapper = mount(ShopList, {
+      props: { list: list([foil, butter]), byLabel: [{ label: null, items: [foil] }], putting: false },
+      global: { stubs },
+      attachTo: document.body,
+    });
+
+    const button = putAwayButton(wrapper);
+    (button.element as HTMLElement).focus();
+    await button.trigger("click");
+    // The request runs and fails: the items stay.
+    await wrapper.setProps({ putting: true });
+    await wrapper.setProps({ putting: false });
+    await wrapper.vm.$nextTick();
+
+    // Later the section empties some other way while focus is on the page: nothing grabs focus.
+    (document.activeElement as HTMLElement | null)?.blur();
+    await wrapper.setProps({ list: list([foil]) });
+    await wrapper.vm.$nextTick();
+    expect(document.activeElement).toBe(document.body);
+  });
 });
