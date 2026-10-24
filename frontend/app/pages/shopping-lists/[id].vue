@@ -1,8 +1,108 @@
 <template>
-  <v-container
-    v-if="shoppingList"
-    class="md-container"
-  >
+  <div class="shop-page">
+    <div class="shop-page__bar">
+      <NuxtLink to="/shopping-lists?disableRedirect=true" class="shop-page__back ds-focus">
+        <DsIcon name="chevronLeft" :size="20" />
+        {{ $t("shop.all-lists") }}
+      </NuxtLink>
+      <!-- The screen's one saffron element: how much is left to buy. -->
+      <span v-if="shoppingList && open > 0" class="shop-page__badge">
+        {{ $t("shop.to-buy", { count: open }) }}
+      </span>
+      <AppShellMenu
+        v-if="shoppingList"
+        class="shop-page__more"
+        :items="moreItems"
+        :label="$t('shop.list-actions')"
+        :trigger-label="$t('shop.list-actions')"
+        trigger-class="shop-page__icon-btn ds-focus"
+        placement="bottom-end"
+      >
+        <template #trigger>
+          <DsIcon name="dotsVertical" :size="22" />
+        </template>
+      </AppShellMenu>
+    </div>
+
+    <p class="shop-page__sr" role="status">
+      {{ loading ? $t("shop.loading") : "" }}
+    </p>
+    <p v-if="isOffline" class="shop-page__hint" role="status">
+      {{ $t("shop.offline") }}
+    </p>
+    <p v-if="failed" class="shop-page__hint shop-page__hint--error">
+      <span class="shop-page__hint-title">{{ $t("shop.load-failed") }}</span>
+      <button type="button" class="shop-page__retry ds-focus" @click="retry">
+        {{ $t("shop.try-again") }}
+      </button>
+    </p>
+
+    <ShopList
+      v-if="shoppingList"
+      :list="shoppingList"
+      :by-label="byLabel"
+      @toggle="toggle"
+      @edit="openEditor"
+      @add="add"
+      @clear-bought="openDeleteChecked"
+    />
+
+    <!-- Recipes whose ingredients are on the list: upstream's controls to add or take a recipe off again. -->
+    <section v-if="shoppingList && recipeList.length" class="shop-page__recipes">
+      <DsSectionTitle :title="$t('shop.recipes-on-list')" />
+      <RecipeList :recipes="recipeList" show-description :disabled="isOffline">
+        <template
+          v-for="(recipe, index) in recipeList"
+          #[`actions-${recipe.id}`]
+          :key="'item-actions-decrease' + recipe.id"
+        >
+          <v-list-item-action>
+            <v-btn
+              icon
+              flat
+              class="bg-transparent"
+              :disabled="isOffline"
+              :aria-label="$t('shop.recipe-less', { recipe: recipe.name })"
+              @click.prevent="removeRecipeReferenceToList(recipe.id!)"
+            >
+              <v-icon>{{ $globals.icons.minus }}</v-icon>
+            </v-btn>
+          </v-list-item-action>
+          <div class="pl-3">
+            {{ shoppingList.recipeReferences?.[index]?.recipeQuantity }}
+          </div>
+          <v-list-item-action>
+            <v-btn
+              icon
+              flat
+              class="bg-transparent"
+              :disabled="isOffline"
+              :aria-label="$t('shop.recipe-more', { recipe: recipe.name })"
+              @click.prevent="addRecipeReferenceToList(recipe.id!)"
+            >
+              <v-icon>{{ $globals.icons.createAlt }}</v-icon>
+            </v-btn>
+          </v-list-item-action>
+        </template>
+      </RecipeList>
+    </section>
+
+    <KeepScreenOn v-if="keepAwake" />
+
+    <!-- Item editor: upstream's editor on a copy, so a background refresh never overwrites typing. -->
+    <v-dialog v-model="editor.open" max-width="560" :aria-label="$t('shop.edit-dialog')">
+      <ShoppingListItemEditor
+        v-if="editor.item"
+        v-model="editor.item"
+        :labels="allLabels || []"
+        :units="allUnits || []"
+        :foods="allFoods || []"
+        @save="saveEditor"
+        @cancel="editor.open = false"
+        @delete="deleteEditor"
+      />
+    </v-dialog>
+
     <BaseDialog
       v-model="state.checkAllDialog"
       bottom-sheet
@@ -13,19 +113,6 @@
     >
       <v-card-text>
         {{ $t('shopping-list.are-you-sure-you-want-to-check-all-items') }}
-      </v-card-text>
-    </BaseDialog>
-
-    <BaseDialog
-      v-model="state.uncheckAllDialog"
-      bottom-sheet
-      :title="$t('general.confirm')"
-      :icon="$globals.icons.checkboxMultipleBlankOutline"
-      can-confirm
-      @confirm="uncheckAll"
-    >
-      <v-card-text>
-        {{ $t('shopping-list.are-you-sure-you-want-to-uncheck-all-items') }}
       </v-card-text>
     </BaseDialog>
 
@@ -42,7 +129,6 @@
       </v-card-text>
     </BaseDialog>
 
-    <!-- Reorder Labels -->
     <BaseDialog
       v-model="reorderLabelsDialog"
       :icon="$globals.icons.tagArrowUp"
@@ -69,521 +155,287 @@
         </VueDraggable>
       </v-card>
     </BaseDialog>
-
-    <BasePageTitle divider class="shopping-list-title">
-      <template #header>
-        <v-container class="px-0">
-          <v-row no-gutters>
-            <ButtonLink
-              :to="`/shopping-lists?disableRedirect=true`"
-              :text="$t('shopping-list.all-lists')"
-              :icon="$globals.icons.backArrow"
-            />
-            <v-spacer />
-            <h2 v-if="smAndUp" class="text-h5">
-              {{ shoppingList.name }}
-            </h2>
-            <v-spacer />
-            <!-- The search toggle stays while the field is open, so a list that shrinks to the
-                 threshold mid-search can still close it. "Check all" would also check items the
-                 search is hiding, so it is disabled while searching. -->
-            <BaseButtonGroup
-              class="d-flex"
-              :buttons="[
-                ...(canSearch || isSearchOpen ? [{
-                  icon: $globals.icons.search,
-                  text: $t('search.search'),
-                  event: 'search',
-                  color: isSearchOpen ? 'primary' : undefined,
-                }] : []),
-                {
-                  icon: $globals.icons.contentCopy,
-                  text: '',
-                  event: 'edit',
-                  children: [
-                    {
-                      icon: $globals.icons.contentCopy,
-                      text: $t('shopping-list.copy-as-text'),
-                      event: 'copy-plain',
-                    },
-                    {
-                      icon: $globals.icons.contentCopy,
-                      text: $t('shopping-list.copy-as-markdown'),
-                      event: 'copy-markdown',
-                    },
-                  ],
-                },
-                {
-                  icon: $globals.icons.checkboxMultipleMarkedOutline,
-                  text: $t('shopping-list.check-all-items'),
-                  event: 'check',
-                  disabled: isSearching,
-                },
-                {
-                  icon: $globals.icons.dotsVertical,
-                  text: '',
-                  event: 'three-dot',
-                  children: [
-                    {
-                      icon: $globals.icons.tags,
-                      text: $t('shopping-list.reorder-labels'),
-                      event: 'reorder-labels',
-                    },
-                    {
-                      icon: $globals.icons.tags,
-                      text: $t('shopping-list.manage-labels'),
-                      event: 'manage-labels',
-                    },
-                  ],
-                },
-              ]"
-              @search="toggleSearch"
-              @edit="edit = true"
-              @three-dot="threeDot = true"
-              @check="openCheckAll"
-              @copy-plain="copyListItems('plain')"
-              @copy-markdown="copyListItems('markdown')"
-              @reorder-labels="toggleReorderLabelsDialog()"
-              @manage-labels="$router.push(`/group/data/labels`)"
-            />
-          </v-row>
-        </v-container>
-      </template>
-      <template #title>
-        {{ smAndUp ? "" : shoppingList.name }}
-      </template>
-    </BasePageTitle>
-    <BannerWarning
-      v-if="isOffline"
-      :title="$t('shopping-list.you-are-offline')"
-      :description="$t('shopping-list.you-are-offline-description')"
-    />
-
-    <!-- Viewer -->
-    <section
-      v-if="!edit"
-      class="py-2 d-flex flex-column ga-1 shopping-list-view"
-    >
-      <!-- Search, toggled from the page title -->
-      <v-text-field
-        v-if="isSearchOpen"
-        :model-value="search"
-        :label="$t('search.search')"
-        :prepend-inner-icon="$globals.icons.search"
-        autofocus
-        clearable
-        hide-details
-        density="compact"
-        variant="solo"
-        flat
-        single-line
-        @update:model-value="value => search = value ?? ''"
-        @click:clear="clearSearch"
-      />
-
-      <!-- Create Item -->
-      <ShoppingListAddItemForm
-        v-if="$vuetify.display.smAndDown"
-        v-model="createListItemData"
-        class="my-4"
-        :labels="allLabels || []"
-        :units="allUnits || []"
-        :foods="allFoods || []"
-        @save="createListItem"
-      />
-
-      <ShoppingListQuickAdd
-        v-else
-        v-model="createListItemData"
-        class="mb-3"
-        :foods="allFoods || []"
-        :labels="allLabels || []"
-        :units="allUnits || []"
-        @save="createListItem"
-      />
-
-      <TransitionGroup name="scroll-x-transition">
-        <template v-for="(value, key) in itemsByLabel" :key="key">
-          <BaseExpansionPanels v-if="hasMatches(value)" :v-model="0" start-open>
-            <v-expansion-panel class="shopping-list-section">
-              <!-- the label colour fills the header bar; an uncoloured (or unlabelled) header is muted instead -->
-              <v-expansion-panel-title
-                :color="getLabelColor(key)"
-                class="body-1 section-title"
-                :class="getLabelColor(key) ? '' : 'text-medium-emphasis'"
-              >
-                {{ key }}
-              </v-expansion-panel-title>
-              <v-expansion-panel-text eager>
-                <VueDraggable
-                  :model-value="value"
-                  handle=".handle"
-                  :delay="250"
-                  :delay-on-touch-only="true"
-                  :disabled="isSearching"
-                  @start="loadingCounter += 1"
-                  @end="loadingCounter -= 1"
-                  @update:model-value="updateIndexUncheckedByLabel(key.toString(), $event)"
-                >
-                  <TransitionGroup name="scroll-x-transition">
-                    <template v-for="(item, index) in value" :key="item.id">
-                      <ShoppingListItem
-                        v-if="matchesSearch(item)"
-                        v-model="value[index]"
-                        class="my-2 w-auto shopping-list-item-row"
-                        :edit="editingItem === item.id"
-                        :labels="allLabels || []"
-                        :units="allUnits || []"
-                        :foods="allFoods || []"
-                        :recipes="recipeMap"
-                        @checked="(item) => {
-                          saveListItem(item);
-                          itemCheckedToast(item);
-                        }"
-                        @save="(item) => {
-                          editingItem = undefined;
-                          saveListItem(item);
-                        }"
-                        @delete="deleteListItem(item)"
-                        @view="editingItem = undefined"
-                        @edit="editingItem = item.id"
-                      />
-                    </template>
-                  </TransitionGroup>
-                </VueDraggable>
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-          </BaseExpansionPanels>
-        </template>
-      </TransitionGroup>
-      <!-- Checked Items -->
-      <v-expansion-panels v-model="checkedPanel" flat rounded>
-        <v-expansion-panel v-if="listItems.checked && hasMatches(listItems.checked)">
-          <v-expansion-panel-title class="border-solid border-thin py-1">
-            <div class="d-flex align-center flex-0-1-100">
-              <div class="flex-1-0">
-                {{ $t('shopping-list.items-checked-count', visibleCheckedCount) }}
-              </div>
-              <div class="justify-end">
-                <!-- both act on every checked item, including any the search is hiding -->
-                <BaseButtonGroup
-                  :buttons="[
-                    {
-                      icon: $globals.icons.checkboxMultipleBlankOutline,
-                      text: $t('shopping-list.uncheck-all-items'),
-                      event: 'uncheck',
-                      disabled: isSearching,
-                    },
-                    {
-                      icon: $globals.icons.delete,
-                      text: $t('shopping-list.delete-checked'),
-                      event: 'delete',
-                      disabled: isSearching,
-                    },
-                  ]"
-                  @uncheck="openUncheckAll"
-                  @delete="openDeleteChecked"
-                />
-              </div>
-            </div>
-          </v-expansion-panel-title>
-          <v-expansion-panel-text eager>
-            <TransitionGroup name="scroll-x-transition">
-              <div v-for="(item, idx) in listItems.checked" v-show="matchesSearch(item)" :key="item.id">
-                <ShoppingListItem
-                  v-model="listItems.checked[idx]"
-                  class="strike-through-note shopping-list-item-row"
-                  :labels="allLabels || []"
-                  :units="allUnits || []"
-                  :foods="allFoods || []"
-                  @checked="saveListItem"
-                  @save="saveListItem"
-                  @delete="deleteListItem(item)"
-                />
-              </div>
-            </TransitionGroup>
-          </v-expansion-panel-text>
-        </v-expansion-panel>
-      </v-expansion-panels>
-
-      <v-alert
-        v-if="!hasSearchResults"
-        type="info"
-        variant="tonal"
-        density="compact"
-      >
-        {{ $t('search.no-results') }}
-      </v-alert>
-    </section>
-
-    <!-- Recipe References -->
-    <v-lazy
-      v-if="shoppingList.recipeReferences && shoppingList.recipeReferences.length > 0"
-      class="mt-6"
-    >
-      <section>
-        <div>
-          <span>
-            <v-icon start class="mb-1">
-              {{ $globals.icons.silverwareForkKnife }}
-            </v-icon>
-          </span>
-          {{ $t('shopping-list.linked-recipes-count', shoppingList.recipeReferences
-            ? shoppingList.recipeReferences.length
-            : 0) }}
-        </div>
-        <v-divider />
-        <RecipeList
-          :recipes="recipeList"
-          show-description
-          :disabled="isOffline"
-        >
-          <template
-            v-for="(recipe, index) in recipeList"
-            #[`actions-${recipe.id}`]
-            :key="'item-actions-decrease' + recipe.id"
-          >
-            <v-list-item-action>
-              <v-btn
-                v-if="recipe"
-                icon
-                flat
-                class="bg-transparent"
-                :disabled="isOffline"
-                @click.prevent="removeRecipeReferenceToList(recipe.id!)"
-              >
-                <v-icon color="grey-lighten-1">
-                  {{ $globals.icons.minus }}
-                </v-icon>
-              </v-btn>
-            </v-list-item-action>
-            <div class="pl-3">
-              {{ shoppingList.recipeReferences[index].recipeQuantity }}
-            </div>
-            <v-list-item-action>
-              <v-btn
-                icon
-                :disabled="isOffline"
-                flat
-                class="bg-transparent"
-                @click.prevent="addRecipeReferenceToList(recipe.id!)"
-              >
-                <v-icon color="grey-lighten-1">
-                  {{ $globals.icons.createAlt }}
-                </v-icon>
-              </v-btn>
-            </v-list-item-action>
-          </template>
-        </RecipeList>
-      </section>
-    </v-lazy>
-    <WakelockSwitch />
-  </v-container>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { VueDraggable } from "vue-draggable-plus";
+import DsIcon from "~/components/Design/DsIcon.vue";
+import DsSectionTitle from "~/components/Design/DsSectionTitle.vue";
+import ShopList from "~/components/Domain/Shop/ShopList.vue";
 import RecipeList from "~/components/Domain/Recipe/RecipeList.vue";
 import MultiPurposeLabelSection from "~/components/Domain/ShoppingList/MultiPurposeLabelSection.vue";
-import ShoppingListAddItemForm from "~/components/Domain/ShoppingList/ShoppingListAddItemForm.vue";
-import ShoppingListQuickAdd from "~/components/Domain/ShoppingList/ShoppingListQuickAdd.vue";
-import ShoppingListItem from "~/components/Domain/ShoppingList/ShoppingListItem.vue";
+import ShoppingListItemEditor from "~/components/Domain/ShoppingList/ShoppingListItemEditor.vue";
+import AppShellMenu from "~/components/Layout/AppShellMenu.vue";
 import { useShoppingListPage } from "~/composables/shopping-list-page/use-shopping-list-page";
+import { resolveFood } from "~/composables/shopping-list-page/use-shopping-list-item-editor";
 import { useLabelStore, useUnitStore, useFoodStore } from "~/composables/store";
+import { useAppShellTitle } from "~/composables/use-app-shell-title";
+import { openCount, toByLabel } from "~/composables/use-shop";
 import { alert } from "~/composables/use-toast";
+import { useUserExperiencePreferences } from "~/composables/use-users/preferences";
+import { useWakeLock } from "~/composables/use-wake-lock";
 import type { ShoppingListItemOut } from "~/lib/api/types/household";
+import type { AppShellMenuItem } from "~/types/application-types";
 
 definePageMeta({
   middleware: ["auth"],
 });
 
-const { smAndUp } = useDisplay();
 const i18n = useI18n();
-
-useSeoMeta({
-  title: i18n.t("shopping-list.shopping-list"),
-});
-
 const route = useRoute();
+const router = useRouter();
 const id = route.params.id as string;
 
-const editingItem = ref<string | undefined>(undefined);
+// The upstream composable stays the single source of truth for items, label grouping and the offline queue.
 const shoppingListPage = useShoppingListPage(id);
 const { store: allLabels } = useLabelStore();
 const { store: allUnits } = useUnitStore();
 const { store: allFoods } = useFoodStore();
 
-function itemCheckedToast(item: ShoppingListItemOut) {
-  setTimeout(() => {
+const {
+  shoppingList,
+  state,
+  loadingCounter,
+  isOffline,
+  itemsByLabel,
+  recipeList,
+  createListItemData,
+  createListItem,
+  saveListItem,
+  deleteListItem,
+  checkAll,
+  deleteChecked,
+  openCheckAll,
+  openDeleteChecked,
+  copyListItems,
+  reorderLabelsDialog,
+  localLabels,
+  toggleReorderLabelsDialog,
+  saveLabelOrder,
+  cancelLabelOrder,
+  updateLabelOrder,
+  removeRecipeReferenceToList,
+  addRecipeReferenceToList,
+  refresh,
+} = shoppingListPage;
+
+const byLabel = computed(() => toByLabel(itemsByLabel.value, shoppingList.value));
+const open = computed(() => openCount(shoppingList.value));
+
+useAppShellTitle(() => shoppingList.value?.name || i18n.t("shop.lists-title"));
+useSeoMeta({ title: () => shoppingList.value?.name || i18n.t("shopping-list.shopping-list") });
+
+// =====================================================
+// Loading and failure. The composable swallows fetch errors and leaves the list null, so a fetch that
+// finishes (the counter drops back to 0) without a list is a failed load.
+
+const settled = ref(false);
+watch(loadingCounter, (count, previous) => {
+  if (count === 0 && previous > 0) {
+    settled.value = true;
+  }
+});
+const loading = computed(() => !shoppingList.value && !settled.value);
+const failed = computed(() => !shoppingList.value && settled.value);
+
+function retry() {
+  settled.value = false;
+  refresh();
+}
+
+// =====================================================
+// Items
+
+/** Optimistic, through the composable, as upstream does; ticking off offers an undo. */
+function toggle(item: ShoppingListItemOut) {
+  const updated = { ...item, checked: !item.checked };
+  saveListItem(updated);
+  if (updated.checked) {
     alert.info(
-      i18n.t("shopping-list.item-checked-off", { item: item.food?.name || item.note || i18n.t("recipe.ingredient") }),
+      i18n.t("shop.item-bought", { item: item.food?.name || item.note || i18n.t("recipe.ingredient") }),
       undefined,
       {
         timeout: 4000,
         action: {
           message: i18n.t("general.undo"),
-          onClick: () => {
-            item.checked = false;
-            shoppingListPage.saveListItem(item);
-          },
+          onClick: () => saveListItem({ ...updated, checked: false }),
         },
       },
     );
-  }, 500);
+  }
 }
 
-const {
-  shoppingList,
-  state,
-  checkAll,
-  uncheckAll,
-  deleteChecked,
-  reorderLabelsDialog,
-  localLabels,
-  saveLabelOrder,
-  cancelLabelOrder,
-  updateLabelOrder,
-  edit,
-  threeDot,
-  openCheckAll,
-  copyListItems,
-  toggleReorderLabelsDialog,
-  isOffline,
-  createListItemData,
-  createListItem,
-  itemsByLabel,
-  getLabelColor,
-  loadingCounter,
-  updateIndexUncheckedByLabel,
-  recipeMap,
-  saveListItem,
-  deleteListItem,
-  listItems,
-  openUncheckAll,
-  openDeleteChecked,
-  recipeList,
-  removeRecipeReferenceToList,
-  addRecipeReferenceToList,
-  search,
-  isSearching,
-  isSearchOpen,
-  canSearch,
-  toggleSearch,
-  matchesSearch,
-  hasMatches,
-  clearSearch,
-  visibleCheckedCount,
-  hasSearchResults,
-} = shoppingListPage;
+/**
+ * Same resolution as upstream's quick add: an exact food match becomes that food (and takes its label),
+ * anything else is kept verbatim as a note. Upstream does not parse quantities from the text.
+ */
+function add(text: string) {
+  const food = resolveFood(text, allFoods.value || []);
+  const draft = createListItemData.value;
+  draft.food = food;
+  draft.foodId = food?.id;
+  draft.label = food?.label;
+  draft.labelId = food?.labelId;
+  draft.note = food ? "" : text;
+  draft.quantity ||= 0;
+  createListItem();
+}
 
-// Expand the checked section while searching, so an item that has already been
-// checked off can be found and unchecked without expanding the section by hand.
-const checkedPanel = ref<number | undefined>(undefined);
-watch(isSearching, (searching) => {
-  checkedPanel.value = searching ? 0 : undefined;
+const editor = reactive({ open: false, item: null as ShoppingListItemOut | null, source: null as ShoppingListItemOut | null });
+
+function openEditor(item: ShoppingListItemOut) {
+  editor.source = item;
+  editor.item = { ...item };
+  editor.open = true;
+}
+
+function saveEditor() {
+  if (editor.item) {
+    saveListItem(editor.item);
+  }
+  editor.open = false;
+}
+
+function deleteEditor() {
+  if (editor.source) {
+    deleteListItem(editor.source);
+  }
+  editor.open = false;
+}
+
+// =====================================================
+// List actions
+
+const preferences = useUserExperiencePreferences();
+const wakeLockSupported = import.meta.client && "wakeLock" in navigator;
+const keepAwake = computed(() => wakeLockSupported && preferences.value.lockScreen);
+
+/** Holds a screen wake lock while mounted (the same lock cook mode uses). */
+const KeepScreenOn = defineComponent({
+  name: "KeepScreenOn",
+  setup() {
+    useWakeLock();
+    return () => null;
+  },
 });
+
+const moreItems = computed<AppShellMenuItem[]>(() => [
+  { key: "check-all", label: i18n.t("shop.mark-all-bought"), icon: "checkboxMultipleMarkedOutline", onSelect: openCheckAll },
+  { key: "copy-text", label: i18n.t("shop.copy-text"), icon: "contentCopy", onSelect: () => copyListItems("plain"), dividerBefore: true },
+  { key: "copy-markdown", label: i18n.t("shop.copy-markdown"), icon: "contentCopy", onSelect: () => copyListItems("markdown") },
+  { key: "reorder", label: i18n.t("shop.reorder-aisles"), icon: "tagArrowUp", onSelect: toggleReorderLabelsDialog, dividerBefore: true },
+  { key: "labels", label: i18n.t("shop.manage-labels"), icon: "tags", onSelect: () => router.push("/group/data/labels") },
+  ...(wakeLockSupported
+    ? [{
+        key: "awake",
+        label: i18n.t("shop.keep-awake"),
+        icon: "weatherSunny" as const,
+        checked: preferences.value.lockScreen,
+        dividerBefore: true,
+        onSelect: () => (preferences.value.lockScreen = !preferences.value.lockScreen),
+      }]
+    : []),
+]);
 </script>
 
-<style>
-.number-input-container {
-  max-width: 50px;
+<style scoped>
+.shop-page {
+  max-width: 760px;
 }
 
-/* The page header reserves room for an icon row, a subtitle and generous margins; pull
-   those in so the list starts near the top of the screen */
-.shopping-list-title {
-  margin-top: 0 !important;
-
-  .v-container {
-    padding-top: 4px;
-    padding-bottom: 0;
-  }
-
-  h2 {
-    font-size: 1.1rem !important;
-    line-height: 1.4;
-  }
-
-  h3 {
-    display: none;
-  }
-
-  .v-divider {
-    margin-top: 6px !important;
-    margin-bottom: 2px !important;
-  }
+.shop-page__bar {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 1.5);
+  margin-bottom: calc(var(--ds-space) * 2);
 }
 
-/* Strip most of the vertical padding so more items fit on a phone screen, and lean on
-   indentation (label header flush left, items inset) to keep sections readable */
-.shopping-list-view {
-  /* slim header: a low bar with bold text, keeping the label colour as its fill */
-  .shopping-list-section .section-title {
-    min-height: 30px !important;
-    padding: 2px 10px;
-    font-size: 0.9rem;
-    font-weight: 700;
-  }
+.shop-page__back {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 0.5);
+  min-height: 44px;
+  margin-left: calc(var(--ds-space) * -0.5);
+  padding: 0 calc(var(--ds-space) * 0.5);
+  border-radius: var(--ds-radius-ctl);
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-2);
+  font-weight: 500;
+  text-decoration: none;
+}
 
-  .shopping-list-section .v-expansion-panel-text__wrapper,
-  .v-expansion-panel-text__wrapper {
-    padding: 2px 0 2px 12px;
-  }
+.shop-page__back:hover {
+  color: var(--ds-text);
+}
 
-  .v-expansion-panel-title {
-    min-height: 32px;
-    padding-top: 2px;
-    padding-bottom: 2px;
-  }
+.shop-page__badge {
+  padding: calc(var(--ds-space) * 0.5) calc(var(--ds-space) * 1.25);
+  border-radius: 999px;
+  background: var(--ds-accent);
+  color: var(--ds-accent-text);
+  font-size: var(--ds-t-2);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 
-  /* each item row */
-  .shopping-list-item-row {
-    margin-top: 3px !important;
-    margin-bottom: 3px !important;
-  }
+.shop-page__more {
+  margin-left: auto;
+}
 
-  .shopping-list-item-row .v-container {
-    margin-left: 0 !important;
-  }
+.shop-page :deep(.shop-page__icon-btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-ctl);
+  background: var(--ds-surface);
+  color: var(--ds-text);
+  cursor: pointer;
+}
 
-  .shopping-list-item-row .v-selection-control {
-    --v-selection-control-size: 28px;
-    min-height: 28px;
-  }
+.shop-page__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 
-  .shopping-list-item-row .v-selection-control__wrapper,
-  .shopping-list-item-row .v-selection-control__input {
-    width: 28px;
-    height: 28px;
-  }
+.shop-page__hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--ds-space);
+  margin: 0 0 calc(var(--ds-space) * 2);
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-2);
+}
 
-  .shopping-list-item-row .v-btn--size-small {
-    width: 32px;
-    height: 32px;
-    margin-left: 0 !important;
-  }
+.shop-page__hint-title {
+  color: var(--ds-text);
+  font-weight: 600;
+}
 
-  /* the row's action icons are secondary to the item text, so they sit back until used */
-  .shopping-list-item-row .v-btn--size-small .v-icon {
-    opacity: 0.55;
-  }
+.shop-page__retry {
+  padding: 0;
+  border: 0;
+  border-radius: var(--ds-radius-ctl);
+  background: none;
+  color: var(--ds-text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
 
-  .shopping-list-item-row .v-btn--size-small:hover .v-icon,
-  .shopping-list-item-row .v-btn--size-small:focus-visible .v-icon {
-    opacity: 1;
-  }
-
-  .shopping-list-item-row .mb-2 {
-    margin-bottom: 0 !important;
-  }
-
-  /* no border and no shadow around a group: the coloured header is what marks it */
-  .shopping-list-section {
-    border: none;
-  }
-
-  .shopping-list-section .v-expansion-panel__shadow {
-    box-shadow: none;
-  }
+.shop-page__recipes {
+  margin-top: calc(var(--ds-space) * 2);
 }
 </style>
