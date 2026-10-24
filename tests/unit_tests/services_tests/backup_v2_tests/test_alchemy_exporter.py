@@ -1,5 +1,7 @@
 import json
 
+import sqlalchemy as sa
+
 from mealie.core.config import get_app_settings
 from mealie.db.models._model_base import SqlAlchemyBase
 from mealie.db.models._model_utils.datetime import NaiveDateTime
@@ -34,5 +36,22 @@ def test_every_datetime_column_survives_a_backup():
     unregistered = datetime_columns - AlchemyExporter.look_for_datetime
     assert not unregistered, (
         f"datetime columns missing from AlchemyExporter.look_for_datetime: {sorted(unregistered)}. "
+        "Add them, or they will restore as strings."
+    )
+
+
+def test_every_date_column_survives_a_backup():
+    """The same guard for `Date` columns: restores rebuild them from `look_for_date`, by column name."""
+    date_columns = {
+        column.name
+        for table in SqlAlchemyBase.metadata.tables.values()
+        for column in table.columns
+        if isinstance(column.type, sa.Date)
+    }
+
+    assert "made_on" in date_columns  # the guard sees the fork's Date columns
+    unregistered = date_columns - AlchemyExporter.look_for_date
+    assert not unregistered, (
+        f"Date columns missing from AlchemyExporter.look_for_date: {sorted(unregistered)}. "
         "Add them, or they will restore as strings."
     )
