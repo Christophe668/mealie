@@ -24,13 +24,14 @@
       </AppShellMenu>
     </div>
 
+    <!-- Polite announcements: loading, then the open count after every tick, un-tick or add. -->
     <p class="shop-page__sr" role="status">
-      {{ loading ? $t("shop.loading") : "" }}
+      {{ liveStatus }}
     </p>
     <p v-if="isOffline" class="shop-page__hint" role="status">
       {{ $t("shop.offline") }}
     </p>
-    <p v-if="failed" class="shop-page__hint shop-page__hint--error">
+    <p v-if="failed" class="shop-page__hint shop-page__hint--error" role="alert">
       <span class="shop-page__hint-title">{{ $t("shop.load-failed") }}</span>
       <button type="button" class="shop-page__retry ds-focus" @click="retry">
         {{ $t("shop.try-again") }}
@@ -113,6 +114,19 @@
     >
       <v-card-text>
         {{ $t('shopping-list.are-you-sure-you-want-to-check-all-items') }}
+      </v-card-text>
+    </BaseDialog>
+
+    <BaseDialog
+      v-model="state.uncheckAllDialog"
+      bottom-sheet
+      :title="$t('general.confirm')"
+      :icon="$globals.icons.checkboxMultipleBlankOutline"
+      can-confirm
+      @confirm="uncheckAll"
+    >
+      <v-card-text>
+        {{ $t('shopping-list.are-you-sure-you-want-to-uncheck-all-items') }}
       </v-card-text>
     </BaseDialog>
 
@@ -205,8 +219,10 @@ const {
   saveListItem,
   deleteListItem,
   checkAll,
+  uncheckAll,
   deleteChecked,
   openCheckAll,
+  openUncheckAll,
   openDeleteChecked,
   copyListItems,
   reorderLabelsDialog,
@@ -239,6 +255,16 @@ watch(loadingCounter, (count, previous) => {
 const loading = computed(() => !shoppingList.value && !settled.value);
 const failed = computed(() => !shoppingList.value && settled.value);
 
+const liveStatus = computed(() => {
+  if (loading.value) {
+    return i18n.t("shop.loading");
+  }
+  if (!shoppingList.value) {
+    return "";
+  }
+  return open.value ? i18n.t("shop.to-buy", { count: open.value }) : i18n.t("shop.nothing-to-buy");
+});
+
 function retry() {
   settled.value = false;
   refresh();
@@ -259,7 +285,13 @@ function toggle(item: ShoppingListItemOut) {
         timeout: 4000,
         action: {
           message: i18n.t("general.undo"),
-          onClick: () => saveListItem({ ...updated, checked: false }),
+          // Flip only `checked` on the item as it is now, so an edit made since the tick survives the undo.
+          onClick: () => {
+            const current = shoppingList.value?.listItems?.find(i => i.id === item.id);
+            if (current?.checked) {
+              saveListItem({ ...current, checked: false });
+            }
+          },
         },
       },
     );
@@ -322,6 +354,7 @@ const KeepScreenOn = defineComponent({
 
 const moreItems = computed<AppShellMenuItem[]>(() => [
   { key: "check-all", label: i18n.t("shop.mark-all-bought"), icon: "checkboxMultipleMarkedOutline", onSelect: openCheckAll },
+  { key: "uncheck-all", label: i18n.t("shop.mark-all-not-bought"), icon: "checkboxMultipleBlankOutline", onSelect: openUncheckAll },
   { key: "copy-text", label: i18n.t("shop.copy-text"), icon: "contentCopy", onSelect: () => copyListItems("plain"), dividerBefore: true },
   { key: "copy-markdown", label: i18n.t("shop.copy-markdown"), icon: "contentCopy", onSelect: () => copyListItems("markdown") },
   { key: "reorder", label: i18n.t("shop.reorder-aisles"), icon: "tagArrowUp", onSelect: toggleReorderLabelsDialog, dividerBefore: true },

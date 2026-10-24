@@ -1,4 +1,4 @@
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import ShopList from "./ShopList.vue";
 import { shopAisles, toByLabel, updatedAgo } from "~/composables/use-shop";
@@ -128,7 +128,7 @@ describe("ShopList", () => {
     const toggle = wrapper.find(".shop-bought__toggle");
     expect(toggle.text()).toBe("Bought (2)");
     expect(toggle.attributes("aria-expanded")).toBe("false");
-    expect(wrapper.find(".shop-bought__list").isVisible()).toBe(false);
+    expect(wrapper.find(".shop-bought__list").exists()).toBe(false);
     expect(wrapper.findAll(".shop-aisle .shop-row__name").map(n => n.text())).not.toContain("butter");
 
     await toggle.trigger("click");
@@ -223,6 +223,38 @@ describe("ShopList", () => {
 
     await wrapper.find(".shop-bought__clear").trigger("click");
     expect(wrapper.emitted("clearBought")).toHaveLength(1);
+  });
+
+  test("after a keyboard toggle, focus moves to the next row instead of falling to the page", async () => {
+    const list = makeList(allItems);
+    const wrapper = mount(ShopList, {
+      props: {
+        list,
+        byLabel: toByLabel(upstreamItemsByLabel(), list),
+        // The parent flips the item, as the page does through the composable: the row leaves its aisle.
+        onToggle: (toggled: ShoppingListItemOut) => {
+          const items = list.listItems!.map(i => (i.id === toggled.id ? { ...i, checked: !i.checked } : i));
+          const next = { ...list, listItems: items };
+          const groups = toByLabel(upstreamItemsByLabel(), next).map(g => ({ ...g, items: g.items.filter(i => i.id !== toggled.id) }));
+          wrapper.setProps({ list: next, byLabel: groups });
+        },
+      },
+      global: { stubs },
+      attachTo: document.body,
+    });
+
+    const potatoBox = wrapper.find<HTMLInputElement>(`#shop-item-${potatoes.id}`);
+    potatoBox.element.focus();
+    await potatoBox.trigger("click");
+    await flushPromises();
+    expect(document.activeElement?.id).toBe(`shop-item-${lemons.id}`);
+
+    // Milk is Dairy's only open item: its aisle disappears, so focus goes to the first row of the next aisle.
+    const milkBox = wrapper.find<HTMLInputElement>(`#shop-item-${milk.id}`);
+    milkBox.element.focus();
+    await milkBox.trigger("click");
+    await flushPromises();
+    expect(document.activeElement?.id).toBe(`shop-item-${lemons.id}`);
   });
 
   test("no Bought section when nothing is bought; an empty list says what to do", () => {

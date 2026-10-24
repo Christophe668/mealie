@@ -9,7 +9,7 @@
           :aria-controls="listId"
           @click="open = !open"
         >
-          {{ $t("shop.bought", { count: items.length }) }}
+          {{ $t("shop.bought", { count: items.length }, items.length) }}
           <DsIcon name="chevronDown" :size="22" class="shop-bought__chevron" :class="{ 'shop-bought__chevron--open': open }" />
         </button>
       </h2>
@@ -17,7 +17,8 @@
         {{ $t("shop.clear-bought") }}
       </DsButton>
     </div>
-    <ul v-show="open" :id="listId" class="shop-bought__list" role="list">
+    <!-- v-if: bought rows (each running the ingredient parser) only exist while the section is open. -->
+    <ul v-if="open" :id="listId" class="shop-bought__list" role="list">
       <ShopItemRow
         v-for="item in items"
         :key="item.id"

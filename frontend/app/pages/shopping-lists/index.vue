@@ -14,7 +14,7 @@
       {{ loading ? $t("general.loading") : "" }}
     </p>
 
-    <p v-if="failed" class="shop-lists__hint">
+    <p v-if="failed" class="shop-lists__hint" role="alert">
       <span class="shop-lists__hint-title">{{ $t("shop.lists-load-failed") }}</span>
       <button type="button" class="shop-lists__retry ds-focus" @click="refresh()">
         {{ $t("shop.try-again") }}
@@ -36,7 +36,8 @@
             <NuxtLink :to="`/shopping-lists/${list.id}`" class="shop-lists__name ds-focus">
               {{ list.name || $t("shop.untitled") }}
             </NuxtLink>
-            <p class="shop-lists__open">
+            <!-- Without counts (their request failed) the card says nothing rather than "Nothing to buy". -->
+            <p v-if="openByList" class="shop-lists__open">
               {{ openByList[list.id] ? $t("shop.to-buy", { count: openByList[list.id] }) : $t("shop.nothing-open") }}
             </p>
             <p v-if="list.updatedAt" class="shop-lists__updated ds-muted">
@@ -157,7 +158,7 @@ const isCreateNameValid = computed(() => state.createName.trim().length > 0);
 // Lists, most recently updated first, with their open counts (one request for every open item).
 
 const lists = ref<ShoppingListSummary[] | null>(null);
-const openByList = ref<Record<string, number>>({});
+const openByList = ref<Record<string, number> | null>(null);
 const loading = ref(true);
 const failed = ref(false);
 const ready = ref(false);
@@ -183,8 +184,12 @@ async function refresh() {
   }
   lists.value = listsResponse.data.items as ShoppingListSummary[];
   // Counts are a nicety: if they fail, the cards still open their lists.
+  if (!itemsResponse.data) {
+    openByList.value = null;
+    return;
+  }
   const counts: Record<string, number> = {};
-  itemsResponse.data?.items.forEach((item) => {
+  itemsResponse.data.items.forEach((item) => {
     counts[item.shoppingListId] = (counts[item.shoppingListId] ?? 0) + 1;
   });
   openByList.value = counts;

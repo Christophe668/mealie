@@ -90,6 +90,9 @@ const forText = computed(() => {
 });
 
 // The checkbox stays controlled: it shows the item's state, and the parent flips it optimistically.
+// preventDefault makes the browser restore the old state after dispatch; that is only safe because a toggled
+// row always moves between an aisle and Bought and so unmounts. A row that ever toggles in place must also
+// set `(event.target as HTMLInputElement).checked = !!props.item.checked` on nextTick.
 function onBoxClick(event: MouseEvent) {
   event.preventDefault();
   if (suppressClick) {

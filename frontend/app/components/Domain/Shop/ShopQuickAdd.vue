@@ -53,8 +53,11 @@ function submit() {
   border-radius: var(--ds-radius-card);
 }
 
+/* The input drops its own outline; the whole field takes the same 2 px ring as .ds-focus. */
 .shop-quick-add:focus-within {
   border-color: var(--ds-text);
+  outline: 2px solid var(--ds-text);
+  outline-offset: 2px;
 }
 
 .shop-quick-add__icon {

@@ -1,7 +1,7 @@
 <template>
-  <div class="shop-list">
+  <div ref="root" class="shop-list">
     <!-- First in the DOM (it is the main action); CSS pins it at the bottom on mobile. -->
-    <ShopQuickAdd class="shop-list__add" @add="$emit('add', $event)" />
+    <ShopQuickAdd ref="quickAdd" class="shop-list__add" @add="$emit('add', $event)" />
 
     <div v-if="!aisles.length" class="shop-list__empty">
       <p class="shop-list__empty-title">
@@ -18,7 +18,7 @@
       :label="aisle.label"
       :items="aisle.items"
       :recipe-names="recipeNames"
-      @toggle="$emit('toggle', $event)"
+      @toggle="onToggle"
       @edit="$emit('edit', $event)"
     />
 
@@ -26,7 +26,7 @@
       v-if="bought.length"
       :items="bought"
       :recipe-names="recipeNames"
-      @toggle="$emit('toggle', $event)"
+      @toggle="onToggle"
       @edit="$emit('edit', $event)"
       @clear="$emit('clearBought')"
     />
@@ -37,7 +37,9 @@
 import ShopAisle from "./ShopAisle.vue";
 import ShopBought from "./ShopBought.vue";
 import ShopQuickAdd from "./ShopQuickAdd.vue";
+import { nextTick, useTemplateRef } from "vue";
 import { shopAisles, shopBought, type ShopAisleGroup } from "~/composables/use-shop";
+import type { ComponentPublicInstance } from "vue";
 import type { ShoppingListItemOut, ShoppingListOut } from "~/lib/api/types/household";
 
 const props = defineProps<{
@@ -46,7 +48,7 @@ const props = defineProps<{
   byLabel: ShopAisleGroup[];
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: "toggle" | "edit", item: ShoppingListItemOut): void;
   (e: "add", text: string): void;
   (e: "clearBought"): void;
@@ -60,6 +62,52 @@ const recipeNames = computed(() => new Map(
     .filter(ref => ref.recipe?.name)
     .map(ref => [ref.recipeId, ref.recipe.name as string]),
 ));
+
+// =====================================================
+// Keyboard focus: a toggled row moves to the other section and unmounts, which would drop focus to <body>.
+// Keep the user where they were: the next row of the same section, else the previous one; when the section
+// empties (and disappears) the first row of the following section, else the last row before it; else the
+// quick-add field.
+
+const root = useTemplateRef<HTMLElement>("root");
+const quickAdd = useTemplateRef<ComponentPublicInstance>("quickAdd");
+
+function focusCandidates(itemId: string): string[] {
+  const sections = [...(root.value?.querySelectorAll<HTMLElement>(".shop-aisle, .shop-bought") ?? [])];
+  const rowIds = (section: Element) =>
+    [...section.querySelectorAll<HTMLElement>("[data-item-id]")].map(row => row.dataset.itemId!).filter(id => id !== itemId);
+  const index = sections.findIndex(section => section.querySelector(`[data-item-id="${CSS.escape(itemId)}"]`));
+  if (index === -1) {
+    return [];
+  }
+  const own = [...sections[index]!.querySelectorAll<HTMLElement>("[data-item-id]")].map(row => row.dataset.itemId!);
+  const at = own.indexOf(itemId);
+  const after = sections.slice(index + 1).flatMap(rowIds);
+  const before = sections.slice(0, index).flatMap(rowIds).reverse();
+  return [...own.slice(at + 1), ...own.slice(0, at).reverse(), ...after, ...before];
+}
+
+async function onToggle(item: ShoppingListItemOut) {
+  const row = root.value?.querySelector(`[data-item-id="${CSS.escape(item.id)}"]`);
+  const hadFocus = !!row && row.contains(document.activeElement);
+  const candidates = hadFocus ? focusCandidates(item.id) : [];
+  emit("toggle", item);
+  if (!hadFocus) {
+    return;
+  }
+  await nextTick();
+  if (row?.isConnected && row.contains(document.activeElement)) {
+    return;
+  }
+  for (const id of candidates) {
+    const box = document.getElementById(`shop-item-${id}`);
+    if (box) {
+      box.focus();
+      return;
+    }
+  }
+  (quickAdd.value?.$el as HTMLElement | undefined)?.querySelector("input")?.focus();
+}
 </script>
 
 <style scoped>

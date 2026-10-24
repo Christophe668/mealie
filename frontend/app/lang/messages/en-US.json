@@ -1556,6 +1556,7 @@
     "copy-text": "Copy as text",
     "copy-markdown": "Copy as Markdown",
     "mark-all-bought": "Mark all as bought",
+    "mark-all-not-bought": "Put everything back on the list",
     "reorder-aisles": "Reorder aisles",
     "manage-labels": "Manage labels",
     "keep-awake": "Keep the screen on",
