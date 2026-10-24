@@ -67,6 +67,16 @@ from .household_preferences import (
 )
 from .household_statistics import HouseholdStatistics
 from .invite_token import CreateInviteToken, EmailInitationResponse, EmailInvitation, ReadInviteToken, SaveInviteToken
+from .pantry import (
+    PantryItemCreate,
+    PantryItemOut,
+    PantryItemPagination,
+    PantryItemUpdate,
+    PantryLocation,
+    PantrySource,
+    PutAwayRequest,
+    PutAwayResult,
+)
 from .webhook import CreateWebhook, ReadWebhook, SaveWebhook, WebhookPagination, WebhookType
 
 __all__ = [
@@ -137,4 +147,12 @@ __all__ = [
     "ReadInviteToken",
     "SaveInviteToken",
     "SetPermissions",
+    "PantryItemCreate",
+    "PantryItemOut",
+    "PantryItemPagination",
+    "PantryItemUpdate",
+    "PantryLocation",
+    "PantrySource",
+    "PutAwayRequest",
+    "PutAwayResult",
 ]

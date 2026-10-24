@@ -4,6 +4,7 @@ from pydantic import UUID4
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import joinedload, with_expression
 
+from mealie.db.models.household.pantry import PantryItem
 from mealie.db.models.household.shopping_list import ShoppingListItem
 from mealie.db.models.recipe.ingredient import (
     IngredientFoodModel,
@@ -137,12 +138,13 @@ class RepositoryFood(GroupRepositoryGeneric[IngredientFood, IngredientFoodModel]
         self._merge_substitutions(from_model, to_model)
         self._merge_recipe_substitutions(from_food, to_food)
 
-        # Shopping list items reference the food directly rather than through the ingredients
+        # Shopping list and pantry items reference the food directly rather than through the ingredients
         # relationship, so they have to be repointed explicitly. Without this the delete below
         # either violates a foreign key constraint or leaves the item pointing at a missing food.
         self.session.execute(
             update(ShoppingListItem).where(ShoppingListItem.food_id == from_food).values(food_id=to_food)
         )
+        self.session.execute(update(PantryItem).where(PantryItem.food_id == from_food).values(food_id=to_food))
 
         try:
             self.session.delete(from_model)

@@ -4,6 +4,7 @@ from .household import Household
 from .household_to_recipe import HouseholdToRecipe
 from .invite_tokens import GroupInviteToken
 from .mealplan import GroupMealPlan, GroupMealPlanRules
+from .pantry import PantryItem
 from .preferences import HouseholdPreferencesModel
 from .recipe_action import GroupRecipeAction
 from .shopping_list import (
@@ -26,6 +27,7 @@ __all__ = [
     "Household",
     "HouseholdPreferencesModel",
     "HouseholdToRecipe",
+    "PantryItem",
     "GroupRecipeAction",
     "ShoppingList",
     "ShoppingListExtras",

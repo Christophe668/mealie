@@ -3,6 +3,7 @@ from collections.abc import Iterable
 from pydantic import UUID4, BaseModel
 from sqlalchemy import select, update
 
+from mealie.db.models.household.pantry import PantryItem
 from mealie.db.models.household.shopping_list import ShoppingListItem
 from mealie.db.models.recipe.ingredient import IngredientUnitModel
 from mealie.lang.providers import get_locale_context
@@ -124,12 +125,13 @@ class RepositoryUnit(GroupRepositoryGeneric[IngredientUnit, IngredientUnitModel]
 
         to_model.ingredients += from_model.ingredients
 
-        # Shopping list items reference the unit directly rather than through the ingredients
+        # Shopping list and pantry items reference the unit directly rather than through the ingredients
         # relationship, so they have to be repointed explicitly. Without this the delete below
         # either violates a foreign key constraint or leaves the item pointing at a missing unit.
         self.session.execute(
             update(ShoppingListItem).where(ShoppingListItem.unit_id == from_unit).values(unit_id=to_unit)
         )
+        self.session.execute(update(PantryItem).where(PantryItem.unit_id == from_unit).values(unit_id=to_unit))
 
         try:
             self.session.delete(from_model)
