@@ -1,5 +1,6 @@
+import re
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from mealie.core.exceptions import NoEntryFound
 from mealie.mcp.auth import require_scope
@@ -13,6 +14,11 @@ from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedb
 from mealie.schema.recipe.recipe import Recipe
 
 MAX_FEEDBACK_LIMIT = 50
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+# Advertised in the tool's JSON schema; the manual checks below stay as defence and give clearer errors.
+Verdict = Literal["loved", "ok", "never_again"]
+Effort = Literal[1, 2, 3]
 _VERDICTS = ", ".join(v.value for v in FeedbackVerdict)
 
 
@@ -35,9 +41,17 @@ def _parse_made_on(made_on: str | None) -> date | None:
     if made_on is None:
         return None
     try:
+        # date.fromisoformat also takes 20261020 and week dates (2026-W43-1); only YYYY-MM-DD is promised.
+        if not _ISO_DATE.fullmatch(made_on):
+            raise ValueError(made_on)
         return date.fromisoformat(made_on)
     except ValueError as e:
         raise McpToolError(f"made_on must be an ISO date (YYYY-MM-DD), got {made_on!r}") from e
+
+
+def _clean_text(value: str | None) -> str | None:
+    """Trim free text; empty or whitespace-only becomes None."""
+    return (value or "").strip() or None
 
 
 def _recipe_or_raise(ctx: McpContext, recipe: str) -> Recipe:
@@ -69,8 +83,8 @@ def record_recipe_feedback_impl(
                 recipe_id=found.id,
                 verdict=data_verdict,
                 effort=data_effort,
-                note=note or None,
-                for_whom=for_whom or None,
+                note=_clean_text(note),
+                for_whom=_clean_text(for_whom),
                 made_on=data_made_on,
             )
         )
@@ -94,8 +108,8 @@ def get_recipe_feedback_impl(ctx: McpContext, recipe: str | None = None, limit: 
 @require_scope("recipes:write")
 async def record_recipe_feedback(
     recipe: str,
-    verdict: str,
-    effort: int | None = None,
+    verdict: Verdict,
+    effort: Effort | None = None,
     note: str | None = None,
     for_whom: str | None = None,
     made_on: str | None = None,

@@ -9,6 +9,7 @@ from starlette.testclient import TestClient
 
 from mealie.mcp import auth, context
 from mealie.mcp.errors import McpToolError
+from mealie.mcp.server import mcp_server
 from mealie.mcp.tools.feedback import get_recipe_feedback, record_recipe_feedback
 from tests.utils import api_routes
 from tests.utils.factories import random_string
@@ -113,6 +114,8 @@ async def test_get_feedback_requires_recipes_read(
         ({"verdict": "loved", "effort": 4}, "effort"),
         ({"verdict": "loved", "made_on": "20/10/2026"}, "made_on"),
         ({"verdict": "loved", "made_on": "2026-02-30"}, "made_on"),
+        ({"verdict": "loved", "made_on": "20261020"}, "made_on"),
+        ({"verdict": "loved", "made_on": "2026-W43-1"}, "made_on"),
     ],
 )
 async def test_record_validates_before_writing(
@@ -134,6 +137,32 @@ async def test_record_validates_before_writing(
     assert user.repos.recipe_feedback.summaries([UUID(recipe["id"])]) == {}
     events = user.repos.recipe_timeline_events.multi_query({"recipe_id": UUID(recipe["id"])})
     assert [e for e in events if e.event_type == "comment"] == []  # only the "recipe created" event
+
+
+@pytest.mark.asyncio
+async def test_record_blank_note_and_for_whom_become_none(
+    monkeypatch: pytest.MonkeyPatch, session: Session, api_client: TestClient, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = _create_recipe(api_client, user)
+    _as_user(monkeypatch, session, user)
+
+    result = await record_recipe_feedback(recipe["slug"], "ok", note="   ", for_whom="\t\n")
+    assert (result["feedback"]["note"], result["feedback"]["for_whom"]) == (None, None)
+
+    result = await record_recipe_feedback(recipe["slug"], "ok", note="  Too salty ", for_whom=" Sam ")
+    assert (result["feedback"]["note"], result["feedback"]["for_whom"]) == ("Too salty", "Sam")
+
+
+@pytest.mark.asyncio
+async def test_record_schema_advertises_verdict_and_effort_values():
+    tools = {tool.name: tool for tool in await mcp_server.list_tools()}
+    schema = tools["record_recipe_feedback"].input_schema
+    props = schema["properties"]
+    assert props["verdict"]["enum"] == ["loved", "ok", "never_again"]
+    effort_enums = [opt.get("enum") for opt in props["effort"].get("anyOf", [props["effort"]])]
+    assert [1, 2, 3] in effort_enums
+    assert schema["required"] == ["recipe", "verdict"]
 
 
 @pytest.mark.asyncio
