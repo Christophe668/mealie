@@ -9,6 +9,7 @@ export type GroupRecipeActionType = "link" | "post";
 export type WebhookType = "mealplan";
 export type PantryLocation = "fridge" | "freezer" | "cupboard" | "other";
 export type PantrySource = "shopping" | "manual" | "leftover";
+export type FeedbackVerdict = "loved" | "ok" | "never_again";
 
 export interface CreateGroupRecipeAction {
   actionType: GroupRecipeActionType;
@@ -378,6 +379,44 @@ export interface ReadInviteToken {
   usesLeft: number;
   groupId: string;
   householdId: string;
+}
+export interface RecipeFeedbackCreate {
+  recipeId: string;
+  verdict: FeedbackVerdict;
+  effort?: number | null;
+  note?: string | null;
+  forWhom?: string | null;
+  madeOn?: string | null;
+}
+export interface RecipeFeedbackOut {
+  id: string;
+  groupId: string;
+  householdId: string;
+  recipeId: string;
+  userId?: string | null;
+  verdict: FeedbackVerdict;
+  effort?: number | null;
+  note?: string | null;
+  forWhom?: string | null;
+  madeOn: string;
+  timelineEventId?: string | null;
+  recipe: RecipeFeedbackRecipe;
+  userName?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export interface RecipeFeedbackRecipe {
+  id: string;
+  slug: string;
+  name: string;
+}
+export interface RecipeFeedbackSummary {
+  lastVerdict: FeedbackVerdict;
+  lastMadeOn: string;
+  loved?: number;
+  ok?: number;
+  neverAgain?: number;
+  total?: number;
 }
 export interface SaveGroupRecipeAction {
   actionType: GroupRecipeActionType;

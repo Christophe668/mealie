@@ -18,7 +18,7 @@ def test_duration_migration_preserves_populated_database(random_recipe, unique_u
     engine = create_engine(settings.DB_URL)
     config = Config(str(Path(__file__).parents[3] / "mealie/alembic/alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["e4c7f9df5557"]
+    assert scripts.get_heads() == ["c6ecf2adb0ce"]
     predecessor = scripts.get_revision("afdc42353aa4").down_revision
 
     def snapshot():

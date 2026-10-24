@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         GroupWebhooksModel,
         HouseholdPreferencesModel,
         PantryItem,
+        RecipeFeedback,
     )
 
 
@@ -68,6 +69,7 @@ class Household(SqlAlchemyBase, BaseMixins):
     )
 
     pantry_items: Mapped[list[PantryItem]] = orm.relationship("PantryItem", **COMMON_ARGS)
+    recipe_feedback: Mapped[list[RecipeFeedback]] = orm.relationship("RecipeFeedback", **COMMON_ARGS)
 
     made_recipes: Mapped[list[RecipeModel]] = orm.relationship(
         "RecipeModel", secondary=HouseholdToRecipe.__tablename__, back_populates="made_by"
@@ -93,6 +95,7 @@ class Household(SqlAlchemyBase, BaseMixins):
             "group",
             "made_recipes",
             "pantry_items",
+            "recipe_feedback",
         }
     )
 
