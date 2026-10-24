@@ -10,7 +10,16 @@ from mealie.mcp.context import McpContext, cross_household_repos
 from mealie.mcp.errors import McpToolError, not_found
 from mealie.mcp.server import mcp_server
 from mealie.mcp.tools import run_in_context
-from mealie.mcp.tools._summaries import last_made_by_recipe, recipe_brief, recipe_url
+from mealie.mcp.tools._summaries import (
+    feedback_dict,
+    feedback_service,
+    feedback_summaries,
+    last_made_by_recipe,
+    last_verdict,
+    recipe_brief,
+    recipe_url,
+    summary_dict,
+)
 from mealie.repos.repository_generic import GroupRepositoryGeneric
 from mealie.schema.recipe.recipe import Recipe
 from mealie.schema.response.pagination import OrderByNullPosition, OrderDirection, PaginationQuery
@@ -19,6 +28,8 @@ from mealie.services.query_filter.builder import QueryFilterBuilder
 OrderBy = Literal["name", "rating", "random", "last_made", "created_at"]
 
 MAX_PER_PAGE = 100
+# Latest household feedback entries returned with a full recipe.
+RECIPE_FEEDBACK_LIMIT = 5
 
 # Direction that makes each ordering useful for meal planning:
 # best rated first, least recently made first, newest first.
@@ -122,9 +133,14 @@ def search_recipes_impl(
         search=query or None,
     )
 
-    last_made = last_made_by_recipe(ctx.session, ctx.user.household_id, [r.id for r in result.items if r.id])
+    recipe_ids = [r.id for r in result.items if r.id]
+    last_made = last_made_by_recipe(ctx.session, ctx.user.household_id, recipe_ids)
+    summaries = feedback_summaries(ctx, recipe_ids)
     return {
-        "items": [recipe_brief(r, last_made.get(r.id) if r.id else None, ctx.user.group_slug) for r in result.items],
+        "items": [
+            recipe_brief(r, last_made.get(r.id) if r.id else None, ctx.user.group_slug, last_verdict(summaries, r.id))
+            for r in result.items
+        ],
         "page": result.page,
         "per_page": result.per_page,
         "total": result.total,
@@ -148,6 +164,9 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
     if recipe is None:
         raise not_found("recipe", slug_or_id)
 
+    service = feedback_service(ctx)
+    feedback = service.list(recipe.id, page=1, per_page=RECIPE_FEEDBACK_LIMIT).items
+    summary = service.summaries([recipe.id]).get(recipe.id) if recipe.id else None
     return {
         "id": str(recipe.id),
         "name": recipe.name,
@@ -173,6 +192,8 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
         "notes": [{"title": n.title, "text": n.text} for n in recipe.notes or []],
         "org_url": recipe.org_url,
         "url": recipe_url(ctx.user.group_slug, recipe.slug),
+        "feedback": [feedback_dict(row) for row in feedback],
+        "feedback_summary": summary_dict(summary),
     }
 
 
@@ -195,8 +216,10 @@ async def search_recipes(
     return total 0 with `unknown_tags`/`unknown_categories` listing them. `order_by` "rating" is best
     first (unrated last), "last_made" least recent first, "random" a fresh shuffle. `per_page` is
     capped at 100. `min_rating` and rating order use the caller's own rating when set, while `rating`
-    in each item is the recipe's average. Returns {items, page, per_page, total}; call get_recipe for
-    ingredients and steps."""
+    in each item is the recipe's average. Each item has `last_verdict`, this household's latest
+    feedback (loved, ok, never_again; null when none): do not propose a `never_again` recipe again
+    unless the user asks for it, and prefer `loved` ones when the user wants something reliable.
+    Returns {items, page, per_page, total}; call get_recipe for ingredients and steps."""
     return await run_in_context(
         search_recipes_impl,
         query=query,
@@ -215,6 +238,8 @@ async def search_recipes(
 @require_scope("recipes:read")
 async def get_recipe(slug_or_id: str) -> dict[str, Any]:
     """Fetch one recipe in full by slug or id (as returned by search_recipes): servings, times,
-    ingredients, instructions, tags, categories, tools, notes, source URL and the Mealie page URL.
-    Use it before planning or shopping for a recipe."""
+    ingredients, instructions, tags, categories, tools, notes, source URL and the Mealie page URL,
+    plus this household's `feedback` (latest 5, newest first) and `feedback_summary` (last verdict,
+    last made on, counts per verdict; null when there is none). Use it before planning or shopping
+    for a recipe."""
     return await run_in_context(get_recipe_impl, slug_or_id)
