@@ -1,6 +1,7 @@
 # Mealie fork on a NAS (Synology Container Manager, QNAP Container Station, Unraid, TrueNAS, plain Docker).
 # Pulls the published image (amd64 + arm64), keeps data in plain folders next to this file so NAS backups
-# pick them up, and publishes Mealie over HTTPS through a Cloudflare Tunnel (no port forwarding).
+# pick them up, and publishes Mealie over HTTPS through a Cloudflare Tunnel (no port forwarding): either a route on
+# a tunnel you already run, or a dedicated cloudflared container (COMPOSE_PROFILES=tunnel).
 # Guide: docs/fork/nas.md (it lists the .env values this file reads)
 
 services:
@@ -45,11 +46,14 @@ services:
       timeout: 5s
       retries: 5
 
+  # Only started with COMPOSE_PROFILES=tunnel, for a tunnel dedicated to Mealie. If you already run cloudflared
+  # (on the NAS or elsewhere), leave the profile off and add a route to that tunnel instead (docs/fork/nas.md).
   cloudflared:
     image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
     depends_on:
       - mealie

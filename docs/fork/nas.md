@@ -9,7 +9,13 @@ Works on any NAS that runs Docker Compose: Synology (Container Manager, DSM 7.2+
 - A domain managed by Cloudflare (free plan is fine). The tunnel publishes Mealie as a subdomain of it, for example `mealie.yourdomain.com`.
 - About 1 GB of RAM free on the NAS.
 
-## 1. Create the tunnel in Cloudflare
+## 1. Choose the tunnel
+
+**You already run a Cloudflare Tunnel** (for example for Home Assistant): keep it. Mealie needs no token and no extra container; you add one route to that tunnel in step 4. Skip to step 2, and leave `TUNNEL_TOKEN` and `COMPOSE_PROFILES` out of your settings.
+
+**You have no tunnel yet**: create one for Mealie as below, and set `COMPOSE_PROFILES=tunnel` plus `TUNNEL_TOKEN` in your settings so the stack starts its own cloudflared container.
+
+### Creating a dedicated tunnel
 
 1. Cloudflare dashboard, **Zero Trust**, **Networks**, **Tunnels**, **Create a tunnel**, type **Cloudflared**, name it `mealie`.
 2. On the install screen choose **Docker** and copy the long token after `--token`. Do not run the command shown; the NAS project runs it.
@@ -59,7 +65,7 @@ Portainer can deploy the same file straight from GitHub, with the settings typed
 2. **Stacks**, **Add stack**, name `mealie`, build method **Repository**:
    - Repository URL `https://github.com/Christophe668/mealie`, reference `refs/heads/main`
    - Compose path `docker-compose.nas.yml`
-3. **Environment variables**: add `BASE_URL`, `TUNNEL_TOKEN`, `POSTGRES_PASSWORD`, plus `DATA_DIR=/volume1/docker/mealie/data` and `PG_DATA_DIR=/volume1/docker/mealie/pgdata`. The two folder variables matter: without them Portainer stores the database inside its own internal volume, outside your NAS backups, and deleting the stack can delete your recipes.
+3. **Environment variables**: add `BASE_URL`, `POSTGRES_PASSWORD` (and `COMPOSE_PROFILES=tunnel` with `TUNNEL_TOKEN` only for a dedicated tunnel), plus `DATA_DIR=/volume1/docker/mealie/data` and `PG_DATA_DIR=/volume1/docker/mealie/pgdata`. The two folder variables matter: without them Portainer stores the database inside its own internal volume, outside your NAS backups, and deleting the stack can delete your recipes.
 4. **Deploy the stack**.
 
 To update later: open the stack, **Pull and redeploy**, with **Re-pull image** switched on. Do not rely on Portainer's automatic GitOps polling for updates: it redeploys as soon as the repository changes, which is about 15 minutes before the new image finishes building, so it would restart on the old image.
@@ -67,7 +73,11 @@ To update later: open the stack, **Pull and redeploy**, with **Re-pull image** s
 ## 4. First login, then go public
 
 1. On your home network, open `http://<nas-ip>:9925` and sign in with the default admin, `changeme@example.com` / `MyPassword`. Change the email and a strong password straight away in your profile. Do this before step 2: once the address is public, anyone who finds it can try the default login.
-2. Back in Cloudflare, open the tunnel, **Public hostname**, **Add**: subdomain `mealie`, your domain, service type **HTTP**, URL `mealie:9000`. Save. `https://mealie.yourdomain.com` now works from anywhere.
+2. Back in Cloudflare, open the tunnel and add a route (**Public hostname** or **Published application routes**, depending on the dashboard version): subdomain `mealie`, your domain, service type **HTTP**, and as URL:
+   - `mealie:9000` with the stack's own cloudflared container (`COMPOSE_PROFILES=tunnel`);
+   - `<nas-ip>:9925` with a tunnel you already run elsewhere (another container, the NAS itself, a Home Assistant add-on). It must be able to reach the NAS on port 9925.
+
+   Save. `https://mealie.yourdomain.com` now works from anywhere.
 
 To bring recipes from another Mealie instance (for example the one on your Mac), use **Settings**, **Backups** there to create a backup, download it, then upload and restore it on the NAS.
 
