@@ -212,12 +212,19 @@ const asideStyle = computed(() => ({
 }));
 
 const groupSlug = computed(() => (route.params.groupSlug as string) || auth.user.value?.groupSlug || "");
-const cookTo = computed(() => (groupSlug.value && recipe.value.slug ? `/g/${groupSlug.value}/r/${recipe.value.slug}/cook` : ""));
 const imageUrl = computed(() => (recipe.value.id && recipe.value.image ? recipeImage(recipe.value.id, recipe.value.image) : ""));
 
 // Opened from a meal plan entry, the recipe starts at that entry's scale.
 const initialScale = Number.parseFloat(String(route.query.scale ?? ""));
 const scale = ref(initialScale > 0 && Number.isFinite(initialScale) ? initialScale : 1);
+// Cook mode shows the quantities at the scale you were reading.
+const cookTo = computed(() => {
+  if (!groupSlug.value || !recipe.value.slug) {
+    return "";
+  }
+  const path = `/g/${groupSlug.value}/r/${recipe.value.slug}/cook`;
+  return scale.value !== 1 ? `${path}?scale=${scale.value}` : path;
+});
 
 /* Permissions: the recipe may belong to another household in the group. */
 const recipeHousehold = ref<HouseholdSummary | undefined>();

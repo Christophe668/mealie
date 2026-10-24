@@ -24,6 +24,14 @@ describe("findStepTimers", () => {
     expect(seconds("Take it out 10 minutes before cooking")).toEqual([600]);
   });
 
+  test("hours followed by minutes are one timer", () => {
+    expect(findStepTimers("Braise 1 h 30")).toEqual([{ text: "1 h 30", minutes: 90, seconds: 5400 }]);
+    expect(seconds("Bake for 1 hour 20 minutes, then rest 10 min")).toEqual([4800, 600]);
+    expect(seconds("Laisser lever 2 h 15.")).toEqual([8100]);
+    expect(seconds("Rest 1 h, then add 30 g sugar")).toEqual([3600]);
+    expect(seconds("Rest 1 h 30 g butter")).toEqual([3600]);
+  });
+
   test("a range is one timer for its upper bound", () => {
     expect(findStepTimers("Cook 2–3 minutes per side")).toEqual([{ text: "2–3 minutes", minutes: 3, seconds: 180 }]);
     expect(seconds("Bake 10-15 min")).toEqual([900]);
