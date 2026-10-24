@@ -9,7 +9,7 @@
         class="ds-desktop-only"
         :brand-name="brandName"
         :home-to="todayPath"
-        :items="primaryItems"
+        :items="railItems"
         :secondary-items="secondaryItems"
         :user-name="loggedIn ? auth.user.value?.fullName || '' : undefined"
         :user-items="userItems"
@@ -64,6 +64,7 @@ import type { AppShellMenuItem, AppShellNavItem } from "~/types/application-type
 
 const PLAN_PATH = "/household/mealplan/planner/view";
 const SHOP_PATH = "/shopping-lists";
+const PANTRY_PATH = "/household/pantry";
 const CONNECTIONS_PATH = "/user/connections";
 const SETTINGS_PATH = "/user/profile";
 const ADMIN_PATH = "/admin/site-settings";
@@ -140,6 +141,23 @@ const primaryItems = computed<AppShellNavItem[]>(() => {
   ];
 });
 
+/** The rail adds Pantry after Shop; the mobile tab bar keeps the four primary destinations. */
+const railItems = computed<AppShellNavItem[]>(() => {
+  if (!isOwnGroup.value) {
+    return primaryItems.value;
+  }
+  return [
+    ...primaryItems.value,
+    {
+      key: "pantry",
+      label: i18n.t("app-shell.pantry"),
+      to: PANTRY_PATH,
+      icon: "fridgeOutline",
+      active: isUnder(PANTRY_PATH),
+    },
+  ];
+});
+
 const secondaryItems = computed<AppShellNavItem[]>(() => {
   if (!loggedIn.value) {
     return [];
@@ -180,6 +198,7 @@ const addItems = computed<AppShellMenuItem[]>(() => {
   items.push(
     { key: "plan", label: i18n.t("app-shell.add-to-plan"), to: PLAN_PATH, icon: "calendar" },
     { key: "list", label: i18n.t("app-shell.add-to-shopping-list"), to: SHOP_PATH, icon: "formatListCheck" },
+    { key: "pantry", label: i18n.t("app-shell.add-to-pantry"), to: `${PANTRY_PATH}?add=1`, icon: "fridgeOutline" },
   );
   return items;
 });
