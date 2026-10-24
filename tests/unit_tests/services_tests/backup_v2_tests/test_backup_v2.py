@@ -296,3 +296,28 @@ def test_database_restore_data():
 
     finally:
         backup_v2.restore(original_data_backup)
+
+
+def test_convert_types_leaves_json_columns_untouched():
+    """JSON columns (lists of scalars, nested dicts) must survive convert_types unchanged."""
+    from mealie.services.backups_v2.alchemy_exporter import AlchemyExporter
+
+    settings = get_app_settings()
+    exporter = AlchemyExporter(settings.DB_URL)
+    row_id = "0f1d3c7e-6c3a-4e1a-9c1c-7f4f6a9b0d21"
+    dump = {
+        "mcp_oauth_clients": [
+            {
+                "id": row_id,
+                "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+                "metadata_json": {"client_name": "Claude", "nested_id": row_id},
+                "created_at": "2026-10-24T07:00:00",
+            }
+        ]
+    }
+    out = exporter.convert_types(dump)
+    row = out["mcp_oauth_clients"][0]
+    assert row["redirect_uris"] == ["https://claude.ai/api/mcp/auth_callback"]
+    assert row["metadata_json"] == {"client_name": "Claude", "nested_id": row_id}
+    assert row["id"] == GUID.convert_value_to_guid(row_id, exporter.engine.dialect)
+    assert not isinstance(row["created_at"], str)

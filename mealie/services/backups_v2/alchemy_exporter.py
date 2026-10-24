@@ -118,9 +118,13 @@ class AlchemyExporter(BaseService):
         """
         for key, value in data.items():
             if isinstance(value, dict):
-                data = self.convert_types(value)
-            elif isinstance(value, list):  # assume that this is a list of dictionaries
-                data[key] = [self.convert_types(item) for item in value]
+                # a nested dict is a JSON column's payload (e.g. mcp_oauth_clients.metadata_json);
+                # it is stored verbatim, so leave it untouched
+                continue
+            elif isinstance(value, list):
+                # either the table's list of rows, or a JSON column holding a list of scalars
+                # (e.g. mcp_oauth_clients.redirect_uris); only rows (dicts) are converted
+                data[key] = [self.convert_types(item) if isinstance(item, dict) else item for item in value]
             elif isinstance(value, str):
                 if self.is_uuid(value):
                     # convert the data to the current database's native GUID type
