@@ -76,6 +76,7 @@
 
 <script setup lang="ts">
 import DsButton from "~/components/Design/DsButton.vue";
+import { useFocusReturn } from "~/composables/use-focus-return";
 import { toPantryUpdate } from "~/composables/use-pantry";
 import { PANTRY_LOCATIONS } from "~/lib/pantry/freshness";
 import type { PantryItemOut, PantryItemUpdate } from "~/lib/api/types/household";
@@ -90,6 +91,8 @@ const props = defineProps<{
 }>();
 
 const open = defineModel<boolean>({ default: false });
+// Opened through v-model, so Vuetify has no activator to give focus back to.
+useFocusReturn(open);
 const i18n = useI18n();
 
 const draft = ref<PantryItemUpdate | null>(null);

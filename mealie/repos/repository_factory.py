@@ -19,6 +19,7 @@ from mealie.db.models.household.mealplan import GroupMealPlan, GroupMealPlanRule
 from mealie.db.models.household.pantry import PantryItem
 from mealie.db.models.household.preferences import HouseholdPreferencesModel
 from mealie.db.models.household.recipe_action import GroupRecipeAction
+from mealie.db.models.household.recipe_feedback import RecipeFeedback
 from mealie.db.models.household.shopping_list import (
     ShoppingList,
     ShoppingListItem,
@@ -45,6 +46,7 @@ from mealie.repos.repository_foods import RepositoryFood
 from mealie.repos.repository_household import RepositoryHousehold, RepositoryHouseholdRecipes
 from mealie.repos.repository_meal_plan_rules import RepositoryMealPlanRules
 from mealie.repos.repository_pantry import RepositoryPantryItems
+from mealie.repos.repository_recipe_feedback import RepositoryRecipeFeedback
 from mealie.repos.repository_units import RepositoryUnit
 from mealie.schema.cookbook.cookbook import ReadCookBook
 from mealie.schema.group.ai_providers import AIPromptOverrideOut, AIProviderOut, AIProviderSettingsOut
@@ -63,6 +65,7 @@ from mealie.schema.household.household import HouseholdInDB, HouseholdRecipeOut
 from mealie.schema.household.household_preferences import ReadHouseholdPreferences
 from mealie.schema.household.invite_token import ReadInviteToken
 from mealie.schema.household.pantry import PantryItemOut
+from mealie.schema.household.recipe_feedback import RecipeFeedbackOut
 from mealie.schema.household.webhook import ReadWebhook
 from mealie.schema.labels import MultiPurposeLabelOut
 from mealie.schema.meal_plan.new_meal import ReadPlanEntry
@@ -476,6 +479,17 @@ class AllRepositories:
             PK_ID,
             PantryItem,
             PantryItemOut,
+            group_id=self.group_id,
+            household_id=self.household_id,
+        )
+
+    @cached_property
+    def recipe_feedback(self) -> RepositoryRecipeFeedback:
+        return RepositoryRecipeFeedback(
+            self.session,
+            PK_ID,
+            RecipeFeedback,
+            RecipeFeedbackOut,
             group_id=self.group_id,
             household_id=self.household_id,
         )

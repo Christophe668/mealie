@@ -293,6 +293,8 @@ class QueryFilterBuilder:
 
                     mapper = sa.inspect(current_model)
                     relationship = mapper.relationships[proxied_attribute_link]
+                    if relationship.info.get("filterable") is False:
+                        raise NonFilterableValueError(str(model_attr))
                     if collect_relationships is not None:
                         collect_relationships.append((model_attr, relationship.uselist))
                     current_model = relationship.mapper.class_
@@ -304,6 +306,9 @@ class QueryFilterBuilder:
 
                 mapper = sa.inspect(current_model)
                 relationship = mapper.relationships[attribute_link]
+                # a relationship can opt out of filtering entirely, e.g. when it crosses a scope boundary
+                if relationship.info.get("filterable") is False:
+                    raise NonFilterableValueError(str(model_attr))
                 if collect_relationships is not None:
                     collect_relationships.append((model_attr, relationship.uselist))
                 current_model = relationship.mapper.class_

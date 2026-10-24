@@ -34,7 +34,7 @@ from .tool import recipes_to_tools
 
 if TYPE_CHECKING:
     from ..group import Group, GroupMealPlan
-    from ..household import Household, ShoppingListItemRecipeReference, ShoppingListRecipeReference
+    from ..household import Household, RecipeFeedback, ShoppingListItemRecipeReference, ShoppingListRecipeReference
     from ..users import User
     from . import Category, Tag, Tool
 
@@ -132,6 +132,13 @@ class RecipeModel(SqlAlchemyBase, BaseMixins):
     timeline_events: Mapped[list[RecipeTimelineEvent]] = orm.relationship(
         "RecipeTimelineEvent", back_populates="recipe", cascade="all, delete, delete-orphan"
     )
+    # SQLite runs without foreign key enforcement, so the ORM deletes feedback with its recipe.
+    # Feedback is household-scoped while recipe query filters are group-scoped: the query filter builder
+    # refuses to walk this relationship (`info={"filterable": False}`). Every relationship into feedback carries
+    # that flag, including `Household.recipe_feedback`.
+    feedback: Mapped[list[RecipeFeedback]] = orm.relationship(
+        "RecipeFeedback", back_populates="recipe", cascade="all, delete, delete-orphan", info={"filterable": False}
+    )
 
     # Mealie Specific
     settings: Mapped[list[RecipeSettings]] = orm.relationship(
@@ -176,6 +183,7 @@ class RecipeModel(SqlAlchemyBase, BaseMixins):
             "settings",
             "comments",
             "timeline_events",
+            "feedback",
         },
     )
 

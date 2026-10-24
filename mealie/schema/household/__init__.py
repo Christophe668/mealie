@@ -77,6 +77,14 @@ from .pantry import (
     PutAwayRequest,
     PutAwayResult,
 )
+from .recipe_feedback import (
+    FeedbackVerdict,
+    RecipeFeedbackCreate,
+    RecipeFeedbackOut,
+    RecipeFeedbackPagination,
+    RecipeFeedbackRecipe,
+    RecipeFeedbackSummary,
+)
 from .webhook import CreateWebhook, ReadWebhook, SaveWebhook, WebhookPagination, WebhookType
 
 __all__ = [
@@ -146,6 +154,12 @@ __all__ = [
     "EmailInvitation",
     "ReadInviteToken",
     "SaveInviteToken",
+    "FeedbackVerdict",
+    "RecipeFeedbackCreate",
+    "RecipeFeedbackOut",
+    "RecipeFeedbackPagination",
+    "RecipeFeedbackRecipe",
+    "RecipeFeedbackSummary",
     "SetPermissions",
     "PantryItemCreate",
     "PantryItemOut",

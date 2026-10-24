@@ -1,5 +1,5 @@
 import contextlib
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from mcp.server.auth.provider import AccessToken
@@ -12,7 +12,11 @@ from mealie.mcp.errors import McpToolError
 from mealie.mcp.tools import recipes as recipes_module
 from mealie.mcp.tools.household import get_household_context
 from mealie.mcp.tools.recipes import _build_pagination, _resolve_organizers, get_recipe, search_recipes
+from mealie.repos.all_repositories import get_repositories
+from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedbackCreate
 from mealie.schema.response.pagination import OrderByNullPosition, OrderDirection
+from mealie.schema.user.user import PrivateUser
+from mealie.services.claude_context.recipe_feedback_service import RecipeFeedbackService
 from tests.utils import api_routes
 from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
@@ -109,6 +113,7 @@ async def test_search_by_tag_and_max_time(
         "tags",
         "categories",
         "last_made",
+        "last_verdict",
         "url",
     }
 
@@ -270,3 +275,107 @@ async def test_search_sees_other_household_same_group(
 
     assert other_slug in [r["slug"] for r in result["items"]]
     assert (await get_recipe(other_slug))["slug"] == other_slug
+
+
+def _record_feedback(user: TestUser, slug: str, verdict: FeedbackVerdict, made_on: date) -> None:
+    # group-wide lookup: the recipe may belong to another household of the group
+    recipe = get_repositories(user.repos.session, group_id=user.group_id, household_id=None).recipes.get_one(
+        slug, "slug"
+    )
+    assert recipe is not None
+    private_user = user.repos.users.get_one(user.user_id)
+    assert isinstance(private_user, PrivateUser)
+    RecipeFeedbackService(user.repos, private_user).record(
+        RecipeFeedbackCreate(recipe_id=recipe.id, verdict=verdict, made_on=made_on)
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_items_carry_last_verdict(
+    monkeypatch: pytest.MonkeyPatch, session: Session, api_client: TestClient, unique_user: TestUser
+):
+    prefix = "Verdict " + random_string(8)
+    rated = _create_recipe(api_client, unique_user, name=f"{prefix} A")
+    plain = _create_recipe(api_client, unique_user, name=f"{prefix} B")
+    _record_feedback(unique_user, rated, FeedbackVerdict.loved, date(2026, 10, 1))
+    _record_feedback(unique_user, rated, FeedbackVerdict.never_again, date(2026, 10, 5))
+    _as_user(monkeypatch, session, unique_user)
+
+    calls: list[int] = []
+    original = RecipeFeedbackService.summaries
+
+    def counting(self, ids):
+        calls.append(len(ids))
+        return original(self, ids)
+
+    monkeypatch.setattr(RecipeFeedbackService, "summaries", counting)
+
+    result = await search_recipes(query=prefix)
+
+    verdicts = {r["slug"]: r["last_verdict"] for r in result["items"]}
+    assert {rated: verdicts.get(rated), plain: verdicts.get(plain, "missing")} == {rated: "never_again", plain: None}
+    assert calls == [len(result["items"])]  # one batched lookup per search, for every item
+
+
+def _verdict_of(result: dict, slug: str) -> str | None:
+    (item,) = [r for r in result["items"] if r["slug"] == slug]  # the free-text search may match others too
+    return item["last_verdict"]
+
+
+@pytest.mark.asyncio
+async def test_last_verdict_is_per_household(
+    monkeypatch: pytest.MonkeyPatch,
+    session: Session,
+    api_client: TestClient,
+    unique_user: TestUser,
+    h2_user: TestUser,
+):
+    name = "Household verdict " + random_string(8)
+    slug = _create_recipe(api_client, unique_user, name=name)
+    _record_feedback(h2_user, slug, FeedbackVerdict.never_again, date(2026, 10, 5))
+
+    _as_user(monkeypatch, session, unique_user)
+    assert _verdict_of(await search_recipes(query=name), slug) is None
+    recipe = await get_recipe(slug)
+    assert recipe["feedback"] == []
+    assert recipe["feedback_summary"] is None
+
+    _as_user(monkeypatch, session, h2_user)
+    assert _verdict_of(await search_recipes(query=name), slug) == "never_again"
+
+
+@pytest.mark.asyncio
+async def test_get_recipe_includes_latest_feedback_and_summary(
+    monkeypatch: pytest.MonkeyPatch, session: Session, api_client: TestClient, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    slug = _create_recipe(api_client, user)
+    _as_user(monkeypatch, session, user)
+
+    recipe = await get_recipe(slug)
+    assert recipe["feedback"] == []
+    assert recipe["feedback_summary"] is None
+
+    for day in range(1, 8):
+        verdict = FeedbackVerdict.loved if day % 2 else FeedbackVerdict.ok
+        _record_feedback(user, slug, verdict, date(2026, 10, day))
+
+    recipe = await get_recipe(slug)
+
+    assert [f["made_on"] for f in recipe["feedback"]] == [f"2026-10-0{d}" for d in (7, 6, 5, 4, 3)]
+    assert set(recipe["feedback"][0]) == {
+        "id",
+        "recipe",
+        "verdict",
+        "effort",
+        "note",
+        "for_whom",
+        "made_on",
+        "recorded_by",
+    }
+    assert recipe["feedback"][0]["verdict"] == "loved"
+    assert recipe["feedback"][0]["recorded_by"] == user.full_name
+    summary = recipe["feedback_summary"]
+    assert summary["last_verdict"] == "loved"
+    assert summary["last_made_on"] == "2026-10-07"
+    assert (summary["loved"], summary["ok"], summary["never_again"], summary["total"]) == (4, 3, 0, 7)

@@ -259,7 +259,7 @@ class PantryService(BaseService):
             # a blank shopping item still needs a pantry name (the schema refuses empty names); `display` is not
             # used because for a food-less item it starts with the quantity ("1", "2 kg")
             name, note = (item.note or "").strip() or _UNNAMED_ITEM, None
-        quantity = item.quantity
+        quantity: float | None = item.quantity
         if item.food is None and item.unit_id is None and quantity == 1:
             # a bare "1" on a food-less item is the shopping list's default quantity, not information
             quantity = None

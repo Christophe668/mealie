@@ -15,7 +15,10 @@ from mealie.mcp.tools.mealplan import (
     get_recent_meals,
     remove_mealplan_entry,
 )
+from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedbackCreate
 from mealie.schema.meal_plan.new_meal import PlanEntryType, SavePlanEntry
+from mealie.schema.user.user import PrivateUser
+from mealie.services.claude_context.recipe_feedback_service import RecipeFeedbackService
 from tests.utils import api_routes
 from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
@@ -151,3 +154,55 @@ async def test_remove_entry_other_household_not_found(
     own = await add_mealplan_entries([MealplanEntryIn(date=_today(), title="mine")])
     removed = await remove_mealplan_entry(own["created"][0]["id"])
     assert removed == {"removed": own["created"][0]["id"]}
+
+
+@pytest.mark.asyncio
+async def test_recent_meals_and_mealplan_carry_last_verdict(
+    monkeypatch: pytest.MonkeyPatch, session: Session, api_client: TestClient, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    rated = _create_recipe(api_client, user)
+    plain = _create_recipe(api_client, user)
+    today = _today()
+    private_user = user.repos.users.get_one(user.user_id)
+    assert isinstance(private_user, PrivateUser)
+    for slug, offset in ((rated, 1), (plain, 2), (rated, 3)):
+        recipe = user.repos.recipes.get_one(slug, "slug")
+        user.repos.meals.create(
+            SavePlanEntry(
+                date=today - timedelta(days=offset),
+                entry_type=PlanEntryType.dinner,
+                recipe_id=recipe.id,
+                group_id=user.group_id,
+                user_id=user.user_id,
+            )
+        )
+    RecipeFeedbackService(user.repos, private_user).record(
+        RecipeFeedbackCreate(
+            recipe_id=user.repos.recipes.get_one(rated, "slug").id,
+            verdict=FeedbackVerdict.loved,
+            made_on=today - timedelta(days=1),
+        )
+    )
+    _as_user(monkeypatch, session, user)
+
+    calls: list[int] = []
+    original = RecipeFeedbackService.summaries
+
+    def counting(self, ids):
+        calls.append(len(ids))
+        return original(self, ids)
+
+    monkeypatch.setattr(RecipeFeedbackService, "summaries", counting)
+
+    result = await get_recent_meals(days=7)
+
+    verdicts = [(e["recipe"]["slug"], e["recipe"]["last_verdict"]) for e in result["entries"]]
+    assert verdicts == [(rated, "loved"), (plain, None), (rated, "loved")]
+    assert len(calls) == 1
+
+    planned = await get_mealplan(today - timedelta(days=7), today)
+    assert {e["recipe"]["slug"]: e["recipe"]["last_verdict"] for e in planned["entries"]} == {
+        rated: "loved",
+        plain: None,
+    }

@@ -10,8 +10,9 @@ from mealie.mcp.context import McpContext
 from mealie.mcp.errors import not_found
 from mealie.mcp.server import mcp_server
 from mealie.mcp.tools import run_in_context
-from mealie.mcp.tools._summaries import last_made_by_recipe, recipe_brief
+from mealie.mcp.tools._summaries import feedback_summaries, last_made_by_recipe, last_verdict, recipe_brief
 from mealie.mcp.tools.recipes import _find_recipe
+from mealie.schema.household.recipe_feedback import RecipeFeedbackSummary
 from mealie.schema.meal_plan.new_meal import PlanEntryType, ReadPlanEntry, SavePlanEntry
 
 MAX_RANGE_DAYS = 366
@@ -30,7 +31,12 @@ def day_bounds(start: date, end: date) -> tuple[datetime, datetime]:
     return datetime.combine(start, time.min, tzinfo=UTC), datetime.combine(end, time.min, tzinfo=UTC)
 
 
-def _entry_dict(ctx: McpContext, entry: ReadPlanEntry, last_made: dict[Any, date]) -> dict[str, Any]:
+def _entry_dict(
+    ctx: McpContext,
+    entry: ReadPlanEntry,
+    last_made: dict[Any, date],
+    summaries: dict[Any, RecipeFeedbackSummary],
+) -> dict[str, Any]:
     recipe = entry.recipe
     return {
         "id": entry.id,
@@ -38,7 +44,12 @@ def _entry_dict(ctx: McpContext, entry: ReadPlanEntry, last_made: dict[Any, date
         "entry_type": entry.entry_type.value,
         "title": entry.title,
         "text": entry.text,
-        "recipe": recipe_brief(recipe, last_made.get(recipe.id) if recipe.id else None, ctx.user.group_slug)
+        "recipe": recipe_brief(
+            recipe,
+            last_made.get(recipe.id) if recipe.id else None,
+            ctx.user.group_slug,
+            last_verdict(summaries, recipe.id),
+        )
         if recipe
         else None,
         "servings": entry.recipe_scale * recipe.recipe_servings if recipe and recipe.recipe_servings else None,
@@ -48,7 +59,8 @@ def _entry_dict(ctx: McpContext, entry: ReadPlanEntry, last_made: dict[Any, date
 def _entries(ctx: McpContext, entries: list[ReadPlanEntry]) -> list[dict[str, Any]]:
     recipe_ids = [e.recipe.id for e in entries if e.recipe and e.recipe.id]
     last_made = last_made_by_recipe(ctx.session, ctx.user.household_id, recipe_ids)
-    return [_entry_dict(ctx, e, last_made) for e in entries]
+    summaries = feedback_summaries(ctx, recipe_ids)
+    return [_entry_dict(ctx, e, last_made, summaries) for e in entries]
 
 
 def get_mealplan_impl(ctx: McpContext, start_date: date, end_date: date) -> dict[str, Any]:
@@ -123,8 +135,10 @@ async def get_mealplan(start_date: date, end_date: date) -> dict[str, Any]:
 @require_scope("recipes:read")
 async def get_recent_meals(days: int = 14) -> dict[str, Any]:
     """What the household planned over the last `days` days (default 14, max 366), up to today, most
-    recent first. Use it to avoid repeating dishes. Returns {entries, recipe_counts} where
-    recipe_counts maps each recipe slug to how many times it appears."""
+    recent first. Use it to avoid repeating dishes. Each entry's recipe has `last_verdict`, this
+    household's latest feedback (loved, ok, never_again; null when none). Returns {entries,
+    recipe_counts} where recipe_counts maps each recipe slug to how many times it appears. When the
+    user says how one of these meals went, call record_recipe_feedback."""
     return await run_in_context(get_recent_meals_impl, days)
 
 

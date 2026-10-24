@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   recipes: { getAll: vi.fn() },
   householdRecipe: vi.fn(),
   connections: vi.fn(),
+  summaries: vi.fn(),
   toastError: vi.fn(),
   firstDayOfWeek: { value: 0 },
 }));
@@ -20,6 +21,7 @@ vi.mock("~/composables/api", () => ({
     recipes: api.recipes,
     households: { getCurrentUserHouseholdRecipe: api.householdRecipe },
     mcpConnections: { getConnections: api.connections },
+    recipeFeedback: { summaries: api.summaries },
   }),
 }));
 
@@ -92,6 +94,7 @@ beforeEach(() => {
   api.recipes.getAll.mockImplementation(() => ok(page([])));
   api.householdRecipe.mockImplementation(() => ok({ recipeId: "x", lastMade: null }));
   api.connections.mockImplementation(() => ok([]));
+  api.summaries.mockImplementation(() => ok({}));
 });
 
 afterEach(() => {
@@ -218,7 +221,8 @@ describe("useToday shelves", () => {
     const { makeAgain, recent, lastMade } = await load();
 
     // Not cooked for 30+ days: 24 October minus 30 days.
-    expect(api.recipes.getAll).toHaveBeenCalledWith(1, 8, {
+    // Three shelves' worth, so "never again" recipes can be dropped and still leave a full shelf.
+    expect(api.recipes.getAll).toHaveBeenCalledWith(1, 24, {
       orderBy: "last_made",
       orderDirection: "asc",
       queryFilter: "lastMade < \"2026-09-24\"",
@@ -227,6 +231,94 @@ describe("useToday shelves", () => {
     expect(makeAgain.value.map(r => r.name)).toEqual(["Shakshuka"]);
     expect(recent.value.map(r => r.name)).toEqual(["Risotto"]);
     expect(lastMade.value).toEqual({ shakshuka: "2026-05-02T19:00:00" });
+  });
+
+  const shelf = [
+    { id: "1", slug: "shakshuka", name: "Shakshuka" },
+    { id: "2", slug: "liver", name: "Liver and onions" },
+    { id: "3", slug: "dal", name: "Dal" },
+  ];
+  function mockShelf() {
+    api.recipes.getAll.mockImplementation((_page: number, _perPage: number, params: { orderBy: string }) =>
+      ok(page(params.orderBy === "last_made" ? shelf : [])),
+    );
+  }
+
+  test("make again leaves out recipes whose last verdict was never again, in one summary call", async () => {
+    mockShelf();
+    api.summaries.mockImplementation(() => ok({
+      1: { lastVerdict: "loved", lastMadeOn: "2026-05-02" },
+      2: { lastVerdict: "never_again", lastMadeOn: "2026-04-01" },
+    }));
+
+    const { makeAgain } = await load();
+
+    expect(api.summaries).toHaveBeenCalledExactlyOnceWith(["1", "2", "3"]);
+    expect(makeAgain.value.map(r => r.name)).toEqual(["Shakshuka", "Dal"]);
+    // No last-made lookup for a recipe that was dropped.
+    expect(api.householdRecipe).not.toHaveBeenCalledWith("liver");
+  });
+
+  test("make again keeps the whole shelf when the summary call fails", async () => {
+    mockShelf();
+    api.summaries.mockImplementation(failed);
+
+    const { makeAgain, loadFailed } = await load();
+
+    expect(makeAgain.value.map(r => r.name)).toEqual(["Shakshuka", "Liver and onions", "Dal"]);
+    expect(loadFailed.value).toBe(false);
+  });
+
+  const many = Array.from({ length: 24 }, (_, i) => ({ id: `${i + 1}`, slug: `r${i + 1}`, name: `Recipe ${i + 1}` }));
+  function mockMany() {
+    api.recipes.getAll.mockImplementation((_page: number, _perPage: number, params: { orderBy: string }) =>
+      ok(page(params.orderBy === "last_made" ? many : [])),
+    );
+  }
+
+  test("never again recipes at the front still leave a full shelf of the next eight", async () => {
+    mockMany();
+    api.summaries.mockImplementation(() => ok(Object.fromEntries(
+      many.slice(0, 8).map(recipe => [recipe.id, { lastVerdict: "never_again", lastMadeOn: "2026-01-01" }]),
+    )));
+
+    const { makeAgain } = await load();
+
+    expect(api.summaries).toHaveBeenCalledExactlyOnceWith(many.map(recipe => recipe.id));
+    expect(makeAgain.value.map(r => r.name)).toEqual(many.slice(8, 16).map(recipe => recipe.name));
+  });
+
+  test("a failed summary call still caps the shelf at eight, unfiltered", async () => {
+    mockMany();
+    api.summaries.mockImplementation(failed);
+
+    const { makeAgain } = await load();
+
+    expect(makeAgain.value.map(r => r.name)).toEqual(many.slice(0, 8).map(recipe => recipe.name));
+  });
+
+  test("an empty shelf makes no summary call", async () => {
+    await load();
+    expect(api.summaries).not.toHaveBeenCalled();
+  });
+
+  test("a stale shelf load cannot overwrite a newer one while its summary is in flight", async () => {
+    mockShelf();
+    let releaseFirst!: () => void;
+    api.summaries
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseFirst = () => resolve({ data: {}, error: null });
+      }))
+      .mockImplementation(() => ok({ 1: { lastVerdict: "never_again", lastMadeOn: "2026-05-02" } }));
+
+    const today = create();
+    const first = today.refresh();
+    await vi.waitFor(() => expect(api.summaries).toHaveBeenCalledTimes(1));
+    await today.refresh();
+    releaseFirst();
+    await first;
+
+    expect(today.makeAgain.value.map(r => r.name)).toEqual(["Liver and onions", "Dal"]);
   });
 });
 

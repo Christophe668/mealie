@@ -61,6 +61,10 @@ Each household has a pantry (the **Pantry** item in the side rail, just under **
 
 Mealie only stores the dates. Claude estimates whether something is still good from those dates and general food knowledge, and gives that as guidance, never as food safety advice. The `pantry:write` permission Claude needs to change the pantry is shown as "Manage the pantry" on the consent page.
 
+## Recipe feedback
+
+After cooking, say how it went: **Loved it**, **It was fine** or **Not again**, optionally with how much work it was. Use the buttons at the end of cook mode, or just tell Claude ("the kids loved the lasagne"). Each household keeps its own history: the verdict, the effort, who recorded it, for whom, the date and an optional note. The recipe page shows it under **How it went**. Recording a verdict also moves the recipe's last made date forward, sets the cook's own star rating (5, 3 or 1) and adds a comment to the recipe timeline. Claude sees the last verdict in search results and recent meals, avoids proposing "Not again" recipes unless you ask for one, and prefers "Loved it" ones when you want something reliable. Home's **Make again** shelf leaves out "Not again" recipes. No new permission is needed: reading feedback uses `recipes:read` and recording it uses `recipes:write`, so existing claude.ai connections keep working.
+
 ## Verify
 
 ```bash

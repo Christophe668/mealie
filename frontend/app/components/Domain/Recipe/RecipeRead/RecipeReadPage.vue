@@ -23,7 +23,7 @@
 
       <div class="read__main">
         <header class="read__header">
-          <h1 :id="titleId" class="read__title ds-display">
+          <h1 :id="titleId" class="read__title ds-display" tabindex="-1">
             {{ recipe.name }}
           </h1>
           <RecipeReadRating
@@ -76,6 +76,14 @@
             <SafeMarkdown class="ds-body" :source="note.text" />
           </div>
         </section>
+
+        <RecipeReadFeedback
+          v-if="recipe.id"
+          class="read__feedback read__block"
+          :recipe-id="recipe.id"
+          :signed-in="isOwnGroup"
+          :focus-fallback-id="titleId"
+        />
 
         <RecipeReadNutrition
           v-if="recipe.settings.showNutrition"
@@ -180,6 +188,7 @@ import { useId, useTemplateRef } from "vue";
 import { useClipboard, useElementSize, useMediaQuery, useShare, useWindowSize } from "@vueuse/core";
 import RecipeReadActions from "./RecipeReadActions.vue";
 import RecipeReadFacts from "./RecipeReadFacts.vue";
+import RecipeReadFeedback from "./RecipeReadFeedback.vue";
 import RecipeReadHero from "./RecipeReadHero.vue";
 import RecipeReadIngredients from "./RecipeReadIngredients.vue";
 import RecipeReadNutrition from "./RecipeReadNutrition.vue";
@@ -614,6 +623,7 @@ async function deleteRecipe() {
     order: 6;
   }
   .read__notes,
+  .read__feedback,
   .read__nutrition {
     order: 7;
   }

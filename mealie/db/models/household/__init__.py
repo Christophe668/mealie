@@ -7,6 +7,7 @@ from .mealplan import GroupMealPlan, GroupMealPlanRules
 from .pantry import PantryItem
 from .preferences import HouseholdPreferencesModel
 from .recipe_action import GroupRecipeAction
+from .recipe_feedback import RecipeFeedback
 from .shopping_list import (
     ShoppingList,
     ShoppingListExtras,
@@ -29,6 +30,7 @@ __all__ = [
     "HouseholdToRecipe",
     "PantryItem",
     "GroupRecipeAction",
+    "RecipeFeedback",
     "ShoppingList",
     "ShoppingListExtras",
     "ShoppingListItem",
