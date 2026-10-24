@@ -46,7 +46,7 @@ const props = withDefaults(defineProps<{
 });
 
 const emit = defineEmits<{
-  (e: "edit" | "plan" | "list" | "share" | "print" | "duplicate" | "download" | "delete"): void;
+  (e: "edit" | "plan" | "list" | "made" | "timeline" | "share" | "print" | "duplicate" | "download" | "delete"): void;
 }>();
 
 const i18n = useI18n();
@@ -54,7 +54,11 @@ const i18n = useI18n();
 const moreItems = computed<AppShellMenuItem[]>(() => {
   const items: AppShellMenuItem[] = [];
   if (props.loggedIn) {
-    items.push({ key: "share", label: i18n.t("recipe-read.share"), icon: "shareVariant", onSelect: () => emit("share") });
+    items.push(
+      { key: "made", label: i18n.t("recipe-read.made-this"), icon: "chefHat", onSelect: () => emit("made") },
+      { key: "timeline", label: i18n.t("recipe-read.timeline"), icon: "timelineText", onSelect: () => emit("timeline") },
+    );
+    items.push({ key: "share", dividerBefore: true, label: i18n.t("recipe-read.share"), icon: "shareVariant", onSelect: () => emit("share") });
   }
   items.push({ key: "print", label: i18n.t("recipe-read.print"), icon: "printer", onSelect: () => emit("print") });
   if (props.loggedIn) {

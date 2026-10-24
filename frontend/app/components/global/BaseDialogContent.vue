@@ -47,7 +47,7 @@
         />
         <BaseButton
           v-if="canConfirm"
-          :color="color"
+          :color="color === 'primary' ? 'accent' : color"
           type="submit"
           :disabled="submitDisabled"
           @click="emit('confirm')"
@@ -57,8 +57,8 @@
           </template>
           {{ $t("general.confirm") }}
         </BaseButton>
-        <!-- Ink rather than Base's green: saffron stays for one pointer per screen, and the
-             confirm path keeps the dialog's own colour (red for deletes). -->
+        <!-- Confirm and submit are ink rather than saffron or Base's green, so saffron stays one pointer
+             per screen; destructive dialogs (color="error") keep their red. -->
         <BaseButton
           v-if="canSubmit"
           :color="color === 'primary' ? 'accent' : color"

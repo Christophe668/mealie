@@ -36,6 +36,11 @@
             @toggle-favorite="toggleFavorite"
           />
           <SafeMarkdown v-if="recipe.description" class="read__description ds-body ds-muted" :source="recipe.description" />
+          <p v-if="source" class="read__source">
+            <a :href="source.href" target="_blank" rel="noopener" class="read__source-link ds-focus">
+              {{ $t("recipe-read.source", { host: source.host }) }}
+            </a>
+          </p>
           <p v-if="lastMadeLine" class="read__last-made">
             {{ lastMadeLine }}
           </p>
@@ -49,6 +54,8 @@
           @edit="emit('edit')"
           @plan="planDialog = true"
           @list="openShoppingListDialog"
+          @made="madeThis?.open()"
+          @timeline="timelineDialog = true"
           @share="share"
           @print="print"
           @duplicate="openDuplicateDialog"
@@ -147,6 +154,23 @@
         <v-text-field v-model="duplicateName" density="compact" :label="$t('recipe-read.recipe-name')" autofocus />
       </v-card-text>
     </BaseDialog>
+    <!-- Upstream "I made this" (date, note, photo on the timeline) and the recipe's timeline. -->
+    <RecipeLastMade
+      v-if="isOwnGroup"
+      ref="madeThis"
+      dialog-only
+      :recipe="recipe"
+      @event-created="refreshLastMade"
+    />
+    <BaseDialog
+      v-if="isOwnGroup"
+      v-model="timelineDialog"
+      :title="$t('recipe.timeline')"
+      :icon="$globals.icons.timelineText"
+      width="70%"
+    >
+      <RecipeTimeline v-model="timelineDialog" :query-filter="timelineFilter" />
+    </BaseDialog>
     <RecipePrintContainer :recipe="recipe" :scale="scale" />
   </article>
 </template>
@@ -168,6 +192,8 @@ import MealPlanAddRecipeDialog from "~/components/Domain/Mealplan/MealPlanAddRec
 import RecipeDialogAddToShoppingList from "~/components/Domain/Recipe/RecipeDialogAddToShoppingList.vue";
 import RecipeDialogShare from "~/components/Domain/Recipe/RecipeDialogShare.vue";
 import RecipePrintContainer from "~/components/Domain/Recipe/RecipePrintContainer.vue";
+import RecipeLastMade from "~/components/Domain/Recipe/RecipeLastMade.vue";
+import RecipeTimeline from "~/components/Domain/Recipe/RecipeTimeline.vue";
 import RecipePageComments from "~/components/Domain/Recipe/RecipePage/RecipePageParts/RecipePageComments.vue";
 import { useStaticRoutes, useUserApi } from "~/composables/api";
 import { useDownloader } from "~/composables/api/use-downloader";
@@ -260,20 +286,48 @@ const disableComments = computed(
 
 /* Last made: per household, so only signed-in members of the group have one. */
 const lastMade = ref<string | null>(null);
+async function loadLastMade(slug: string | undefined) {
+  if (!isOwnGroup.value || !slug) {
+    return;
+  }
+  const { data } = await api.households.getCurrentUserHouseholdRecipe(slug);
+  if (slug === recipe.value.slug) {
+    lastMade.value = data?.lastMade ?? null;
+  }
+}
 watch(
   () => recipe.value.slug,
-  async (slug) => {
+  (slug) => {
     lastMade.value = null;
-    if (!isOwnGroup.value || !slug) {
-      return;
-    }
-    const { data } = await api.households.getCurrentUserHouseholdRecipe(slug);
-    if (slug === recipe.value.slug) {
-      lastMade.value = data?.lastMade ?? null;
-    }
+    loadLastMade(slug);
   },
   { immediate: true },
 );
+function refreshLastMade() {
+  loadLastMade(recipe.value.slug);
+}
+
+const madeThis = useTemplateRef<InstanceType<typeof RecipeLastMade>>("madeThis");
+const timelineDialog = ref(false);
+const timelineFilter = computed(() => `recipe.slug="${recipe.value.slug}"`);
+
+/* Where the recipe came from: shown to everyone, web links only (never a javascript: or data: href). */
+const source = computed(() => {
+  const raw = recipe.value.orgURL?.trim();
+  if (!raw) {
+    return null;
+  }
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return null;
+    }
+    return { href: url.href, host: url.hostname.replace(/^www\./, "") };
+  }
+  catch {
+    return null;
+  }
+});
 
 const lastMadeLine = computed(() =>
   lastMade.value ? i18n.t("recipe-read.last-made", { when: relativeAgo(lastMade.value, new Date(), i18n.locale.value) }) : "",
@@ -440,6 +494,21 @@ async function deleteRecipe() {
 
 .read__description {
   margin-top: calc(var(--ds-space) * 1.5);
+}
+
+.read__source {
+  margin: var(--ds-space) 0 0;
+  font-size: var(--ds-t-2);
+}
+
+.read__source-link {
+  color: var(--ds-text-2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.read__source-link:hover {
+  color: var(--ds-text);
 }
 
 .read__last-made {
