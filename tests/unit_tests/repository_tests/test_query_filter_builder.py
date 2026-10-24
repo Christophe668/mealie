@@ -1,6 +1,7 @@
 import pytest
 import sqlalchemy as sa
 
+from mealie.db.models.household.household import Household
 from mealie.db.models.recipe.ingredient import IngredientFoodModel
 from mealie.db.models.recipe.recipe import RecipeModel
 from mealie.db.models.users.users import LongLiveToken, User
@@ -199,3 +200,33 @@ def test_filter_query_excluding_food_label_excludes_the_whole_recipe():
     # ingredients carries the label, rather than being matched on its other ingredients.
     assert "NOT (EXISTS (SELECT 1 FROM recipes_ingredients" in sql
     assert "ingredient_foods.label_id IN" in sql
+
+
+# ---------------------------------------------------------------------------
+# Relationships opted out of filtering (`info={"filterable": False}`)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "attr_string, model",
+    [
+        ("pantry_items.name", Household),
+        ("pantry_items.created_at", Household),
+        ("recipe_feedback.created_at", Household),
+        ("household.pantry_items.name", User),
+        ("household.recipe_feedback.created_at", User),
+        ("user.household.pantry_items.name", RecipeModel),
+    ],
+)
+def test_household_scoped_relationships_are_not_filterable(attr_string: str, model: type):
+    """Households, members and recipes are listed group-wide; another household's pantry/feedback must not leak."""
+    with pytest.raises(NonFilterableValueError):
+        QueryFilterBuilder.get_model_and_model_attr_from_attr_string(attr_string, model)
+
+
+def test_association_proxy_through_opted_out_relationship_raises(monkeypatch: pytest.MonkeyPatch):
+    """`RecipeModel.household_id` proxies through `user`; opting `user` out must block the proxy as well."""
+    relationship = sa.inspect(RecipeModel).relationships["user"]
+    monkeypatch.setitem(relationship.info, "filterable", False)
+    with pytest.raises(NonFilterableValueError):
+        QueryFilterBuilder.get_model_and_model_attr_from_attr_string("household_id", RecipeModel)

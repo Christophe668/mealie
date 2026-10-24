@@ -165,7 +165,17 @@ def test_deleting_recipe_deletes_its_feedback(unique_user: TestUser):
 
 
 @pytest.mark.parametrize(
-    "attr_string", ["feedback.verdict", "feedback.created_at", "feedback.household_id", "feedback.recipe.name"]
+    "attr_string",
+    [
+        "feedback.verdict",
+        "feedback.created_at",
+        "feedback.household_id",
+        "feedback.recipe.name",
+        "user.household.recipe_feedback.created_at",
+        "household.recipe_feedback.created_at",
+        "group.households.recipe_feedback.created_at",
+        "made_by.recipe_feedback.created_at",
+    ],
 )
 def test_recipe_query_filters_cannot_reach_feedback(attr_string: str):
     """Recipe filters are group-scoped; feedback is per household, so no path into it may be filtered on."""

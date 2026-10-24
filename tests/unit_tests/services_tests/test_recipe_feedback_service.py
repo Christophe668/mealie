@@ -7,6 +7,7 @@ from mealie.schema.household.household import HouseholdRecipeUpdate
 from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedbackCreate
 from mealie.schema.recipe.recipe import Recipe
 from mealie.schema.user.user import PrivateUser, UserRatingCreate
+from mealie.services.claude_context import recipe_feedback_service
 from mealie.services.claude_context.recipe_feedback_service import (
     VERDICT_RATING,
     VERDICT_SUBJECT,
@@ -206,15 +207,24 @@ def test_summary_ignores_deleted_recipe(unique_user: TestUser):
     assert gone.id not in {row.recipe.id for row in service.list(None, 1, -1).items}
 
 
-def test_made_on_defaults_to_today(unique_user: TestUser):
+def test_made_on_defaults_to_today(unique_user: TestUser, monkeypatch: pytest.MonkeyPatch):
     recipe = _recipe(unique_user)
     service = _service(unique_user)
 
     explicit = service.record(RecipeFeedbackCreate(recipe_id=recipe.id, verdict=FeedbackVerdict.ok), today=DAY_1)
     assert explicit.made_on == DAY_1
 
+    # freeze the service's clock just before local midnight, so the test cannot straddle a day boundary
+    frozen = datetime.combine(date(2026, 3, 7), time(23, 59, 59)).astimezone()
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen if tz is None else frozen.astimezone(tz)
+
+    monkeypatch.setattr(recipe_feedback_service, "datetime", FrozenDatetime)
     implicit = service.record(RecipeFeedbackCreate(recipe_id=recipe.id, verdict=FeedbackVerdict.ok))
-    assert implicit.made_on == datetime.now().astimezone().date()
+    assert implicit.made_on == date(2026, 3, 7)
 
 
 def test_list_pages_newest_first(unique_user: TestUser):

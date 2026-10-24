@@ -18,8 +18,11 @@ if TYPE_CHECKING:
 class RecipeFeedback(SqlAlchemyBase, BaseMixins):
     """How a cooked recipe went for the household: a verdict, optional effort and note.
 
-    No column is a `FilterableColumn`, and `RecipeModel.feedback` is marked non-filterable: recipe query filters
-    are group-scoped, so letting them reach this household-scoped table would leak other households' feedback.
+    Group-scoped query filters (recipes, households, members) must never reach this household-scoped table, or
+    they would leak other households' feedback. Every relationship into it (`RecipeModel.feedback`,
+    `Household.recipe_feedback`) is marked `info={"filterable": False}`, which the query filter builder refuses
+    to walk; that is the guard, since inherited `created_at`/`update_at` stay filterable. No column here is a
+    `FilterableColumn` either. A new relationship pointing at this model must carry the same flag.
     Feedback is filtered through the repository's own methods instead.
     """
 

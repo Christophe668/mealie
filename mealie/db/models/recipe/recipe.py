@@ -134,7 +134,8 @@ class RecipeModel(SqlAlchemyBase, BaseMixins):
     )
     # SQLite runs without foreign key enforcement, so the ORM deletes feedback with its recipe.
     # Feedback is household-scoped while recipe query filters are group-scoped: the query filter builder
-    # refuses to walk this relationship (`info={"filterable": False}`).
+    # refuses to walk this relationship (`info={"filterable": False}`). Every relationship into feedback carries
+    # that flag, including `Household.recipe_feedback`.
     feedback: Mapped[list[RecipeFeedback]] = orm.relationship(
         "RecipeFeedback", back_populates="recipe", cascade="all, delete, delete-orphan", info={"filterable": False}
     )
