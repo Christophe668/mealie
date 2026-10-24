@@ -16,8 +16,24 @@ from mealie.services._base_service import BaseService
 
 # Put-away location rule: the shopping item's label (its own, else its food's) decides where it goes.
 # Matched case-insensitively as substrings, in this order; anything else goes to the cupboard.
+# English and French, to cover Mealie's seeded labels in both locales. "Produce" / "Fruits & Légumes"
+# is deliberately absent: onions, potatoes and bananas belong in the cupboard.
 _FREEZER_LABEL_WORDS = ("frozen", "surgel")
-_FRIDGE_LABEL_WORDS = ("dairy", "fresh", "produce", "frais", "laitier")
+_FRIDGE_LABEL_WORDS = (
+    "dairy",
+    "fresh",
+    "meat",
+    "seafood",
+    "fish",
+    "poultry",
+    "frais",
+    "laitier",
+    "viande",
+    "charcuterie",
+    "poisson",
+    "produits de la mer",
+    "volaille",
+)
 
 
 def _format_quantity(quantity: float) -> str:
@@ -44,11 +60,19 @@ class PantryService(BaseService):
             raise NoEntryFound("Pantry item not found.")
         return item
 
-    def _check_references(self, data: PantryItemCreate) -> None:
-        """Refuse a food or unit outside this group (the food/unit repositories are group-scoped)."""
-        if data.food_id is not None and self.repos.ingredient_foods.get_one(data.food_id) is None:
+    def _check_references(self, data: PantryItemCreate, existing: PantryItemOut | None = None) -> None:
+        """Refuse a food or unit outside this group (the food/unit repositories are group-scoped).
+
+        On an update only changed references are checked: on SQLite a deleted food leaves a dangling
+        `food_id` behind, and the row must stay editable without the client clearing it.
+        """
+        food_id, unit_id = data.food_id, data.unit_id
+        if existing is not None:
+            food_id = food_id if food_id != existing.food_id else None
+            unit_id = unit_id if unit_id != existing.unit_id else None
+        if food_id is not None and self.repos.ingredient_foods.get_one(food_id) is None:
             raise NoEntryFound("Food not found.")
-        if data.unit_id is not None and self.repos.ingredient_units.get_one(data.unit_id) is None:
+        if unit_id is not None and self.repos.ingredient_units.get_one(unit_id) is None:
             raise NoEntryFound("Unit not found.")
 
     # ------------------------------------------------------------------ writes
@@ -73,7 +97,7 @@ class PantryService(BaseService):
 
     def update_item(self, item_id: UUID, data: PantryItemUpdate) -> PantryItemOut:
         existing = self._get_or_raise(item_id)
-        self._check_references(data)
+        self._check_references(data, existing)
         updated = self.pantry.update(item_id, data)
 
         for food_id in {existing.food_id, updated.food_id}:
@@ -92,6 +116,9 @@ class PantryService(BaseService):
     def put_away(self, list_id: UUID, item_ids: list[UUID] | None, today: date | None = None) -> PutAwayResult:
         """Move checked shopping items into the pantry, then delete them from the list.
 
+        Order: every pantry row is written first, the shopping items are deleted last. A failure midway
+        can leave rows already moved, but it never deletes a shopping item that was not moved.
+
         `item_ids=None` means every checked item. Raises `NoEntryFound` when the list (or an item on it)
         is not in this household, and `ValueError` when any requested item is not checked.
         """
@@ -103,6 +130,7 @@ class PantryService(BaseService):
         if item_ids is None:
             to_move = [item for item in shopping_list.list_items if item.checked]
         else:
+            item_ids = list(dict.fromkeys(item_ids))  # a repeated id must not be put away twice
             on_list = {str(item.id): item for item in shopping_list.list_items}
             missing = [str(item_id) for item_id in item_ids if str(item_id) not in on_list]
             if missing:
@@ -141,7 +169,10 @@ class PantryService(BaseService):
         if household_id is None:
             raise ValueError("PantryService needs household-scoped repositories")
 
-        # Scoped lookups: a food from another group raises NoResultFound instead of being linked.
+        if self.repos.ingredient_foods.get_one(food_id) is None:
+            # deleted (a dangling id on SQLite) or another group's: nothing to sync, its on-hand
+            # association rows went with the food
+            return
         household = self.repos.households._query_one(household_id)
         food = self.repos.ingredient_foods._query_one(food_id)
         on_hand = household.ingredient_foods_on_hand
@@ -158,8 +189,14 @@ class PantryService(BaseService):
     # ------------------------------------------------------------------ helpers
 
     def _merge_target(self, data: PantryItemCreate) -> PantryItemOut | None:
-        """The row an incoming item merges into: same food, or (no food) the same case-folded name."""
+        """The row an incoming item merges into: same food, or (no food) the same case-folded name.
+
+        With several candidates, the one in the incoming item's location wins, else the oldest.
+        """
         candidates = self.pantry.by_food(data.food_id) if data.food_id else self.pantry.by_name(data.name)
+        same_place = [row for row in candidates if row.location == data.location]
+        if same_place:
+            return same_place[0]
         return candidates[0] if candidates else None
 
     def _merged(self, existing: PantryItemOut, incoming: PantryItemCreate) -> PantryItemUpdate:
@@ -169,12 +206,14 @@ class PantryService(BaseService):
         if incoming.quantity is not None:
             if existing.quantity is not None and existing.unit_id == incoming.unit_id:
                 quantity = existing.quantity + incoming.quantity
-            else:
+            elif not (incoming.food_id is None and incoming.unit_id is None and incoming.quantity == 1):
+                # a bare "1" on a food-less item is the shopping list's default quantity, not information
                 notes.append(self._quantity_text(incoming.quantity, incoming.unit_id))
         if incoming.note and incoming.note not in notes:
             notes.append(incoming.note)
 
         opened = [d for d in (existing.opened_on, incoming.opened_on) if d is not None]
+        use_by = [d for d in (existing.use_by, incoming.use_by) if d is not None]
         return PantryItemUpdate(
             name=existing.name,
             food_id=existing.food_id,
@@ -183,7 +222,7 @@ class PantryService(BaseService):
             location=existing.location,
             bought_on=incoming.bought_on or existing.bought_on,
             opened_on=min(opened) if opened else None,
-            use_by=existing.use_by or incoming.use_by,
+            use_by=min(use_by) if use_by else None,
             source=existing.source,
             note="; ".join(notes) or None,
         )

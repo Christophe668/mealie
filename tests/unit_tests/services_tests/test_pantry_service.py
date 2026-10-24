@@ -5,7 +5,7 @@ import pytest
 
 from mealie.core.exceptions import NoEntryFound
 from mealie.schema.household.group_shopping_list import ShoppingListItemCreate, ShoppingListOut, ShoppingListSave
-from mealie.schema.household.pantry import PantryItemCreate, PantryLocation, PantrySource
+from mealie.schema.household.pantry import PantryItemCreate, PantryItemUpdate, PantryLocation, PantrySource
 from mealie.schema.labels.multi_purpose_label import MultiPurposeLabelSave
 from mealie.schema.recipe.recipe_ingredient import IngredientFood, SaveIngredientFood, SaveIngredientUnit
 from mealie.services.claude_context.pantry_service import PantryService
@@ -168,19 +168,60 @@ def test_put_away_moves_checked_items(unique_user: TestUser):
 def test_put_away_picks_location_from_label(unique_user: TestUser):
     service = PantryService(unique_user.repos)
     shopping_list = _list(unique_user)
-    label = unique_user.repos.group_multi_purpose_labels.create(
-        MultiPurposeLabelSave(name=f"Frozen food {random_string(6)}", group_id=unique_user.group_id)
+    labels = unique_user.repos.group_multi_purpose_labels
+    frozen_label = labels.create(
+        MultiPurposeLabelSave(name=f"Produits surgelés {random_string(6)}", group_id=unique_user.group_id)
     )
-    frozen = _food(unique_user, label_id=label.id)
+    meat_label = labels.create(MultiPurposeLabelSave(name=f"Viande {random_string(6)}", group_id=unique_user.group_id))
+    produce_label = labels.create(
+        MultiPurposeLabelSave(name=f"Produce {random_string(6)}", group_id=unique_user.group_id)
+    )
+    frozen = _food(unique_user, label_id=frozen_label.id)
+    meat = _food(unique_user, label_id=meat_label.id)
+    produce = _food(unique_user, label_id=produce_label.id)
     plain = _food(unique_user)
     items = unique_user.repos.group_shopping_list_item
-    items.create(ShoppingListItemCreate(shopping_list_id=shopping_list.id, food_id=frozen.id, checked=True))
-    items.create(ShoppingListItemCreate(shopping_list_id=shopping_list.id, food_id=plain.id, checked=True))
+    for food in (frozen, meat, produce, plain):
+        items.create(ShoppingListItemCreate(shopping_list_id=shopping_list.id, food_id=food.id, checked=True))
 
     result = service.put_away(shopping_list.id, None, today=DAY_2)
 
     locations = {row.name: row.location for row in result.created}
-    assert locations == {frozen.name: PantryLocation.freezer, plain.name: PantryLocation.cupboard}
+    assert locations == {
+        frozen.name: PantryLocation.freezer,
+        meat.name: PantryLocation.fridge,
+        produce.name: PantryLocation.cupboard,
+        plain.name: PantryLocation.cupboard,
+    }
+
+
+def test_put_away_ignores_repeated_ids(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    shopping_list = _list(unique_user)
+    food = _food(unique_user)
+    item = unique_user.repos.group_shopping_list_item.create(
+        ShoppingListItemCreate(shopping_list_id=shopping_list.id, food_id=food.id, quantity=2, checked=True)
+    )
+
+    result = service.put_away(shopping_list.id, [item.id, item.id], today=DAY_2)
+
+    assert [row.quantity for row in result.created] == [2]
+    assert result.merged == []
+    assert [str(i) for i in result.removed_item_ids] == [str(item.id)]
+
+
+def test_put_away_does_not_note_the_default_quantity(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    name = f"{random_string(8)} bread"
+    service.add_item(PantryItemCreate(name=name))
+    shopping_list = _list(unique_user)
+    unique_user.repos.group_shopping_list_item.create(
+        ShoppingListItemCreate(shopping_list_id=shopping_list.id, note=name, checked=True)
+    )
+
+    result = service.put_away(shopping_list.id, None, today=DAY_2)
+
+    assert [(row.name, row.quantity, row.note) for row in result.merged] == [(name, None, None)]
 
 
 def test_put_away_rejects_unchecked_ids(unique_user: TestUser):
@@ -239,3 +280,91 @@ def test_add_rejects_food_or_unit_from_another_group(unique_user: TestUser, g2_u
         service.add_item(PantryItemCreate(name=random_string(8), unit_id=foreign_unit))
 
     assert unique_user.repos.pantry_items.by_name(foreign_food.name) == []
+
+
+def test_merge_keeps_the_earlier_use_by(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    food = _food(unique_user)
+    service.add_item(PantryItemCreate(name=food.name, food_id=food.id, use_by=date(2026, 11, 5)))
+
+    sooner, _ = service.add_item(PantryItemCreate(name=food.name, food_id=food.id, use_by=date(2026, 10, 30)))
+    assert sooner.use_by == date(2026, 10, 30)
+
+    kept, _ = service.add_item(PantryItemCreate(name=food.name, food_id=food.id, use_by=date(2026, 11, 9)))
+    assert kept.use_by == date(2026, 10, 30)
+
+    undated, _ = service.add_item(PantryItemCreate(name=food.name, food_id=food.id))
+    assert undated.use_by == date(2026, 10, 30)
+
+
+def test_merge_prefers_the_row_in_the_same_location(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    food = _food(unique_user)
+    pantry = unique_user.repos.pantry_items
+    pantry.create(PantryItemCreate(name=food.name, food_id=food.id, location=PantryLocation.fridge))
+    in_freezer = pantry.create(PantryItemCreate(name=food.name, food_id=food.id, location=PantryLocation.freezer))
+
+    merged_into, merged = service.add_item(
+        PantryItemCreate(name=food.name, food_id=food.id, location=PantryLocation.freezer, bought_on=DAY_2)
+    )
+
+    assert merged is True
+    assert merged_into.id == in_freezer.id
+    assert merged_into.bought_on == DAY_2
+
+
+def test_remove_item_whose_food_was_deleted(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    food = _food(unique_user)
+    item, _ = service.add_item(PantryItemCreate(name=food.name, food_id=food.id))
+    unique_user.repos.ingredient_foods.delete(food.id)
+
+    removed = service.remove_item(item.id)
+
+    assert removed.id == item.id
+    assert unique_user.repos.pantry_items.get_one(item.id) is None
+
+
+def test_update_item_keeps_a_dangling_food_id(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    food = _food(unique_user)
+    item, _ = service.add_item(PantryItemCreate(name=food.name, food_id=food.id))
+    unique_user.repos.ingredient_foods.delete(food.id)
+    unique_user.repos.session.expire_all()
+    row = unique_user.repos.pantry_items.get_one(item.id)
+    assert row is not None
+
+    # resend the row as the UI would: same (possibly dangling) food_id, one field changed
+    data = PantryItemUpdate.model_validate({**row.model_dump(include=set(PantryItemUpdate.model_fields)), "note": "x"})
+    updated = service.update_item(item.id, data)
+
+    assert updated.note == "x"
+    assert updated.name == food.name
+
+
+def test_update_rejects_food_or_unit_from_another_group(unique_user: TestUser, g2_user: TestUser):
+    service = PantryService(unique_user.repos)
+    item, _ = service.add_item(PantryItemCreate(name=random_string(8)))
+
+    with pytest.raises(NoEntryFound):
+        service.update_item(item.id, PantryItemUpdate(name=item.name, food_id=_food(g2_user).id))
+    with pytest.raises(NoEntryFound):
+        service.update_item(item.id, PantryItemUpdate(name=item.name, unit_id=_unit_id(g2_user)))
+
+    row = unique_user.repos.pantry_items.get_one(item.id)
+    assert row is not None
+    assert (row.food_id, row.unit_id) == (None, None)
+
+
+def test_update_and_remove_refuse_another_households_row(unique_user: TestUser, h2_user: TestUser):
+    service = PantryService(unique_user.repos)
+    theirs = h2_user.repos.pantry_items.create(PantryItemCreate(name=random_string(8)))
+
+    with pytest.raises(NoEntryFound):
+        service.update_item(theirs.id, PantryItemUpdate(name="mine now"))
+    with pytest.raises(NoEntryFound):
+        service.remove_item(theirs.id)
+
+    row = h2_user.repos.pantry_items.get_one(theirs.id)
+    assert row is not None
+    assert row.name == theirs.name
