@@ -13,6 +13,7 @@
             type="button"
             class="cook-finish__chip ds-focus"
             :aria-pressed="effort === level ? 'true' : 'false'"
+            :aria-disabled="busy ? 'true' : undefined"
             @click="toggleEffort(level)"
           >
             {{ $t(effortLabelKey(level)) }}
@@ -55,6 +56,7 @@ import { useUserApi } from "~/composables/api";
 import { alert } from "~/composables/use-toast";
 import type { FeedbackVerdict, RecipeFeedbackCreate } from "~/lib/api/types/household";
 import { FEEDBACK_EFFORTS, FEEDBACK_VERDICTS, effortLabelKey, verdictLabelKey } from "~/lib/recipe/recipe-feedback";
+import type { FeedbackEffort } from "~/lib/recipe/recipe-feedback";
 
 const props = defineProps<{
   recipeId: string;
@@ -70,11 +72,14 @@ const effortId = useId();
 const router = useRouter();
 const i18n = useI18n();
 
-const effort = ref<number | null>(null);
+const effort = ref<FeedbackEffort | null>(null);
 const busy = ref(false);
 
 /** Single choice; pressing the chosen chip again clears it. */
-function toggleEffort(level: number) {
+function toggleEffort(level: FeedbackEffort) {
+  if (busy.value) {
+    return;
+  }
   effort.value = effort.value === level ? null : level;
 }
 
@@ -182,6 +187,11 @@ async function skip() {
   font-size: var(--ds-t-2);
   font-weight: 500;
   cursor: pointer;
+}
+
+.cook-finish__chip[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .cook-finish__chip:hover {

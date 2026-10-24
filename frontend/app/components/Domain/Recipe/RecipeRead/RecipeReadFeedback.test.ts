@@ -37,7 +37,7 @@ function ok<T>(items: T[]) {
   return Promise.resolve({ data: { page: 1, per_page: -1, total: items.length, total_pages: 1, items }, error: null });
 }
 
-function render(props: Partial<{ recipeId: string; signedIn: boolean }> = {}) {
+function render(props: Partial<{ recipeId: string; signedIn: boolean; focusFallbackId: string }> = {}) {
   return mount(RecipeReadFeedback, {
     props: { recipeId: "r-1", signedIn: true, ...props },
     global: { stubs, mocks: { $globals: { icons: {} } } },
@@ -176,6 +176,69 @@ describe("RecipeReadFeedback", () => {
       "It was fine",
       "It was fine",
     ]);
+    wrapper.unmount();
+  });
+
+  const seeAll = (wrapper: ReturnType<typeof render>) => wrapper.findAll("button").find(b => b.text() === "See all")!;
+
+  test("closing the dialog gives focus back to See all", async () => {
+    api.list.mockImplementation(() => ok([feedback("2026-10-22"), feedback("2026-10-10")]));
+    const wrapper = render();
+    await flushPromises();
+
+    (seeAll(wrapper).element as HTMLElement).focus();
+    await seeAll(wrapper).trigger("click");
+    await flushPromises();
+    const close = wrapper.findAll(".v-dialog-stub button").find(b => b.text() === "Close")!;
+    (close.element as HTMLElement).focus();
+    await close.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".v-dialog-stub").exists()).toBe(false);
+    expect(document.activeElement).toBe(seeAll(wrapper).element);
+    wrapper.unmount();
+  });
+
+  test("deleting the last entry closes the dialog and puts focus on the page title", async () => {
+    const title = document.createElement("h1");
+    title.id = "recipe-title";
+    title.tabIndex = -1;
+    document.body.appendChild(title);
+    let current = [feedback("2026-10-22")];
+    api.list.mockImplementation(() => ok(current));
+    api.remove.mockImplementation(() => {
+      current = [];
+      return Promise.resolve({ data: {}, error: null });
+    });
+    const wrapper = render({ focusFallbackId: "recipe-title" });
+    await flushPromises();
+
+    (seeAll(wrapper).element as HTMLElement).focus();
+    await seeAll(wrapper).trigger("click");
+    await flushPromises();
+    await wrapper.findAll(".read-feedback-dialog__list button").find(b => b.text() === "Delete")!.trigger("click");
+    await wrapper.find(".confirm-stub button").trigger("click");
+    await flushPromises();
+
+    expect(api.remove).toHaveBeenCalledOnce();
+    expect(wrapper.find(".v-dialog-stub").exists()).toBe(false);
+    expect(wrapper.find(".read-feedback").exists()).toBe(false);
+    expect(document.activeElement).toBe(title);
+    wrapper.unmount();
+  });
+
+  test("the dialog says so when the full list cannot be loaded", async () => {
+    api.list.mockImplementation((_id: string, _page: number, perPage: number) =>
+      perPage > 0 ? ok([feedback("2026-10-22")]) : Promise.reject(new Error("offline")),
+    );
+    const wrapper = render();
+    await flushPromises();
+
+    await seeAll(wrapper).trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".v-dialog-stub").text()).toContain("Couldn’t load the history.");
+    expect(wrapper.find(".read-feedback-dialog__list").exists()).toBe(false);
     wrapper.unmount();
   });
 });

@@ -6,8 +6,8 @@
       </p>
       <p class="read-feedback__meta">
         <span class="read-feedback__when">{{ when }}</span>
-        <DsChip v-if="entry.effort">
-          {{ $t(effortLabelKey(entry.effort)) }}
+        <DsChip v-if="effort">
+          {{ $t(effortLabelKey(effort)) }}
         </DsChip>
       </p>
       <p v-if="entry.note?.trim()" class="read-feedback__note">
@@ -21,11 +21,12 @@
 <script setup lang="ts">
 import DsChip from "~/components/Design/DsChip.vue";
 import type { RecipeFeedbackOut } from "~/lib/api/types/household";
-import { effortLabelKey, feedbackWhenLine, verdictLabelKey } from "~/lib/recipe/recipe-feedback";
+import { effortLabelKey, feedbackWhenLine, isFeedbackEffort, verdictLabelKey } from "~/lib/recipe/recipe-feedback";
 
 const props = defineProps<{ entry: RecipeFeedbackOut }>();
 
 const i18n = useI18n();
+const effort = computed(() => (isFeedbackEffort(props.entry.effort) ? props.entry.effort : null));
 const when = computed(() => feedbackWhenLine(props.entry, new Date(), i18n.t, i18n.locale.value));
 </script>
 

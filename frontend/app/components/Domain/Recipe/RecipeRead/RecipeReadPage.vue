@@ -23,7 +23,7 @@
 
       <div class="read__main">
         <header class="read__header">
-          <h1 :id="titleId" class="read__title ds-display">
+          <h1 :id="titleId" class="read__title ds-display" tabindex="-1">
             {{ recipe.name }}
           </h1>
           <RecipeReadRating
@@ -78,10 +78,11 @@
         </section>
 
         <RecipeReadFeedback
-          v-if="isOwnGroup && recipe.id"
+          v-if="recipe.id"
           class="read__feedback read__block"
           :recipe-id="recipe.id"
           :signed-in="isOwnGroup"
+          :focus-fallback-id="titleId"
         />
 
         <RecipeReadNutrition

@@ -4,11 +4,13 @@ import type { FeedbackVerdict, RecipeFeedbackOut } from "~/lib/api/types/househo
 /** The three answers, in the order cook mode offers them. */
 export const FEEDBACK_VERDICTS: readonly FeedbackVerdict[] = ["loved", "ok", "never_again"];
 
-/** Effort levels as the API stores them: 1 easy, 2 fine, 3 a lot of work. */
-export const FEEDBACK_EFFORTS: readonly number[] = [1, 2, 3];
+/** Effort as the API stores it: 1 easy, 2 fine, 3 a lot of work. */
+export type FeedbackEffort = 1 | 2 | 3;
+export const FEEDBACK_EFFORTS: readonly FeedbackEffort[] = [1, 2, 3];
 
 export const verdictLabelKey = (verdict: FeedbackVerdict) => `recipe-feedback.verdict.${verdict}`;
-export const effortLabelKey = (effort: number) => `recipe-feedback.effort.${effort}`;
+export const isFeedbackEffort = (value: unknown): value is FeedbackEffort => value === 1 || value === 2 || value === 3;
+export const effortLabelKey = (effort: FeedbackEffort) => `recipe-feedback.effort.${effort}`;
 
 type Translate = (key: string, params?: Record<string, unknown>) => string;
 

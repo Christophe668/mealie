@@ -1,4 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
+import { defineComponent, h, nextTick, ref } from "vue";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import PantryItemDialog from "./PantryItemDialog.vue";
 import type { PantryItemOut } from "~/lib/api/types/household";
@@ -46,5 +47,34 @@ describe("PantryItemDialog", () => {
     finish(true);
     await flushPromises();
     expect(wrapper.emitted("update:modelValue")).toEqual([[false]]);
+  });
+
+  test("closing gives focus back to what opened it", async () => {
+    const stubsWithModel = { "v-dialog": { props: ["modelValue"], template: "<div v-if=\"modelValue\"><slot /></div>" } };
+    const open = ref(false);
+    const Host = defineComponent(() => () => [
+      h("button", { class: "opener", onClick: () => (open.value = true) }, "Milk"),
+      h(PantryItemDialog, {
+        "item": milk,
+        "units": [],
+        "saveItem": async () => true,
+        "modelValue": open.value,
+        "onUpdate:modelValue": (value: boolean) => (open.value = value),
+      }),
+    ]);
+    const wrapper = mount(Host, { global: { stubs: stubsWithModel }, attachTo: document.body });
+
+    const opener = wrapper.find(".opener");
+    (opener.element as HTMLElement).focus();
+    await opener.trigger("click");
+    await nextTick();
+    (wrapper.find("input[type=text]").element as HTMLElement).focus();
+
+    await wrapper.findAll("button").find(b => b.text() === "Cancel")!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find("form").exists()).toBe(false);
+    expect(document.activeElement).toBe(opener.element);
+    wrapper.unmount();
   });
 });

@@ -66,10 +66,27 @@ const confirmOpen = computed({
   },
 });
 
+// Only the latest load counts; an unmounted dialog takes no more results.
+let seq = 0;
+onBeforeUnmount(() => {
+  seq++;
+});
+
 async function load() {
-  const { data } = await api.recipeFeedback.list(props.recipeId, 1, -1);
-  loadFailed.value = !data;
-  entries.value = newestFirst(data?.items ?? []);
+  const stamp = ++seq;
+  let items: RecipeFeedbackOut[] | null = null;
+  try {
+    const { data } = await api.recipeFeedback.list(props.recipeId, 1, -1);
+    items = data?.items ?? null;
+  }
+  catch {
+    items = null;
+  }
+  if (stamp !== seq) {
+    return;
+  }
+  loadFailed.value = items === null;
+  entries.value = newestFirst(items ?? []);
 }
 
 watch(open, (value) => {
@@ -85,9 +102,16 @@ async function remove() {
     return;
   }
   deleting.value = true;
-  const { error } = await api.recipeFeedback.remove(entry.id);
+  let failed = true;
+  try {
+    const { error } = await api.recipeFeedback.remove(entry.id);
+    failed = !!error;
+  }
+  catch {
+    failed = true;
+  }
   deleting.value = false;
-  if (error) {
+  if (failed) {
     alert.error(i18n.t("recipe-feedback.delete-failed"));
     return;
   }

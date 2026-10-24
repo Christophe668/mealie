@@ -233,6 +233,9 @@ describe("CookMode", () => {
     // Every answer is disabled while the save is in flight.
     expect(button(wrapper, "Not again").attributes("aria-disabled")).toBe("true");
     expect(button(wrapper, "Skip").attributes("aria-disabled")).toBe("true");
+    expect(button(wrapper, "Easy").attributes("aria-disabled")).toBe("true");
+    await button(wrapper, "Easy").trigger("click");
+    expect(button(wrapper, "Easy").attributes("aria-pressed")).toBe("false");
     await button(wrapper, "Not again").trigger("click");
     expect(createFeedback).toHaveBeenCalledTimes(1);
 
