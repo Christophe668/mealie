@@ -46,7 +46,7 @@
       v-model="editor.open"
       :item="editor.item"
       :units="allUnits || []"
-      @save="update"
+      :save-item="update"
     />
   </div>
 </template>
@@ -134,9 +134,20 @@ async function removeItem(item: PantryItemOut) {
   if (!(await remove(item.id))) {
     return;
   }
+  // One-shot: a second press (or a double-click) must not put the item back twice.
+  let undone = false;
   alert.info(i18n.t("pantry.removed", { name: item.name }), undefined, {
     timeout: 4000,
-    action: { message: i18n.t("general.undo"), onClick: () => restore(item) },
+    action: {
+      message: i18n.t("general.undo"),
+      onClick: () => {
+        if (undone) {
+          return;
+        }
+        undone = true;
+        restore(item);
+      },
+    },
   });
 }
 </script>

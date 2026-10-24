@@ -66,7 +66,7 @@
         <DsButton variant="line" @click="open = false">
           {{ $t("pantry.cancel") }}
         </DsButton>
-        <DsButton variant="dark" type="submit" :disabled="!draft.name.trim()">
+        <DsButton variant="dark" type="submit" :disabled="saving || !draft.name.trim()">
           {{ $t("pantry.save") }}
         </DsButton>
       </div>
@@ -85,9 +85,9 @@ const props = defineProps<{
   /** The item being edited; the dialog works on a copy so a background reload never overwrites typing. */
   item: PantryItemOut | null;
   units: IngredientUnit[];
+  /** Saves the item; resolves true on success. It reports its own failure, the dialog only stays open. */
+  saveItem: (id: string, data: PantryItemUpdate) => Promise<boolean>;
 }>();
-
-const emit = defineEmits<{ (e: "save", id: string, data: PantryItemUpdate): void }>();
 
 const open = defineModel<boolean>({ default: false });
 const i18n = useI18n();
@@ -131,12 +131,22 @@ const quantity = computed({
   },
 });
 
-function save() {
-  if (!props.item || !draft.value || !draft.value.name.trim()) {
+const saving = ref(false);
+
+/** Closes only once the save went through; a failed save keeps the dialog and what was typed in it. */
+async function save() {
+  if (saving.value || !props.item || !draft.value || !draft.value.name.trim()) {
     return;
   }
-  emit("save", props.item.id, { ...draft.value, name: draft.value.name.trim() });
-  open.value = false;
+  saving.value = true;
+  try {
+    if (await props.saveItem(props.item.id, { ...draft.value, name: draft.value.name.trim() })) {
+      open.value = false;
+    }
+  }
+  finally {
+    saving.value = false;
+  }
 }
 </script>
 
