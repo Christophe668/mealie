@@ -125,6 +125,10 @@ households_preferences = "/api/households/preferences"
 """`/api/households/preferences`"""
 households_recipe_actions = "/api/households/recipe-actions"
 """`/api/households/recipe-actions`"""
+households_recipe_feedback = "/api/households/recipe-feedback"
+"""`/api/households/recipe-feedback`"""
+households_recipe_feedback_summary = "/api/households/recipe-feedback/summary"
+"""`/api/households/recipe-feedback/summary`"""
 households_self = "/api/households/self"
 """`/api/households/self`"""
 households_shopping_items = "/api/households/shopping/items"
@@ -444,6 +448,11 @@ def households_recipe_actions_item_id(item_id):
 def households_recipe_actions_item_id_trigger_recipe_slug(item_id, recipe_slug):
     """`/api/households/recipe-actions/{item_id}/trigger/{recipe_slug}`"""
     return f"{prefix}/households/recipe-actions/{item_id}/trigger/{recipe_slug}"
+
+
+def households_recipe_feedback_item_id(item_id):
+    """`/api/households/recipe-feedback/{item_id}`"""
+    return f"{prefix}/households/recipe-feedback/{item_id}"
 
 
 def households_self_recipes_recipe_slug(recipe_slug):

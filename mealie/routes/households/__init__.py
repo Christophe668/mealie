@@ -10,6 +10,7 @@ from . import (
     controller_mealplan_ical,
     controller_mealplan_rules,
     controller_pantry,
+    controller_recipe_feedback,
     controller_shopping_lists,
     controller_webhooks,
 )
@@ -24,6 +25,7 @@ router.include_router(controller_invitations.router)
 # pantry before shopping lists: put-away shares the `/households/shopping/lists/{id}` prefix
 router.include_router(controller_pantry.router)
 router.include_router(controller_pantry.put_away_router)
+router.include_router(controller_recipe_feedback.router)
 router.include_router(controller_shopping_lists.router)
 router.include_router(controller_shopping_lists.item_router)
 router.include_router(controller_webhooks.router)
