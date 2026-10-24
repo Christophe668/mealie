@@ -1583,7 +1583,12 @@
     "untitled": "Untitled list",
     "recipe-less": "Remove one {recipe}",
     "recipe-more": "Add one more {recipe}",
-    "lists-load-failed": "Couldn’t load your shopping lists."
+    "lists-load-failed": "Couldn’t load your shopping lists.",
+    "put-away": "Put away",
+    "put-away-label": "Put away {count} bought item in the pantry | Put away {count} bought items in the pantry",
+    "put-away-done": "{count} item put away | {count} items put away",
+    "open-pantry": "Open pantry",
+    "put-away-failed": "Couldn’t put those items away. Try again."
   },
   "recipes-links": {
     "label": "Browse recipes",

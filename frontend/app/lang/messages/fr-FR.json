@@ -1583,7 +1583,12 @@
     "untitled": "Liste sans nom",
     "recipe-less": "Retirer une fois {recipe}",
     "recipe-more": "Ajouter une fois de plus {recipe}",
-    "lists-load-failed": "Impossible de charger vos listes de courses."
+    "lists-load-failed": "Impossible de charger vos listes de courses.",
+    "put-away": "Ranger",
+    "put-away-label": "Ranger {count} article acheté dans le garde-manger | Ranger {count} articles achetés dans le garde-manger",
+    "put-away-done": "{count} article rangé | {count} articles rangés",
+    "open-pantry": "Ouvrir le garde-manger",
+    "put-away-failed": "Impossible de ranger ces articles. Réessayez."
   },
   "recipes-links": {
     "label": "Parcourir les recettes",
