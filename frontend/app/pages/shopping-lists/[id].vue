@@ -238,6 +238,7 @@ const {
   removeRecipeReferenceToList,
   addRecipeReferenceToList,
   refresh,
+  hasQueuedChanges,
 } = shoppingListPage;
 
 const byLabel = computed(() => toByLabel(itemsByLabel.value, shoppingList.value));
@@ -354,6 +355,11 @@ async function putAway() {
     // A tick is only queued locally until the next refresh or poll; send the queue first so the server
     // sees what is on screen as bought.
     await refresh();
+    if (hasQueuedChanges.value) {
+      // The flush could not reach the server; putting away now would move a stale set of items.
+      alert.error(i18n.t("shop.put-away-unsynced"));
+      return;
+    }
     const { data, error } = await api.householdPantry.putAway(id, null);
     if (!data) {
       // The list is left as it is; nothing was moved.

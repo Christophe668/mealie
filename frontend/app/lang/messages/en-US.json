@@ -1588,7 +1588,8 @@
     "put-away-label": "Put away {count} bought item in the pantry | Put away {count} bought items in the pantry",
     "put-away-done": "{count} item put away | {count} items put away",
     "open-pantry": "Open pantry",
-    "put-away-failed": "Couldn’t put those items away. Try again."
+    "put-away-failed": "Couldn’t put those items away. Try again.",
+    "put-away-unsynced": "Some ticks could not be saved yet. Try again in a moment."
   },
   "recipes-links": {
     "label": "Browse recipes",

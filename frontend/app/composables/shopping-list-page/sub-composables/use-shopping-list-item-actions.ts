@@ -260,6 +260,8 @@ export function useShoppingListItemActions(shoppingListId: string) {
     updateItem,
     deleteItem,
     process,
+    /** Item changes still waiting to reach the server (e.g. the last flush could not reach it). */
+    hasQueuedChanges: computed(() => !queueEmpty.value),
 
     __testing__: {
       queue,

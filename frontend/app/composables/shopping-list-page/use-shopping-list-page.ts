@@ -218,5 +218,6 @@ export function useShoppingListPage(listId: string) {
 
     // Data refresh
     refresh,
+    hasQueuedChanges: shoppingListItemActions.hasQueuedChanges,
   };
 }

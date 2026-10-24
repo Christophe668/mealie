@@ -94,6 +94,7 @@ function fakePage() {
     removeRecipeReferenceToList: vi.fn(),
     addRecipeReferenceToList: vi.fn(),
     refresh: vi.fn(),
+    hasQueuedChanges: ref(false),
   };
 }
 
@@ -201,6 +202,25 @@ describe("shopping list page", () => {
     await wrapper.findAll(".shop-bought button").find(b => b.text() === "Put away")!.trigger("click");
     await flushPromises();
     expect(vi.mocked(alert.info).mock.calls.at(-1)![0]).toBe("1 item put away");
+  });
+
+  test("if the queued ticks could not be sent, Put away stops and says so instead of moving a stale list", async () => {
+    const { alert } = await import("~/composables/use-toast");
+    vi.mocked(alert.error).mockClear();
+    vi.mocked(alert.info).mockClear();
+    // The flush ran, but the server could not be reached: the ticks are still queued.
+    page.current.hasQueuedChanges.value = true;
+    const wrapper = await render();
+
+    const button = () => wrapper.findAll(".shop-bought button").find(b => b.text() === "Put away")!;
+    await button().trigger("click");
+    await flushPromises();
+
+    expect(page.current.refresh).toHaveBeenCalledOnce();
+    expect(api.householdPantry.putAway).not.toHaveBeenCalled();
+    expect(alert.error).toHaveBeenCalledWith("Some ticks could not be saved yet. Try again in a moment.");
+    expect(alert.info).not.toHaveBeenCalled();
+    expect(button().attributes("aria-disabled")).toBeUndefined();
   });
 
   test("a failed put away says so and leaves the list as it is", async () => {

@@ -1588,7 +1588,8 @@
     "put-away-label": "Ranger {count} article acheté dans le garde-manger | Ranger {count} articles achetés dans le garde-manger",
     "put-away-done": "{count} article rangé | {count} articles rangés",
     "open-pantry": "Ouvrir le garde-manger",
-    "put-away-failed": "Impossible de ranger ces articles. Réessayez."
+    "put-away-failed": "Impossible de ranger ces articles. Réessayez.",
+    "put-away-unsynced": "Certains articles cochés n’ont pas encore pu être enregistrés. Réessayez dans un instant."
   },
   "recipes-links": {
     "label": "Parcourir les recettes",

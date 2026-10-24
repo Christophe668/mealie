@@ -21,7 +21,9 @@ vi.mock("../sub-composables/use-shopping-list-sorting", () => ({
   useShoppingListSorting: () => sorting,
 }));
 
+const hasQueuedChanges = vue.ref(false);
 const data = {
+  shoppingListItemActions: { hasQueuedChanges },
   refresh: vi.fn().mockImplementation(fn => fn()),
   startPolling: vi.fn(),
   stopPolling: vi.fn(),
@@ -79,6 +81,7 @@ describe("useShoppingListPage", () => {
     toggleReorderLabelsDialog,
     saveLabelOrder,
     refresh,
+    hasQueuedChanges: queued,
   } = useShoppingListPage("list_id");
 
   beforeEach(() => {
@@ -96,6 +99,13 @@ describe("useShoppingListPage", () => {
       ],
     };
   });
+  test("surfaces whether item changes are still waiting to reach the server", () => {
+    expect(queued.value).toBe(false);
+    hasQueuedChanges.value = true;
+    expect(queued.value).toBe(true);
+    hasQueuedChanges.value = false;
+  });
+
   describe("openCheckAll", () => {
     test("opens the dialog", () => {
       openCheckAll();
