@@ -44,7 +44,7 @@ class PantryItemsNotChecked(ValueError):
         super().__init__(f"items not checked: {', '.join(item_ids)}")
 
 
-_UNNAMED_ITEM = "Unnamed item"
+_UNNAMED_ITEM = "Unnamed item"  # server-side English fallback: a shopping item with no food, note or display text
 
 
 def _format_quantity(quantity: float) -> str:

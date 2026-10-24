@@ -26,7 +26,10 @@ class PantrySource(StrEnum):
     leftover = "leftover"
 
 
-class PantryItemCreate(MealieModel):
+class _PantryItemFields(MealieModel):
+    """Columns shared by the write and read schemas. The blank-name validator lives on the write schemas
+    only, so a row already stored with a blank name still loads instead of failing the whole list."""
+
     name: str
     food_id: UUID4 | None = None
     quantity: float | None = None
@@ -38,6 +41,8 @@ class PantryItemCreate(MealieModel):
     source: PantrySource = PantrySource.manual
     note: str | None = None
 
+
+class PantryItemCreate(_PantryItemFields):
     @field_validator("name")
     @classmethod
     def name_not_blank(cls, value: str) -> str:
@@ -51,7 +56,7 @@ class PantryItemUpdate(PantryItemCreate):
     pass
 
 
-class PantryItemOut(PantryItemCreate):
+class PantryItemOut(_PantryItemFields):
     id: UUID4
     group_id: UUID4
     household_id: UUID4
