@@ -5,7 +5,12 @@ from pydantic import BaseModel
 from sqlalchemy import Select, func, select
 
 from mealie.db.models.household.recipe_feedback import RecipeFeedback
-from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedbackOut, RecipeFeedbackSummary
+from mealie.schema.household.recipe_feedback import (
+    FeedbackVerdict,
+    RecipeFeedbackOut,
+    RecipeFeedbackPagination,
+    RecipeFeedbackSummary,
+)
 
 from .repository_generic import HouseholdRepositoryGeneric
 
@@ -40,15 +45,38 @@ class RepositoryRecipeFeedback(HouseholdRepositoryGeneric[RecipeFeedbackOut, Rec
             stmt = stmt.filter(RecipeFeedback.household_id == self.household_id)
         return stmt
 
-    def _newest_first(self, limit: int | None, recipe_id: UUID | None = None) -> list[RecipeFeedbackOut]:
-        stmt = self._scope(select(RecipeFeedback).options(*self.schema.loader_options()))
+    def _filtered(self, recipe_id: UUID | None) -> Select:
+        stmt = self._scope(select(RecipeFeedback))
         if recipe_id is not None:
             stmt = stmt.filter(RecipeFeedback.recipe_id == recipe_id)
-        stmt = stmt.order_by(*_NEWEST_FIRST)
+        return stmt
+
+    def _newest_first(
+        self, limit: int | None, recipe_id: UUID | None = None, offset: int = 0
+    ) -> list[RecipeFeedbackOut]:
+        stmt = self._filtered(recipe_id).options(*self.schema.loader_options()).order_by(*_NEWEST_FIRST)
+        if offset:
+            stmt = stmt.offset(offset)
         if limit is not None:
             stmt = stmt.limit(limit)
         rows = self.session.execute(stmt).unique().scalars().all()
         return [self.schema.model_validate(row) for row in rows]
+
+    def page_newest_first(self, page: int, per_page: int, recipe_id: UUID | None = None) -> RecipeFeedbackPagination:
+        """One page of feedback in `for_recipe` order, optionally for one recipe; `per_page < 0` means everything.
+
+        Feedback is not reachable through query filters (see the model), so pagination is done here.
+        """
+        total = self.session.scalar(select(func.count()).select_from(self._filtered(recipe_id).subquery())) or 0
+        if per_page < 0:
+            items = self._newest_first(None, recipe_id)
+            return RecipeFeedbackPagination(page=1, per_page=per_page, total=total, total_pages=1, items=items)
+
+        page = max(page, 1)
+        per_page = max(per_page, 1)
+        items = self._newest_first(per_page, recipe_id, offset=(page - 1) * per_page)
+        total_pages = -(-total // per_page)
+        return RecipeFeedbackPagination(page=page, per_page=per_page, total=total, total_pages=total_pages, items=items)
 
     def for_recipe(self, recipe_id: UUID, limit: int | None = None) -> list[RecipeFeedbackOut]:
         """One recipe's feedback, newest `made_on` first, then newest recorded."""
