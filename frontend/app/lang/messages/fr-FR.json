@@ -1359,5 +1359,23 @@
     "mark-all-as-read": "Marquer tout comme lu",
     "show-announcements-from-mealie": "Afficher les annonces de Mealie",
     "show-announcements-setting-description": "Si vous voulez autoriser ou non les utilisateurs à voir les annonces de Mealie. Lorsque cette option est activée, les utilisateurs peuvent toujours refuser de les voir dans leurs paramètres utilisateur"
+  },
+  "app-shell": {
+    "main-navigation": "Navigation principale",
+    "today": "Aujourd’hui",
+    "recipes": "Recettes",
+    "plan": "Planning",
+    "shop": "Courses",
+    "connections": "Connexions",
+    "settings": "Paramètres",
+    "announcements": "Annonces",
+    "log-in": "Se connecter",
+    "log-out": "Se déconnecter",
+    "search-recipes": "Rechercher une recette",
+    "search-shortcut-hint": "Appuyez sur {shortcut} pour rechercher",
+    "add": "Ajouter",
+    "add-recipe-from-url": "Ajouter une recette depuis une URL",
+    "add-to-plan": "Ajouter au planning",
+    "add-to-shopping-list": "Ajouter à la liste de courses"
   }
 }
