@@ -55,6 +55,12 @@ cloudflared tunnel run --url http://localhost:9925 <tunnel-name>
 
 The pantry tools need the `pantry:write` permission. A connection made before it existed does not have it: disconnect and reconnect the connector to grant it.
 
+## Pantry and freshness
+
+Each household has a pantry (Household, Pantry): what you have, where it is (fridge, freezer, cupboard, other), when it was bought and opened, and an optional "use by" date. On the shopping list, **Put away** moves the bought items into the pantry with today's date. A food that is in the pantry counts as "on hand", so shopping lists built from the meal plan skip it.
+
+Mealie only stores the dates. Claude estimates whether something is still good from those dates and general food knowledge, and gives that as guidance, never as food safety advice. Claude reads the pantry with the `recipes:read` scope; changing it (`update_pantry`, `put_away_shopping_items`) needs `pantry:write`, shown as "Manage the pantry" on the consent page.
+
 ## Verify
 
 ```bash

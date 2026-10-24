@@ -69,3 +69,21 @@ Copy: sentence case, verbs on buttons, no middle dots; en-US and fr-FR.
 ## 7. Tests
 
 Unit: merge rule, on-hand sync both directions, ordering, put-away validation. Integration: the five REST routes and put-away (SQLite; Postgres covered by the existing matrix). MCP: the three tools with scopes enforced and household isolation. Frontend: `PantryList` grouping and the secondary-line rule; `ShopBought` emits `put-away`.
+
+## 8. Implemented
+
+Shipped on `feat/pantry` (2026-10-24). Where the code differs from the sections above, or settles something they left open:
+
+1. **Commits per repository call.** The service commits after each repository call, as upstream services do, rather than once per public method. Put-away writes the pantry rows first and deletes the shopping items last, so a failure partway can leave rows already moved but never deletes an item that was not moved.
+2. **On-hand sync uses the upstream relationship.** There is no upstream service that toggles on-hand foods (only a full food update, which rewrites aliases, extras and substitutions), so the sync edits the household's `ingredient_foods_on_hand` ORM relationship directly. It is skipped when the food is gone (deleted, or in another group).
+3. **Put-away location comes from the shopping label.** Keywords in the item's label name pick the location: fridge for dairy, fresh, meat, seafood, fish, poultry, frais, laitier, viande, charcuterie, poisson, produits de la mer, volaille; freezer for frozen, surgel; everything else goes to the cupboard. "Produce" is not a fridge keyword. Known gap: "fresh"/"frais" also send fresh produce to the fridge.
+4. **"Unnamed item" fallback.** A food-less shopping item with a blank note and display is put away as "Unnamed item" (English, not localised), so put-away cannot fail halfway. Pantry names are stripped and must not be blank (REST 422, MCP error).
+5. **Merge details.** A merge keeps the earlier `use_by` (ignoring nulls), and when several rows share the food or name, the row in the incoming location is preferred, else the oldest. A food-less item with no unit and the default quantity 1 does not append "1" to the note. Repeated ids in a put-away request are de-duplicated.
+6. **Unchecked items raise `PantryItemsNotChecked`.** The service raises this `ValueError` subclass; the REST route maps only it to 422 and the MCP tool reports it as a tool error. Unknown foods or units in a request body give 404 (`NoEntryFound`).
+7. **Unit names in MCP.** `update_pantry` accepts `unit` as a unit name (case-insensitive match on name, plural or abbreviation; unknown names are an error) or `unit_id`, not both. It also accepts `source` (for `leftover`). Repeated ids in `update` or `remove`, or an id in both, are rejected before anything is written.
+8. **Partial updates.** MCP `update` entries overlay only the keys given (null clears a field). REST `PUT` stays a full replace; the frontend merges partial edits into the full payload.
+9. **Remove has Undo, not a confirmation.** Removing a pantry item shows a 4 s "Undo" toast that re-creates the item once (new id, merge rule applies).
+10. **Unit is a select.** The editor offers the group's known units ("No unit" first), because the model stores only `unit_id`.
+11. **Dates follow the locale.** "Use by" dates use `toLocaleDateString(locale, { day, month: "long" })`, so en-US reads "Use by October 28" and fr-FR "28 octobre"; § 6's "28 October" is an example.
+12. **Put away waits for queued ticks.** Ticking an item on the shopping list only queues the update, so Put away sends the queue first and refuses (with an error snackbar) while changes are still queued, i.e. when the server is unreachable. Known limitation: when the server answers the flush with an error, upstream's composable drops the queued ticks, so those items stay unticked and are not put away.
+13. **Locales.** New strings were added to en-US and fr-FR (the consent scope "Manage the pantry", pantry page, put-away), as this fork's spec asks, even though upstream leaves non-English locales to Crowdin.
