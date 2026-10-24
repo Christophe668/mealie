@@ -74,7 +74,7 @@ withDefaults(defineProps<{
   triggerLabel?: string;
   triggerClass?: string;
   /** Which way the list opens, relative to the trigger. */
-  placement?: "top-start" | "top-end" | "bottom-end";
+  placement?: "top-start" | "top-end" | "bottom-start" | "bottom-end";
 }>(), {
   triggerLabel: undefined,
   triggerClass: undefined,
@@ -153,6 +153,9 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 onClickOutside(root, () => close(false));
+
+/** Lets an owner reopen the menu, e.g. to show a second step after an item was chosen. */
+defineExpose({ open: openMenu });
 </script>
 
 <style scoped>
@@ -182,6 +185,11 @@ onClickOutside(root, () => close(false));
 .ds-menu__list--top-end {
   right: 0;
   bottom: calc(100% + var(--ds-space) * 1.5);
+}
+
+.ds-menu__list--bottom-start {
+  top: calc(100% + var(--ds-space));
+  left: 0;
 }
 
 .ds-menu__list--bottom-end {
