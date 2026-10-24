@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates (or updates) the "mealie" stack in Portainer from this repository's docker-compose.nas.yml,
+# Creates the "mealie" stack in Portainer from this repository's docker-compose.nas.yml,
 # through Portainer's API. Secrets never appear on the command line or in the output:
 #   - the Portainer API key is read from the macOS keychain item "portainer-api-key";
 #   - the Postgres password is generated once and kept in the keychain item "mealie-postgres-password".
@@ -10,6 +10,8 @@
 #
 # Usage:
 #   PORTAINER_URL=https://192.168.1.20:9443 BASE_URL=https://mealie.example.com ./dev/portainer-deploy.sh
+# Synology note: Docker there does not create missing bind-mount folders; create DATA_ROOT/data and
+# DATA_ROOT/pgdata first (File Station, or a throwaway container with /volume1/docker mounted).
 # Optional: DATA_ROOT=/volume1/docker/mealie (default), ENDPOINT_ID (auto-detected when there is one environment),
 #           DRY_RUN=1 to print the request without the password and without sending it.
 set -euo pipefail
@@ -18,7 +20,6 @@ set -euo pipefail
 : "${BASE_URL:?set BASE_URL, e.g. https://mealie.example.com}"
 DATA_ROOT="${DATA_ROOT:-/volume1/docker/mealie}"
 STACK_NAME="mealie"
-REPO_URL="https://github.com/Christophe668/mealie"
 PORTAINER_URL="${PORTAINER_URL%/}"
 
 [[ "$BASE_URL" == https://* ]] || { echo "BASE_URL must start with https://" >&2; exit 1; }
@@ -53,14 +54,14 @@ if [[ -z "${ENDPOINT_ID:-}" ]]; then
   ENDPOINT_ID=$(python3 -c 'import sys,json; print(json.load(sys.stdin)[0]["Id"])' <<<"$endpoints")
 fi
 
-payload=$(STACK_NAME="$STACK_NAME" REPO_URL="$REPO_URL" BASE_URL="$BASE_URL" DATA_ROOT="$DATA_ROOT" PG="$pg_password" python3 - <<'PY'
+# Portainer refuses to clone repositories that contain symlinks (upstream Mealie has some), so the compose file
+# is sent as content ("web editor" stack). Updating later: Pull and redeploy with Re-pull image.
+compose_file="$(cd "$(dirname "$0")/.." && pwd)/docker-compose.nas.yml"
+payload=$(STACK_NAME="$STACK_NAME" COMPOSE_FILE="$compose_file" BASE_URL="$BASE_URL" DATA_ROOT="$DATA_ROOT" PG="$pg_password" python3 - <<'PY'
 import json, os
 print(json.dumps({
     "name": os.environ["STACK_NAME"],
-    "repositoryURL": os.environ["REPO_URL"],
-    "repositoryReferenceName": "refs/heads/main",
-    "composeFile": "docker-compose.nas.yml",
-    "repositoryAuthentication": False,
+    "stackFileContent": open(os.environ["COMPOSE_FILE"]).read(),
     "env": [
         {"name": "BASE_URL", "value": os.environ["BASE_URL"]},
         {"name": "POSTGRES_PASSWORD", "value": os.environ["PG"]},
@@ -72,8 +73,8 @@ PY
 )
 
 if [[ -n "${DRY_RUN:-}" ]]; then
-  echo "Would POST to ${PORTAINER_URL}/api/stacks/create/standalone/repository?endpointId=${ENDPOINT_ID}:"
-  python3 -c 'import sys,json; d=json.load(sys.stdin); [e.update(value="***") for e in d["env"] if e["name"]=="POSTGRES_PASSWORD"]; print(json.dumps(d, indent=2))' <<<"$payload"
+  echo "Would POST to ${PORTAINER_URL}/api/stacks/create/standalone/string?endpointId=${ENDPOINT_ID}:"
+  python3 -c 'import sys,json; d=json.load(sys.stdin); [e.update(value="***") for e in d["env"] if e["name"]=="POSTGRES_PASSWORD"]; d["stackFileContent"]="<docker-compose.nas.yml>"; print(json.dumps(d, indent=2))' <<<"$payload"
   exit 0
 fi
 
@@ -84,7 +85,7 @@ if [[ -n "$existing" ]]; then
 fi
 
 echo "Creating the ${STACK_NAME} stack in Portainer (environment ${ENDPOINT_ID}); pulling images can take a few minutes…"
-response=$(api -X POST --max-time 900 "${PORTAINER_URL}/api/stacks/create/standalone/repository?endpointId=${ENDPOINT_ID}" -d "$payload")
+response=$(api -X POST --max-time 900 "${PORTAINER_URL}/api/stacks/create/standalone/string?endpointId=${ENDPOINT_ID}" -d "$payload")
 if python3 -c 'import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get("Id") else 1)' <<<"$response" 2>/dev/null; then
   echo "Stack created. On your home network open http://<nas-ip>:9925, sign in with changeme@example.com / MyPassword,"
   echo "change the email and password, then add the route to your Cloudflare tunnel."

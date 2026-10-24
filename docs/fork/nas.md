@@ -61,10 +61,9 @@ docker compose up -d
 
 Portainer can deploy the same file straight from GitHub, with the settings typed into its interface instead of a `.env` file.
 
-1. Create the data folders on the NAS first, for example `/volume1/docker/mealie/data` and `/volume1/docker/mealie/pgdata`.
-2. **Stacks**, **Add stack**, name `mealie`, build method **Repository**:
-   - Repository URL `https://github.com/Christophe668/mealie`, reference `refs/heads/main`
-   - Compose path `docker-compose.nas.yml`
+1. Create the data folders on the NAS first (Synology's Docker does not create missing folders, and the stack will not start without them), for example `/volume1/docker/mealie/data` and `/volume1/docker/mealie/pgdata`.
+2. **Stacks**, **Add stack**, name `mealie`:
+   - Build method **Web editor**, and paste the content of `docker-compose.nas.yml` from the repository. (The **Repository** method fails: Portainer refuses to clone repositories that contain symbolic links, and upstream Mealie has some.)
 3. **Environment variables**: add `BASE_URL`, `POSTGRES_PASSWORD` (and `COMPOSE_PROFILES=tunnel` with `TUNNEL_TOKEN` only for a dedicated tunnel), plus `DATA_DIR=/volume1/docker/mealie/data` and `PG_DATA_DIR=/volume1/docker/mealie/pgdata`. The two folder variables matter: without them Portainer stores the database inside its own internal volume, outside your NAS backups, and deleting the stack can delete your recipes.
 4. **Deploy the stack**.
 
