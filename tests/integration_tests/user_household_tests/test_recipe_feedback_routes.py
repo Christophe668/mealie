@@ -1,5 +1,6 @@
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.utils import api_routes
@@ -194,3 +195,57 @@ def test_feedback_isolated_between_households(api_client: TestClient, unique_use
         api_routes.households_recipe_feedback, params={"recipeId": recipe_id}, headers=unique_user.token
     ).json()
     assert [item["id"] for item in listed["items"]] == [row["id"]]
+
+
+def test_record_on_recipe_of_another_household_in_the_group(
+    api_client: TestClient, unique_user: TestUser, h2_user: TestUser
+):
+    recipe_id = _create_recipe(api_client, unique_user)
+
+    row = _record(api_client, h2_user, recipe_id, "loved", "2026-10-20")
+    assert row["householdId"] == str(h2_user.household_id)
+    assert row["userId"] == str(h2_user.user_id)
+    assert row["recipe"]["id"] == recipe_id
+
+    mine = api_client.get(api_routes.households_recipe_feedback, params={"recipeId": recipe_id}, headers=h2_user.token)
+    assert [item["id"] for item in mine.json()["items"]] == [row["id"]]
+    theirs = api_client.get(
+        api_routes.households_recipe_feedback, params={"recipeId": recipe_id}, headers=unique_user.token
+    )
+    assert theirs.json()["total"] == 0
+
+
+def test_record_on_recipe_of_another_group_404(api_client: TestClient, unique_user: TestUser, g2_user: TestUser):
+    recipe_id = _create_recipe(api_client, g2_user)
+    response = api_client.post(
+        api_routes.households_recipe_feedback,
+        json={"recipeId": recipe_id, "verdict": "loved"},
+        headers=unique_user.token,
+    )
+    assert response.status_code == 404
+
+
+def test_requires_auth(api_client: TestClient):
+    assert api_client.get(api_routes.households_recipe_feedback).status_code == 401
+    assert api_client.get(api_routes.households_recipe_feedback_summary).status_code == 401
+    response = api_client.post(api_routes.households_recipe_feedback, json={"recipeId": str(uuid4()), "verdict": "ok"})
+    assert response.status_code == 401
+    assert api_client.delete(api_routes.households_recipe_feedback_item_id(str(uuid4()))).status_code == 401
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"verdict": "great"},
+        {"verdict": "loved", "effort": 0},
+        {"verdict": "loved", "effort": 4},
+        {"verdict": "loved", "madeOn": "not-a-date"},
+        {},
+    ],
+)
+def test_body_validation_422(api_client: TestClient, unique_user: TestUser, body: dict):
+    recipe_id = _create_recipe(api_client, unique_user)
+    response = api_client.post(
+        api_routes.households_recipe_feedback, json={"recipeId": recipe_id, **body}, headers=unique_user.token
+    )
+    assert response.status_code == 422

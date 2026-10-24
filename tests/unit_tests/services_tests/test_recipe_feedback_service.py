@@ -244,3 +244,26 @@ def test_list_pages_newest_first(unique_user: TestUser):
     assert [row.id for row in second.items] == [rows[0].id]
     everything = service.list(recipe.id, page=1, per_page=-1)
     assert (everything.total, everything.total_pages, len(everything.items)) == (3, 1, 3)
+
+
+def test_record_on_recipe_of_another_household_in_the_group(unique_user: TestUser, h2_user: TestUser):
+    shared = _recipe(unique_user)  # belongs to unique_user's household, visible to the whole group
+
+    out = _service(h2_user).record(
+        RecipeFeedbackCreate(recipe_id=shared.id, verdict=FeedbackVerdict.loved), today=DAY_2
+    )
+
+    # the feedback, its last made and the rating land with the poster's household and user
+    assert str(out.household_id) == str(h2_user.household_id)
+    assert out.recipe_id == shared.id
+    assert h2_user.repos.recipe_feedback.get_one(out.id) is not None
+    assert h2_user.repos.recipe_feedback.summaries([shared.id])[shared.id].total == 1
+    assert _last_made(h2_user, shared) == _noon(DAY_2)
+    rating = _rating(h2_user, shared)
+    assert rating is not None
+    assert rating.rating == 5
+
+    # the recipe's own household sees none of it
+    assert unique_user.repos.recipe_feedback.get_one(out.id) is None
+    assert unique_user.repos.recipe_feedback.summaries([shared.id]) == {}
+    assert _last_made(unique_user, shared) is None

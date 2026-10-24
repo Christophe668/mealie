@@ -3,6 +3,7 @@ from datetime import UTC, date, datetime, time
 from uuid import UUID
 
 from mealie.core.exceptions import NoEntryFound
+from mealie.repos.all_repositories import get_repositories
 from mealie.repos.repository_factory import AllRepositories
 from mealie.schema.household.household import HouseholdRecipeUpdate
 from mealie.schema.household.recipe_feedback import (
@@ -57,8 +58,10 @@ class RecipeFeedbackService(BaseService):
         return self.feedback.summaries(recipe_ids)
 
     def _get_recipe_or_raise(self, recipe_id: UUID) -> Recipe:
-        # `repos.recipes` is group-scoped: a recipe in another group is simply not found
-        recipe = self.repos.recipes.get_one(recipe_id, "id")
+        # Recipes are shared across the households of a group, but `repos.recipes` is household-scoped: look the
+        # recipe up group-wide (as `HouseholdService._get_recipe` does). A recipe in another group is not found.
+        group_recipes = get_repositories(self.repos.session, group_id=self.user.group_id, household_id=None).recipes
+        recipe = group_recipes.get_one(recipe_id, "id")
         if recipe is None:
             raise NoEntryFound("Recipe not found.")
         return recipe
