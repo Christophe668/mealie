@@ -1498,7 +1498,10 @@
     "duplicate-title": "Duplicate this recipe",
     "recipe-name": "Name of the copy",
     "not-found": "This recipe couldn’t be found.",
-    "browse-recipes": "Browse recipes"
+    "browse-recipes": "Browse recipes",
+    "made-this": "I made this",
+    "timeline": "Timeline",
+    "source": "From {host}"
   },
   "cook": {
     "exit": "Exit",
@@ -1578,5 +1581,15 @@
     "recipe-less": "Remove one {recipe}",
     "recipe-more": "Add one more {recipe}",
     "lists-load-failed": "Couldn’t load your shopping lists."
+  },
+  "recipes-links": {
+    "label": "Browse recipes",
+    "cookbooks": "Cookbooks",
+    "categories": "Categories",
+    "tags": "Tags",
+    "tools": "Tools",
+    "favourites": "Favorites",
+    "timeline": "Timeline",
+    "finder": "Find by ingredients"
   }
 }

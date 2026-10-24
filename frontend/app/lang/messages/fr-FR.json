@@ -1498,7 +1498,10 @@
     "duplicate-title": "Dupliquer cette recette",
     "recipe-name": "Nom de la copie",
     "not-found": "Cette recette est introuvable.",
-    "browse-recipes": "Parcourir les recettes"
+    "browse-recipes": "Parcourir les recettes",
+    "made-this": "Je l'ai cuisinée",
+    "timeline": "Historique",
+    "source": "Source : {host}"
   },
   "cook": {
     "exit": "Quitter",
@@ -1578,5 +1581,15 @@
     "recipe-less": "Retirer une fois {recipe}",
     "recipe-more": "Ajouter une fois de plus {recipe}",
     "lists-load-failed": "Impossible de charger vos listes de courses."
+  },
+  "recipes-links": {
+    "label": "Parcourir les recettes",
+    "cookbooks": "Livres de recettes",
+    "categories": "Catégories",
+    "tags": "Étiquettes",
+    "tools": "Ustensiles",
+    "favourites": "Favoris",
+    "timeline": "Historique",
+    "finder": "Chercher par ingrédients"
   }
 }

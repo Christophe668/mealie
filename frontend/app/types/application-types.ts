@@ -33,4 +33,6 @@ export interface AppShellMenuItem {
   checked?: boolean;
   /** Draws a hairline above the item to start a new group. */
   dividerBefore?: boolean;
+  /** A count shown at the end of the item, e.g. unread announcements. */
+  badge?: number;
 }

@@ -52,6 +52,7 @@
         >
           <DsIcon :name="item.icon" :size="20" />
           {{ item.label }}
+          <span v-if="item.badge" class="ds-menu__badge">{{ item.badge }}</span>
           <DsIcon v-if="item.checked" class="ds-menu__check" name="check" :size="18" />
         </button>
       </li>
@@ -235,6 +236,17 @@ defineExpose({ open: openMenu });
 
 .ds-menu__check {
   margin-left: auto;
+}
+
+.ds-menu__badge {
+  margin-left: auto;
+  min-width: calc(var(--ds-space) * 2.5);
+  padding: 0 calc(var(--ds-space) * 0.75);
+  border-radius: var(--ds-radius-ctl);
+  background: var(--ds-text);
+  color: var(--ds-bg);
+  font-size: var(--ds-t-1);
+  text-align: center;
 }
 
 @keyframes ds-menu-in {

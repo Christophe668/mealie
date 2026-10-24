@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   groupSlug: { value: "home" as string | undefined },
   announcementsEnabled: { value: false },
   unread: { value: [] as object[] },
+  aiEnabled: { value: false },
 }));
 
 vi.mock("~/composables/use-mealie-auth", async () => {
@@ -38,6 +39,14 @@ vi.mock("~/composables/use-announcements", async () => {
     useAnnouncements: () => ({
       announcementsEnabled: ref(mocks.announcementsEnabled.value),
       newAnnouncements: ref(mocks.unread.value),
+    }),
+  };
+});
+vi.mock("~/composables/use-groups", async () => {
+  const { computed } = await import("vue");
+  return {
+    useGroupSelf: () => ({
+      group: computed(() => ({ aiProviderSettings: { aiEnabled: mocks.aiEnabled.value } })),
     }),
   };
 });
@@ -91,6 +100,7 @@ describe("AppShell", () => {
     mocks.groupSlug.value = "home";
     mocks.announcementsEnabled.value = false;
     mocks.unread.value = [];
+    mocks.aiEnabled.value = false;
     route.path = "/g/home";
     route.params = { groupSlug: "home" };
     vi.stubGlobal("useRoute", () => route);
@@ -353,6 +363,39 @@ describe("AppShell", () => {
     const withUnread = render();
     const unreadItem = withUnread.findAll(".ds-rail button").find(b => b.text().includes("Announcements"));
     expect(unreadItem?.find(".ds-rail__count").text()).toBe("1");
+  });
+
+  test("the add menu offers the AI importer when the group has AI enabled", async () => {
+    mocks.aiEnabled.value = true;
+    const wrapper = render();
+
+    await wrapper.find(".ds-tabbar button[aria-haspopup=menu]").trigger("click");
+    const ai = wrapper.findAll("[role=menuitem]").find(i => i.text().trim() === "Import with AI");
+    expect(ai?.attributes("href")).toBe("/g/home/r/create/ai");
+  });
+
+  test("the mobile menu carries announcements with the unread count", async () => {
+    mocks.announcementsEnabled.value = true;
+    mocks.unread.value = [{ key: "a" }, { key: "b" }];
+    const wrapper = render();
+
+    await wrapper.find(userTriggers["mobile top bar"]).trigger("click");
+    const labels = wrapper.findAll("[role=menu] li > *").map(i => i.text().replace(/\s+/g, " ").trim());
+    expect(labels).toEqual(["Profile", "Announcements 2", "Language", "Light theme", "Dark theme", "Match system theme", "Log out"]);
+    expect(menuButton(wrapper, "Announcements 2").find(".ds-menu__badge").text()).toBe("2");
+  });
+
+  test("visitors on mobile get Log in, language and theme from the top bar menu", async () => {
+    mocks.loggedIn.value = false;
+    const wrapper = render();
+
+    await wrapper.find(userTriggers["mobile top bar"]).trigger("click");
+    const labels = wrapper.findAll("[role=menu] li > *").map(i => i.text().trim());
+    expect(labels).toEqual(["Log in", "Language", "Light theme", "Dark theme", "Match system theme"]);
+    expect(wrapper.findAll("[role=menuitem]").find(i => i.text().trim() === "Log in")?.attributes("href")).toBe("/login");
+
+    await menuButton(wrapper, "Language").trigger("click");
+    expect(wrapper.find(".language-dialog").attributes("data-open")).toBe("true");
   });
 
   test("account links sit in their own navigation landmark", () => {

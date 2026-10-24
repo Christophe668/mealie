@@ -23,7 +23,7 @@
           :brand-name="brandName"
           :home-to="todayPath"
           :add-items="addItems"
-          :user-items="userItems"
+          :user-items="mobileMenuItems"
           @search="search"
         >
           <template #title>
@@ -58,6 +58,7 @@ import { useStorage } from "@vueuse/core";
 import { useMealieAuth } from "~/composables/use-mealie-auth";
 import { useLoggedInState } from "~/composables/use-logged-in-state";
 import { useAnnouncements } from "~/composables/use-announcements";
+import { useGroupSelf } from "~/composables/use-groups";
 import { useAppShellTitle } from "~/composables/use-app-shell-title";
 import type { AppShellMenuItem, AppShellNavItem } from "~/types/application-types";
 
@@ -76,6 +77,9 @@ const auth = useMealieAuth();
 const { loggedIn, isOwnGroup } = useLoggedInState();
 const { announcementsEnabled, newAnnouncements } = useAnnouncements();
 const pageTitle = useAppShellTitle();
+const { group } = useGroupSelf();
+// Same flag the old layout checked before offering the AI importer.
+const aiImportEnabled = computed(() => !!group.value?.aiProviderSettings?.aiEnabled);
 
 const nuxtApp = useNuxtApp();
 const brandName = computed(() => nuxtApp.$appInfo?.brandingName || "Mealie");
@@ -169,6 +173,9 @@ const addItems = computed<AppShellMenuItem[]>(() => {
       { key: "recipe-url", label: i18n.t("app-shell.add-recipe-from-url"), to: `${todayPath.value}/r/create/url`, icon: "link" },
       { key: "recipe-new", label: i18n.t("app-shell.create-recipe"), to: `${todayPath.value}/r/create/new`, icon: "edit" },
     );
+    if (aiImportEnabled.value) {
+      items.push({ key: "recipe-ai", label: i18n.t("recipe.import-with-ai"), to: `${todayPath.value}/r/create/ai`, icon: "autoFix" });
+    }
   }
   items.push(
     { key: "plan", label: i18n.t("app-shell.add-to-plan"), to: PLAN_PATH, icon: "calendar" },
@@ -201,14 +208,7 @@ const userItems = computed<AppShellMenuItem[]>(() => {
   }
   items.push(
     { key: "language", label: i18n.t("app-shell.language"), icon: "translate", onSelect: () => (languageOpen.value = true) },
-    ...(["light", "dark", "auto"] as const).map((scheme, index) => ({
-      key: `theme-${scheme}`,
-      label: i18n.t(`app-shell.theme-${scheme}`),
-      icon: ({ light: "weatherSunny", dark: "weatherNight", auto: "themeLightDark" } as const)[scheme],
-      checked: colorScheme.value === scheme,
-      dividerBefore: index === 0,
-      onSelect: () => (colorScheme.value = scheme),
-    })),
+    ...themeItems.value,
     { key: "log-out", label: i18n.t("app-shell.log-out"), icon: "logout", onSelect: logOut, dividerBefore: true },
   );
   return items;
@@ -216,6 +216,44 @@ const userItems = computed<AppShellMenuItem[]>(() => {
 
 const announcementsOpen = ref(false);
 const announcementCount = computed(() => (announcementsEnabled.value ? newAnnouncements.value.length : 0));
+
+const themeItems = computed<AppShellMenuItem[]>(() =>
+  (["light", "dark", "auto"] as const).map((scheme, index) => ({
+    key: `theme-${scheme}`,
+    label: i18n.t(`app-shell.theme-${scheme}`),
+    icon: ({ light: "weatherSunny", dark: "weatherNight", auto: "themeLightDark" } as const)[scheme],
+    checked: colorScheme.value === scheme,
+    dividerBefore: index === 0,
+    onSelect: () => (colorScheme.value = scheme),
+  })),
+);
+
+/**
+ * The mobile top bar's menu. Mobile has no rail, so it also carries what the rail shows: announcements
+ * when signed in, and Log in with the language and theme choices for visitors.
+ */
+const mobileMenuItems = computed<AppShellMenuItem[]>(() => {
+  if (!loggedIn.value) {
+    return [
+      { key: "log-in", label: i18n.t("app-shell.log-in"), to: "/login", icon: "user" },
+      { key: "language", label: i18n.t("app-shell.language"), icon: "translate", onSelect: () => (languageOpen.value = true), dividerBefore: true },
+      ...themeItems.value,
+    ];
+  }
+  if (!announcementsEnabled.value) {
+    return userItems.value;
+  }
+  const items = [...userItems.value];
+  const languageIndex = items.findIndex(item => item.key === "language");
+  items.splice(languageIndex, 0, {
+    key: "announcements",
+    label: i18n.t("app-shell.announcements"),
+    icon: "bullhornVariant",
+    badge: announcementCount.value || undefined,
+    onSelect: () => (announcementsOpen.value = true),
+  });
+  return items;
+});
 
 function search(query: string) {
   router.push({ path: recipesPath.value, query: { search: query } });
@@ -273,6 +311,13 @@ function search(query: string) {
 @media (min-width: 1024px) {
   .ds-mobile-only {
     display: none !important;
+  }
+}
+
+/* Upstream floating buttons (the recipe editor's Save) sit above the floating tab bar, not under it. */
+@media (max-width: 1023px) {
+  .ds-shell .v-fab--app.v-fab--bottom {
+    bottom: var(--ds-tabbar-clearance) !important;
   }
 }
 
