@@ -2,19 +2,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Theme(BaseSettings):
-    light_primary: str = "#E58325"
-    light_accent: str = "#007A99"
-    light_secondary: str = "#973542"
-    light_success: str = "#43A047"
-    light_info: str = "#1976D2"
-    light_warning: str = "#FF6D00"
-    light_error: str = "#EF5350"
+    light_primary: str = "#F2B01E"
+    light_accent: str = "#17201B"
+    light_secondary: str = "#5B655F"
+    light_success: str = "#489B4B"  # #43A047 at 90% HSL saturation
+    light_info: str = "#2276C9"  # #1976D2 at 90% HSL saturation
+    light_warning: str = "#F26F0D"  # #FF6D00 at 90% HSL saturation
+    light_error: str = "#E75B58"  # #EF5350 at 90% HSL saturation
 
-    dark_primary: str = "#E58325"
-    dark_accent: str = "#007A99"
-    dark_secondary: str = "#973542"
-    dark_success: str = "#43A047"
-    dark_info: str = "#1976D2"
-    dark_warning: str = "#FF6D00"
-    dark_error: str = "#EF5350"
+    dark_primary: str = "#F2B01E"
+    dark_accent: str = "#ECEEEA"
+    dark_secondary: str = "#9AA49E"
+    dark_success: str = "#489B4B"  # #43A047 at 90% HSL saturation
+    dark_info: str = "#2276C9"  # #1976D2 at 90% HSL saturation
+    dark_warning: str = "#F26F0D"  # #FF6D00 at 90% HSL saturation
+    dark_error: str = "#E75B58"  # #EF5350 at 90% HSL saturation
     model_config = SettingsConfigDict(env_prefix="theme_", extra="allow")

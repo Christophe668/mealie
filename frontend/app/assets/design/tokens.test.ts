@@ -42,6 +42,10 @@ describe("design tokens", () => {
     });
   });
 
+  test("light palette also applies to light subtrees", () => {
+    expect(declarations(tokens, ".v-theme--light")).toEqual(declarations(tokens, ":root"));
+  });
+
   test("dark palette on .v-theme--dark", () => {
     const dark = declarations(tokens, ".v-theme--dark");
     expect(dark).toMatchObject({
@@ -77,11 +81,23 @@ describe("typography", () => {
     expect(declarations(typography, "body")["font-family"]).toBe("var(--ds-font)");
   });
 
-  test("utility classes exist", () => {
-    expect(declarations(typography, ".ds-display")).toMatchObject({ "font-weight": "800", "letter-spacing": "-0.03em" });
-    expect(declarations(typography, ".ds-title")).toMatchObject({ "font-weight": "700", "letter-spacing": "-0.02em" });
+  test("utility classes", () => {
+    expect(declarations(typography, ".ds-display")).toMatchObject({
+      "font-weight": "800",
+      "font-variation-settings": "\"wdth\" 85",
+      "letter-spacing": "-0.03em",
+    });
+    expect(declarations(typography, ".ds-title")).toMatchObject({
+      "font-weight": "700",
+      "font-variation-settings": "\"wdth\" 92",
+      "letter-spacing": "-0.02em",
+    });
+    expect(declarations(typography, ".ds-body")).toMatchObject({
+      "font-size": "var(--ds-t-3)",
+      "font-weight": "400",
+      "max-width": "70ch",
+    });
     expect(declarations(typography, ".ds-muted").color).toBe("var(--ds-text-2)");
-    for (const cls of [".ds-body", ".ds-focus:focus-visible"])
-      expect(() => declarations(typography, cls)).not.toThrow();
+    expect(declarations(typography, ".ds-focus:focus-visible").outline).toBe("2px solid var(--ds-text)");
   });
 });

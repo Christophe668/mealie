@@ -15,27 +15,6 @@ export interface ThemeConfig {
   darkError: string;
 }
 
-/**
- * Colours the backend reports when no THEME_* env var is set (mealie/core/settings/themes.py).
- * They are Mealie's stock palette, not a choice made by the admin, so they must not override the
- * design-system defaults below. Any other value from the API is a deliberate override and wins.
- */
-const STOCK_THEME: Partial<ThemeConfig> = {
-  lightPrimary: "#E58325",
-  lightAccent: "#007A99",
-  lightSecondary: "#973542",
-  darkPrimary: "#E58325",
-  darkAccent: "#007A99",
-  darkSecondary: "#973542",
-};
-
-function themeColor(theme: ThemeConfig | undefined, key: keyof ThemeConfig, fallback: string): string {
-  const value = theme?.[key];
-  if (!value || value.toUpperCase() === STOCK_THEME[key]?.toUpperCase())
-    return fallback;
-  return value;
-}
-
 let __cachedTheme: ThemeConfig | undefined;
 
 async function fetchTheme(): Promise<ThemeConfig | undefined> {
@@ -68,15 +47,18 @@ export default defineNuxtPlugin(async (nuxtApp) => {
       themes: {
         light: {
           dark: false,
+          // Defaults mirror mealie/core/settings/themes.py. Semantic colours are Mealie's stock
+          // hues at 90% HSL saturation: success #43A047, info #1976D2, warning #FF6D00, error #EF5350.
           colors: {
-            "primary": themeColor(theme, "lightPrimary", "#F2B01E"),
+            "primary": theme?.lightPrimary ?? "#F2B01E",
+            // Always ink on the primary colour (spec: never light text on saffron), even when overridden.
             "on-primary": "#17201B",
-            "accent": themeColor(theme, "lightAccent", "#17201B"),
-            "secondary": themeColor(theme, "lightSecondary", "#5B655F"),
-            "success": themeColor(theme, "lightSuccess", "#43A047"),
-            "info": themeColor(theme, "lightInfo", "#1976d2"),
-            "warning": themeColor(theme, "lightWarning", "#FF6D00"),
-            "error": themeColor(theme, "lightError", "#EF5350"),
+            "accent": theme?.lightAccent ?? "#17201B",
+            "secondary": theme?.lightSecondary ?? "#5B655F",
+            "success": theme?.lightSuccess ?? "#489B4B",
+            "info": theme?.lightInfo ?? "#2276C9",
+            "warning": theme?.lightWarning ?? "#F26F0D",
+            "error": theme?.lightError ?? "#E75B58",
             "background": "#F4F5F3",
             "surface": "#FFFFFF",
           },
@@ -84,14 +66,14 @@ export default defineNuxtPlugin(async (nuxtApp) => {
         dark: {
           dark: true,
           colors: {
-            "primary": themeColor(theme, "darkPrimary", "#F2B01E"),
+            "primary": theme?.darkPrimary ?? "#F2B01E",
             "on-primary": "#17201B",
-            "accent": themeColor(theme, "darkAccent", "#ECEEEA"),
-            "secondary": themeColor(theme, "darkSecondary", "#9AA49E"),
-            "success": themeColor(theme, "darkSuccess", "#43A047"),
-            "info": themeColor(theme, "darkInfo", "#1976d2"),
-            "warning": themeColor(theme, "darkWarning", "#FF6D00"),
-            "error": themeColor(theme, "darkError", "#EF5350"),
+            "accent": theme?.darkAccent ?? "#ECEEEA",
+            "secondary": theme?.darkSecondary ?? "#9AA49E",
+            "success": theme?.darkSuccess ?? "#489B4B",
+            "info": theme?.darkInfo ?? "#2276C9",
+            "warning": theme?.darkWarning ?? "#F26F0D",
+            "error": theme?.darkError ?? "#E75B58",
             "background": "#121714",
             "surface": "#1B211D",
           },

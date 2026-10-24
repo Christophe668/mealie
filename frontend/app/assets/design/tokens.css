@@ -1,5 +1,6 @@
-/* Mise en place design tokens. Light values on :root, dark values follow Vuetify's dark theme class. */
-:root {
+/* Mise en place design tokens. Light values on :root (and light subtrees), dark values follow Vuetify's dark theme class. */
+:root,
+.v-theme--light {
   /* Colour */
   --ds-bg: #f4f5f3;
   --ds-surface: #ffffff;
