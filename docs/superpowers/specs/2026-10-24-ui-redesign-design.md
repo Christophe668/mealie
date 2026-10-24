@@ -99,3 +99,35 @@ Admin, settings, editors, organizers keep Vuetify but inherit the tokens through
 - New components under `frontend/app/components/Design/` (primitives: `DsButton`, `DsCard`, `DsChip`, `DsSectionTitle`, `DsEmpty`) and `frontend/app/components/Domain/{Home,Planner,Cook,Shop}/`. Pages are replaced, not patched; the old components stay in the tree until the final cleanup task.
 - Shell: `components/Layout/AppShell.vue` replaces `DefaultLayout.vue` for the `default` layout; `basic`/`admin` layouts get the tokens only.
 - Each screen task ends with a screenshot review at 390 px and 1280 px in light and dark.
+
+## 6. Implemented
+
+Built on `feat/ui-redesign` in eight tasks. Where the build differs from the sections above, this list wins.
+
+### Design system and shell
+- Display type is condensed and heavy (wdth 85, weight 800), not wide: Bricolage's width axis stops at 100 (see § 3).
+- The palette ships as the backend theme defaults (`mealie/core/settings/themes.py`), with semantic colours desaturated 10 %. The frontend no longer filters stock colours, and the stale `runtimeConfig.public.themes` block is gone.
+- One dark token block serves both `.v-theme--dark` and cook mode (`.ds-cook`), so cook mode is always dark.
+- Rail and tab bar carry no saffron. The mobile floating "+" is ink, not saffron, so each screen keeps its one saffron element for content.
+- Desktop gets an ink "+" in the top bar, sharing the mobile create menu (add recipe from URL, create recipe, add to plan, add to shopping list).
+- The rail's user item opens a user menu: Profile, Admin (admins only), Language, Theme (light, dark, system), Log out. On mobile the same menu sits behind a settings icon in the top bar.
+- Cookbooks have no navigation entry; their pages remain reachable by URL.
+
+### Screens
+- **Today:** as § 4.1. "Make again" keeps the 30-day rule. A lunch-only day reads "Nothing planned tonight" rather than repeating lunch on the board. "Ask Claude" links to Connections only while no MCP connection exists.
+- **Recipes:** the upstream recipe explorer moved to `/g/:slug/recipes`, and the top-bar search lands there. Old explorer links on `/g/:slug` redirect with their query. The explorer itself stays upstream Vuetify (§ 4.7). Its placeholder icon is stone, not saffron.
+- **Plan:** week navigation lives in a row under the top bar, whose title is the week range. Empty days on Today link here with `?start=<that day>`, and the planner frames the household week containing it. Keyboard "Move to…" works alongside drag. The kebab keeps Add week to shopping list, Calendar feed, Meal plan settings and the **classic planner**. The classic planner is kept because its random meal (meal-plan rules) has no equivalent in the new planner.
+- **Recipe:** edit mode is the untouched upstream recipe page. The read page shows rating and favourite near the title, nutrition as a collapsed section when present, and a token servings stepper. Its kebab holds Share, Print, Duplicate, Download and Delete. Substitutions, assets, print preferences, group actions and the unit-system switch stay in the editor and card menus.
+- **Cook:** mobile shows a compact strip of the current step's ingredients above the step, with a sheet for the full list. Saffron marks the step's ingredients and finished timers. Timers run on the wall clock and survive step changes. `?scale=` is carried over from the read page.
+- **Shop:** grouped by list label order, with unlabelled items last as "Other". The saffron element is the "N to buy" badge in the bar. Upstream item search and manual drag reorder are dropped, since aisle grouping replaces manual order. "Uncheck all" sits in the kebab. "Recipes on this list" is the upstream component, restyled onto hairline cards.
+- **Connections and consent:** restyled onto tokens with content unchanged. The consent page keeps the scope list, Approve and Deny, the http(s)-only redirect guard and the expired or refused states. It runs in the `basic` layout, which is now a token top bar with the brand and a language and theme menu.
+- **Login:** token page with the brand, a stone first-login card instead of the blue alert, and one saffron "Login" button. All sign-in paths (password, OIDC, reverse proxy) behave as before.
+
+### Vuetify fallback (§ 4.7)
+- `BaseDialog` headers are neutral: stone surface, ink title, hairline. The colour prop only tints the icon, so a delete dialog keeps a red icon and a red Confirm. Dialog and bottom-sheet toolbars that pick no colour default to the surface (`nuxt.config.ts` defaults).
+- `.text-primary` renders in the text colour, so focused fields, toggles, chips and text buttons on untouched pages never show saffron text.
+
+### Housekeeping
+- `DefaultLayout.vue` is deleted. `AppHeader` and `AppSidebar` stay because the admin layout still uses them.
+- `useToday` relies on `useDayRollover` for its midnight rollover.
+- Strings live in their own namespaces (`app-shell`, `home-today`, `planner`, `recipe-read`, `cook`, `shop`) in **en-US and fr-FR**. This fork adds fr-FR alongside en-US; drop those hunks before any upstream PR.
