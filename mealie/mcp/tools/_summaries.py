@@ -85,7 +85,7 @@ def time_text(text: str | None, seconds: int | None) -> str | None:
         return text
     if not seconds:
         return None
-    minutes = round(seconds / 60)
+    minutes = max(1, round(seconds / 60))  # a few seconds read as "1 minute", never "0 minutes"
     return f"{minutes} minute" if minutes == 1 else f"{minutes} minutes"
 
 

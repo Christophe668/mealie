@@ -5,7 +5,9 @@ from typing import Any
 
 import pytest
 from mcp.server.auth.provider import AccessToken
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from mealie.mcp import auth, context
@@ -17,11 +19,13 @@ from mealie.mcp.tools._summaries import time_text
 from mealie.mcp.tools.recipe_write import create_recipe, to_tool_error
 from mealie.mcp.tools.recipes import get_recipe_impl
 from mealie.schema.recipe.recipe import Recipe
+from mealie.schema.recipe.recipe_category import TagSave
 from mealie.schema.recipe.recipe_ingredient import SaveIngredientFood, SaveIngredientUnit
 from mealie.schema.response.pagination import PaginationQuery
 from mealie.services.claude_context import recipe_writer as recipe_writer_module
-from mealie.services.claude_context.recipe_writer import RecipeCreateIn
+from mealie.services.claude_context.recipe_writer import RecipeCreateIn, RecipeWriter
 from mealie.services.event_bus_service.event_types import EventTypes
+from mealie.services.recipe.recipe_service import RecipeService
 from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
 
@@ -305,3 +309,226 @@ def test_time_text_prefers_text_then_seconds():
     assert time_text(None, 5400) == "90 minutes"
     assert time_text(None, None) is None
     assert time_text(None, 0) is None
+
+
+# ---------------------------------------------------------------------- nothing stays behind
+
+
+@pytest.mark.asyncio
+async def test_near_duplicate_new_organizers_create_one_each(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    """ "Dinner", "Dinners" and "Dinnerr" are one organizer for Mealie's resolver; planning must agree."""
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    t = random_string(6)
+    before = _counts(user)
+
+    result = await create_recipe(
+        name="Stew",
+        ingredients=["1 onion"],
+        instructions=["Simmer."],
+        tags=[f"Dinner{t}", f"Dinners{t}", f"Dinnerr{t}"],
+        categories=[f"Mains{t}", f"Main{t}"],
+        tools=[f"Casserole{t}", f"Casseroles{t}"],
+    )
+
+    after = _counts(user)
+    assert after["tags"] == before["tags"] + 1
+    assert after["categories"] == before["categories"] + 1
+    assert after["tools"] == before["tools"] + 1
+    assert result["tags"] == [f"Dinner{t}"]
+    assert result["categories"] == [f"Mains{t}"]
+    assert result["tools"] == [f"Casserole{t}"]
+
+
+@pytest.mark.asyncio
+async def test_failed_save_removes_only_rows_this_call_created(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    """Choice (b): if the save fails after apply(), the foods, units and organizers this call created
+    are deleted, and rows that already existed are kept."""
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    existing_food = user.repos.ingredient_foods.create(
+        SaveIngredientFood(name=random_string(10), group_id=user.group_id)
+    )
+    existing_tag = user.repos.tags.create(TagSave(name=random_string(10), group_id=user.group_id))
+    before = _counts(user)
+
+    def broken_create_one(self, recipe):
+        raise IntegrityError("INSERT INTO recipes ...", {}, Exception("UNIQUE constraint failed: recipes.slug"))
+
+    monkeypatch.setattr(RecipeService, "create_one", broken_create_one)
+
+    with pytest.raises(McpToolError) as caught:
+        await create_recipe(
+            name="Soup",
+            ingredients=[
+                {"quantity": 1, "food": existing_food.name},
+                {"quantity": 2, "unit": random_string(8), "food": random_string(10)},
+                f"3 {random_string(9)}",
+            ],
+            instructions=["Cook."],
+            tags=[existing_tag.name, random_string(10)],
+            categories=[random_string(10)],
+            tools=[random_string(10)],
+        )
+
+    message = str(caught.value)
+    assert message.startswith("Mealie couldn't save the recipe: a database error")
+    assert "INSERT" not in message and "UNIQUE" not in message
+    session.expire_all()
+    assert _counts(user) == before
+    assert user.repos.ingredient_foods.get_one(existing_food.id) is not None
+    assert user.repos.tags.get_one(existing_tag.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_failures_after_the_save_return_the_recipe_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(recipe_write, "get_recipe_impl", broken)
+    monkeypatch.setattr(RecipeWriter, "publish", broken)
+
+    result = await create_recipe(name="Rice", ingredients=["1 cup rice"], instructions=["Boil."])
+
+    assert set(result) == {"id", "name", "slug", "url", "warning"}
+    assert "saved" in result["warning"] and "Don't create it again" in result["warning"]
+    assert result["url"].endswith(f"/r/{result['slug']}")
+    assert _stored(user, result["slug"]).name == "Rice"
+
+
+# ---------------------------------------------------------------------- readable refusals
+
+
+@pytest.mark.asyncio
+async def test_non_finite_numbers_refused(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    before = _counts(user)
+
+    with pytest.raises(McpToolError, match=r"ingredients\.0\.quantity: Input should be a finite number"):
+        await create_recipe(name="X", ingredients=[{"quantity": float("inf"), "food": "egg"}], instructions=["Go."])
+    with pytest.raises(McpToolError, match="servings: Input should be a finite number"):
+        await create_recipe(name="X", ingredients=["1 egg"], instructions=["Go."], servings=float("nan"))
+
+    assert _counts(user) == before
+
+
+@pytest.mark.asyncio
+async def test_wrong_argument_types_get_our_message(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    """Through the SDK: the arguments reach RecipeCreateIn, not the SDK's own argument model."""
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    before = _counts(user)
+
+    with pytest.raises(ToolError) as caught:
+        await mcp_server.call_tool(
+            "create_recipe",
+            {"name": "X", "ingredients": [5], "instructions": ["Go."], "tags": "dinner", "cook_minutes": 5.5},
+        )
+
+    message = str(caught.value)
+    assert "create_recipeArguments" not in message and "pydantic.dev" not in message
+    assert "ingredients.0: expected a text line or an object" in message
+    assert "tags: Input should be a valid list" in message
+    assert "cook_minutes:" in message
+    assert _counts(user) == before
+
+
+@pytest.mark.asyncio
+async def test_tool_schema_still_describes_the_shape():
+    tools = {tool.name: tool for tool in await mcp_server.list_tools()}
+    schema = tools["create_recipe"].input_schema
+
+    assert set(schema["required"]) == {"name", "ingredients", "instructions"}
+    ingredients = schema["properties"]["ingredients"]
+    assert ingredients["type"] == "array"
+    object_item = next(item for item in ingredients["items"]["anyOf"] if item["type"] == "object")
+    assert set(object_item["properties"]) == {"quantity", "unit", "food", "note", "section"}
+    assert {"type": "null"} in schema["properties"]["servings"]["anyOf"]
+
+
+def test_to_tool_error_keeps_unknown_keys_and_drops_union_noise():
+    def message(**kwargs: Any) -> str:
+        with pytest.raises(ValidationError) as caught:
+            RecipeCreateIn(**kwargs)
+        return str(to_tool_error(caught.value))
+
+    base: dict[str, Any] = {"name": "Soup", "ingredients": ["1 egg"], "instructions": ["Cook."]}
+
+    unknown = message(**{**base, "ingredients": [{"Quantity": 1, "food": "egg"}, {"str": 1, "food": "egg"}]})
+    assert "ingredients.0.Quantity: Extra inputs are not permitted" in unknown
+    assert "ingredients.1.str: Extra inputs are not permitted" in unknown
+    assert "IngredientIn" not in unknown and "function-after" not in unknown
+
+    step = message(**{**base, "instructions": [{"txt": "Boil."}]})
+    assert "instructions.0.text: Field required" in step
+    assert "instructions.0.txt: Extra inputs are not permitted" in step
+    assert "valid string" not in step  # the plain-string branch didn't apply
+
+    assert message(**{**base, "instructions": [7]}) == "instructions.0: expected a text line or an object"
+    assert message(**{**base, "Colour": "red"}) == "Colour: Extra inputs are not permitted"
+
+
+@pytest.mark.parametrize("name", ["!!!", "...", "🍅"])
+def test_food_and_unit_names_must_have_a_letter_or_digit(name: str):
+    with pytest.raises(ValidationError, match="food or unit name needs at least one letter or digit"):
+        RecipeCreateIn(name="Soup", ingredients=[{"food": name}], instructions=["Cook."])
+    with pytest.raises(ValidationError, match="food or unit name needs at least one letter or digit"):
+        RecipeCreateIn(name="Soup", ingredients=[{"food": "egg", "unit": name}], instructions=["Cook."])
+
+
+@pytest.mark.parametrize("bad", ["a\x00b", "a\x07b", "a\x1bb", "a\rb"])
+def test_control_characters_refused(bad: str):
+    base: dict[str, Any] = {"name": "Soup", "ingredients": ["1 egg"], "instructions": ["Cook."]}
+    for override in (
+        {"name": bad},
+        {"description": bad},
+        {"yield_text": bad},
+        {"source_url": f"https://example.com/{bad}"},
+        {"ingredients": [bad]},
+        {"ingredients": [{"food": bad}]},
+        {"ingredients": [{"food": "egg", "note": bad}]},
+        {"instructions": [bad]},
+        {"instructions": [{"text": "Boil.", "title": bad}]},
+        {"notes": [{"title": "Tip", "text": bad}]},
+        {"tags": [bad]},
+    ):
+        with pytest.raises(ValidationError, match="control characters"):
+            RecipeCreateIn(**{**base, **override})
+
+    allowed = RecipeCreateIn(**{**base, "instructions": ["Boil.\n\tThen drain."], "description": "a\tb\nc"})
+    assert allowed.description == "a\tb\nc"
+
+
+@pytest.mark.asyncio
+async def test_punctuation_only_plain_line_is_kept_as_a_note(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    foods_before = _counts(user)["foods"]
+
+    result = await create_recipe(name="Odd", ingredients=["!!!", "???"], instructions=["Look."])
+
+    assert [i["food"] for i in result["ingredients"]] == [None, None]
+    assert [i["note"] for i in result["ingredients"]] == ["!!!", "???"]
+    assert _counts(user)["foods"] == foods_before
+
+
+def test_time_text_never_says_zero_minutes():
+    assert time_text(None, 30) == "1 minute"
+    assert time_text(None, 1) == "1 minute"
+    assert time_text(None, 89) == "1 minute"

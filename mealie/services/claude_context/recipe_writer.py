@@ -43,6 +43,7 @@ from mealie.schema.recipe.recipe_step import RecipeStep
 from mealie.schema.user.user import DEFAULT_INTEGRATION_ID, PrivateUser
 from mealie.services.event_bus_service.event_bus_service import EventBusService
 from mealie.services.event_bus_service.event_types import EventOperation, EventRecipeData, EventTypes
+from mealie.services.matching import find_match
 from mealie.services.parser_services._base import ABCIngredientParser
 from mealie.services.parser_services.ingredient_parser import get_parser
 from mealie.services.recipe.organizer_resolver import OrganizerResolver
@@ -68,11 +69,32 @@ MAX_TEXT = 5000  # step text, note text, description
 MAX_URL = 2000
 
 
+# C0 control characters other than tab and newline; PostgreSQL refuses NUL in text columns
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f]")
+
+
+def _printable(text: str) -> str:
+    if _CONTROL_CHARS.search(text):
+        raise ValueError("text must not contain control characters (only tab and newline are allowed)")
+    return text
+
+
+def _capped(max_length: int, min_length: int = 1) -> StringConstraints:
+    return StringConstraints(strip_whitespace=True, min_length=min_length, max_length=max_length)
+
+
 # Strings that must not be blank, with a length cap; surrounding whitespace is dropped.
-ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_NAME)]
-Line = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_LINE)]
-LongText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_TEXT)]
+ShortText = Annotated[str, _capped(MAX_NAME), AfterValidator(_printable)]
+Line = Annotated[str, _capped(MAX_LINE), AfterValidator(_printable)]
+LongText = Annotated[str, _capped(MAX_TEXT), AfterValidator(_printable)]
 Minutes = Annotated[int, Field(ge=0, le=MAX_MINUTES)]
+
+
+def _matchable(name: str) -> str:
+    # foods and units are matched on their normalized name; "!!!" and "???" would both normalize to ""
+    if not IngredientFoodModel.normalize(name):
+        raise ValueError("a food or unit name needs at least one letter or digit")
+    return name
 
 
 def _sluggable(name: str) -> str:
@@ -96,27 +118,26 @@ def _web_url(url: str) -> str:
     return url
 
 
-RecipeName = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_RECIPE_NAME),
-    AfterValidator(_recipe_name),
-]
+RecipeName = Annotated[str, _capped(MAX_RECIPE_NAME), AfterValidator(_printable), AfterValidator(_recipe_name)]
 OrganizerName = Annotated[ShortText, AfterValidator(_sluggable)]
-SourceUrl = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_URL), AfterValidator(_web_url)
-]
+FoodOrUnitName = Annotated[ShortText, AfterValidator(_matchable)]
+SourceUrl = Annotated[str, _capped(MAX_URL), AfterValidator(_printable), AfterValidator(_web_url)]
+# may be empty (clears the field on an update)
+Description = Annotated[str, _capped(MAX_TEXT, min_length=0), AfterValidator(_printable)]
+YieldText = Annotated[str, _capped(MAX_NAME, min_length=0), AfterValidator(_printable)]
 
 
 class _In(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # allow_inf_nan=False: JSON 1e999 parses to inf, which no quantity or serving count can be
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
 class IngredientIn(_In):
     """One structured ingredient line. `section` is the section title the line starts."""
 
     quantity: float | None = Field(default=None, ge=0)
-    unit: ShortText | None = None
-    food: ShortText | None = None
+    unit: FoodOrUnitName | None = None
+    food: FoodOrUnitName | None = None
     note: Line | None = None
     section: ShortText | None = None
 
@@ -147,9 +168,9 @@ class RecipeFieldsIn(_In):
     keeps its current value, and a list that is sent replaces the whole list."""
 
     name: RecipeName | None = None
-    description: Annotated[str, StringConstraints(max_length=MAX_TEXT)] | None = None
+    description: Description | None = None
     servings: float | None = Field(default=None, gt=0, le=MAX_SERVINGS)
-    yield_text: Annotated[str, StringConstraints(max_length=MAX_NAME)] | None = None
+    yield_text: YieldText | None = None
     prep_minutes: Minutes | None = None
     cook_minutes: Minutes | None = None
     total_minutes: Minutes | None = None
@@ -187,6 +208,21 @@ class PlannedRecipe:
     new_tools: list[str] = field(default_factory=list)
 
 
+class _PlannedName(BaseModel):
+    name: str
+
+
+@dataclass
+class CreatedRows:
+    """Ids of the rows one `apply()` created."""
+
+    foods: list[UUID] = field(default_factory=list)
+    units: list[UUID] = field(default_factory=list)
+    tags: list[UUID] = field(default_factory=list)
+    categories: list[UUID] = field(default_factory=list)
+    tools: list[UUID] = field(default_factory=list)
+
+
 class RecipeWriter:
     def __init__(self, repos: AllRepositories, user: PrivateUser, household: HouseholdInDB, translator: Translator):
         self.repos = repos
@@ -198,6 +234,7 @@ class RecipeWriter:
         self.service = RecipeService(repos, user, household, translator)
         self._nlp: ABCIngredientParser | None = None
         self._brute: ABCIngredientParser | None = None
+        self.created = CreatedRows()
 
     # --- build ------------------------------------------------------------------------------
 
@@ -221,14 +258,15 @@ class RecipeWriter:
             recipe.notes = [RecipeNote(title=note.title, text=note.text) for note in fields.notes]
 
         resolver = OrganizerResolver(self.repos)
+        threshold = resolver.fuzzy_match_threshold
         if fields.tags is not None:
-            recipe.tags, planned.new_tags = self._plan_organizers(fields.tags, resolver.resolve_tags)
+            recipe.tags, planned.new_tags = self._plan_organizers(fields.tags, resolver.resolve_tags, threshold)
         if fields.categories is not None:
             recipe.recipe_category, planned.new_categories = self._plan_organizers(
-                fields.categories, resolver.resolve_categories
+                fields.categories, resolver.resolve_categories, threshold
             )
         if fields.tools is not None:
-            recipe.tools, planned.new_tools = self._plan_organizers(fields.tools, resolver.resolve_tools)
+            recipe.tools, planned.new_tools = self._plan_organizers(fields.tools, resolver.resolve_tools, threshold)
 
         return planned
 
@@ -288,7 +326,7 @@ class RecipeWriter:
             except Exception:
                 logger.exception("Brute force ingredient parser failed; keeping the line as a note")
 
-        if parsed is None or parsed.food is None or not parsed.food.name:
+        if parsed is None or parsed.food is None or not IngredientFoodModel.normalize(parsed.food.name or ""):
             return RecipeIngredient(quantity=None, note=line, original_text=line)
 
         return RecipeIngredient(
@@ -322,26 +360,38 @@ class RecipeWriter:
         planned.new_units = list(units.values())
 
     @staticmethod
-    def _plan_organizers[T: RecipeTag](names: list[str], resolve: Callable[..., list[T]]) -> tuple[list[T], list[str]]:
-        """Splits names into existing organizers (matched as the AI importer does) and new names."""
+    def _plan_organizers[T: RecipeTag](
+        names: list[str], resolve: Callable[..., list[T]], threshold: int
+    ) -> tuple[list[T], list[str]]:
+        """Splits names into existing organizers and new names, matched the way `OrganizerResolver`
+        matches (slug, then fuzzy at its threshold). A new name that matches a new name planned
+        earlier in the same call ("Dinner", "Dinners") is the same organizer, exactly as `apply()`'s
+        resolver sees it once the first one exists, so `apply()` creates what is planned here."""
         existing: list[T] = []
         new: list[str] = []
+        planned: dict[str, _PlannedName] = {}
         seen: set[UUID | None] = set()
         for name in names:
             matches = resolve([name], create_missing=False)
-            if not matches:
-                # the resolver creates one organizer per slug, so "Quick meal" and "quick-meal" are one
-                if slugify(name) not in {slugify(n) for n in new}:
-                    new.append(name)
-            elif matches[0].id not in seen:
-                seen.add(matches[0].id)
-                existing.append(matches[0])
+            if matches:
+                if matches[0].id not in seen:
+                    seen.add(matches[0].id)
+                    existing.append(matches[0])
+                continue
+            slug = slugify(name)
+            if find_match(slug, store_map=planned, fuzzy_match_threshold=threshold) is None:
+                planned[slug] = _PlannedName(name=name)
+                new.append(name)
         return existing, new
 
     # --- apply ------------------------------------------------------------------------------
 
     def apply(self, planned: PlannedRecipe) -> Recipe:
-        """Creates what `build()` planned and returns the recipe, ready for `RecipeService`."""
+        """Creates what `build()` planned and returns the recipe, ready for `RecipeService`.
+
+        Every row it creates is remembered in `self.created`, so `discard_created()` can remove
+        exactly those if the save fails afterwards (the repositories commit on every write)."""
+        self.created = CreatedRows()
         recipe = planned.recipe
         foods: dict[str, IngredientFood] = {}
         units: dict[str, IngredientUnit] = {}
@@ -354,41 +404,88 @@ class RecipeWriter:
 
         resolver = OrganizerResolver(self.repos)
         if planned.new_tags:
-            recipe.tags = self._merge(recipe.tags or [], resolver.resolve_tags(planned.new_tags, create_missing=True))
+            tags = self._create_organizers(planned.new_tags, resolver.resolve_tags, self.created.tags)
+            recipe.tags = self._merge(recipe.tags or [], tags)
         if planned.new_categories:
-            recipe.recipe_category = self._merge(
-                recipe.recipe_category or [], resolver.resolve_categories(planned.new_categories, create_missing=True)
+            categories = self._create_organizers(
+                planned.new_categories, resolver.resolve_categories, self.created.categories
             )
+            recipe.recipe_category = self._merge(recipe.recipe_category or [], categories)
         if planned.new_tools:
-            recipe.tools = self._merge(recipe.tools, resolver.resolve_tools(planned.new_tools, create_missing=True))
+            tools = self._create_organizers(planned.new_tools, resolver.resolve_tools, self.created.tools)
+            recipe.tools = self._merge(recipe.tools, tools)
 
         return recipe
 
     def _create_food(self, name: str, created: dict[str, IngredientFood]) -> IngredientFood:
         key = IngredientFoodModel.normalize(name)
         if key not in created:
-            # the importer's helper: matches once more, then creates the food in the user's group
-            data = self.service._transform_food({"name": name})
-            food = self.repos.ingredient_foods.get_one(data["id"]) if data else None
+            # matched once more first, so only a food this call really creates is recorded
+            food = self.service._get_data_matcher().find_food_match(name)
             if food is None:
-                raise RuntimeError(f"could not create food {name!r}")
+                # the importer's helper: creates the food in the user's group
+                data = self.service._transform_food({"name": name})
+                food = self.repos.ingredient_foods.get_one(data["id"]) if data else None
+                if food is None:
+                    raise RuntimeError(f"could not create food {name!r}")
+                self.created.foods.append(food.id)
             created[key] = food
         return created[key]
 
     def _create_unit(self, name: str, created: dict[str, IngredientUnit]) -> IngredientUnit:
         key = IngredientUnitModel.normalize(name)
         if key not in created:
-            data = self.service._transform_unit({"name": name})
-            unit = self.repos.ingredient_units.get_one(data["id"]) if data else None
+            unit = self.service._get_data_matcher().find_unit_match(name)
             if unit is None:
-                raise RuntimeError(f"could not create unit {name!r}")
+                data = self.service._transform_unit({"name": name})
+                unit = self.repos.ingredient_units.get_one(data["id"]) if data else None
+                if unit is None:
+                    raise RuntimeError(f"could not create unit {name!r}")
+                self.created.units.append(unit.id)
             created[key] = unit
         return created[key]
 
     @staticmethod
+    def _create_organizers[T: RecipeTag](
+        names: list[str], resolve: Callable[..., list[T]], created: list[UUID]
+    ) -> list[T]:
+        result: list[T] = []
+        for name in names:
+            found = resolve([name], create_missing=False)
+            if not found:
+                found = resolve([name], create_missing=True)
+                created.extend(item.id for item in found if item.id is not None)
+            result.extend(found)
+        return result
+
+    @staticmethod
     def _merge[T: RecipeTag](existing: list[T], added: list[T]) -> list[T]:
+        """`existing` plus the items of `added` not already in it; each id once."""
+        merged = list(existing)
         ids = {item.id for item in existing}
-        return existing + [item for item in added if item.id not in ids]
+        for item in added:
+            if item.id not in ids:
+                ids.add(item.id)
+                merged.append(item)
+        return merged
+
+    def discard_created(self) -> None:
+        """Deletes the rows the last `apply()` created, and only those; used when the save fails.
+        Best effort: a row that can't be deleted is logged."""
+        repos = self.repos
+        for ids, repo in (
+            (self.created.tags, repos.tags),
+            (self.created.categories, repos.categories),
+            (self.created.tools, repos.tools),
+            (self.created.foods, repos.ingredient_foods),
+            (self.created.units, repos.ingredient_units),
+        ):
+            for row_id in ids:
+                try:
+                    repo.delete(row_id)
+                except Exception:
+                    logger.exception(f"Could not remove {row_id} after a failed recipe save")
+        self.created = CreatedRows()
 
     # --- reads and events -------------------------------------------------------------------
 

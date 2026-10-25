@@ -1,24 +1,32 @@
 """Recipe-writing tools (spec § 3). Thin wrappers over `RecipeWriter`, which maps the input to a Mealie
 recipe; saving goes through `RecipeService`, as in the UI."""
 
-import re
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import ValidationError
+from pydantic import ValidationError, WithJsonSchema
+from sqlalchemy.exc import SQLAlchemyError
 
+from mealie.core.root_logger import get_logger
 from mealie.mcp.auth import require_scope
 from mealie.mcp.context import McpContext
 from mealie.mcp.errors import McpToolError
 from mealie.mcp.server import mcp_server
 from mealie.mcp.tools import run_in_context
+from mealie.mcp.tools._summaries import recipe_url
 from mealie.mcp.tools.recipes import get_recipe_impl
-from mealie.services.claude_context.recipe_writer import RecipeCreateIn, RecipeWriter
+from mealie.services.claude_context.recipe_writer import IngredientIn, NoteIn, RecipeCreateIn, RecipeWriter, StepIn
 
-# Pydantic tags errors inside a union member with the member ("StepIn", "constrained-str",
-# "function-after[...]"). Field names are lower-case identifiers and list indexes are ints.
-_UNION_TAG = re.compile(r"^[A-Z]|[\[\-]")
+logger = get_logger(__name__)
+
+# Pydantic tags an error inside a union member with the member: a model name ("StepIn") or a
+# validator description ("constrained-str", "function-after[_printable(), constrained-str]").
+_UNION_MEMBERS = {"str", IngredientIn.__name__, StepIn.__name__, NoteIn.__name__}
 # The error a union member reports when the input is the other kind (a string for an object or vice versa).
 _WRONG_KIND = {"model_type", "model_attributes_type", "dict_type", "string_type"}
+
+
+def _is_union_tag(part: str | int) -> bool:
+    return isinstance(part, str) and (part in _UNION_MEMBERS or "[" in part or "-" in part)
 
 
 def to_tool_error(exc: Exception) -> McpToolError:
@@ -32,7 +40,10 @@ def to_tool_error(exc: Exception) -> McpToolError:
     wrong_kind: dict[str, str] = {}
     paths_with_real_errors: set[str] = set()
     for error in exc.errors():
-        parts = [str(part) for part in error["loc"] if isinstance(part, int) or not _UNION_TAG.search(part)]
+        loc = list(error["loc"])
+        # an unknown key is the last part of its location, whatever it looks like
+        key = [loc.pop()] if error["type"] == "extra_forbidden" and loc else []
+        parts = [str(part) for part in loc if not _is_union_tag(part)] + [str(k) for k in key]
         in_union = len(parts) < len(error["loc"])
         path = ".".join(parts) or "input"
         message = error["msg"].removeprefix("Value error, ")
@@ -51,41 +62,114 @@ def to_tool_error(exc: Exception) -> McpToolError:
     return McpToolError("; ".join(messages) or str(exc))
 
 
+def _save_error(exc: Exception) -> McpToolError:
+    # no SQL in the message: the details are in the log
+    reason = "a database error" if isinstance(exc, SQLAlchemyError) else str(exc) or type(exc).__name__
+    return McpToolError(f"Mealie couldn't save the recipe: {reason}. Nothing was saved; you can try again.")
+
+
 async def create_recipe_impl(ctx: McpContext, fields: RecipeCreateIn) -> dict[str, Any]:
     """Validated input → plan (read-only) → create the missing foods, units and organizers → save → event.
 
-    Repositories commit on every write, so a refusal must happen before `apply()`: the input is
-    validated by `RecipeCreateIn` and `build()` parses and matches without writing. What runs after
-    `apply()` (the save, reads for the response, the event) has nothing left to refuse."""
+    Repositories commit on every write, so refusals happen before `apply()`: `RecipeCreateIn`
+    validates, and `build()` parses and matches without writing. If `apply()` or the save still
+    fails, the rows `apply()` created in this call (and only those) are deleted, so nothing stays
+    behind. Once the recipe is saved the call succeeds: a failing read-back or event is logged and
+    reported as a `warning`, so Claude doesn't retry and create a duplicate."""
     writer = RecipeWriter(ctx.repos, ctx.user, ctx.household, ctx.translator)
     planned = await writer.build(fields)
 
-    created = writer.service.create_one(writer.apply(planned))
+    try:
+        created = writer.service.create_one(writer.apply(planned))
+    except Exception as e:
+        logger.exception("create_recipe: saving the recipe failed; removing the rows this call created")
+        ctx.session.rollback()
+        writer.discard_created()
+        raise _save_error(e) from e
 
-    result = get_recipe_impl(ctx, str(created.id))
-    # Mealie saved a duplicate name as "Name (1)"; list the earlier recipes, not the new one
-    result["similar_existing"] = writer.similar_existing(fields.name, exclude_id=created.id)
-    writer.publish(created, "create")
+    warnings: list[str] = []
+    try:
+        result = get_recipe_impl(ctx, str(created.id))
+        # Mealie saved a duplicate name as "Name (1)"; list the earlier recipes, not the new one
+        result["similar_existing"] = writer.similar_existing(fields.name, exclude_id=created.id)
+    except Exception:
+        logger.exception(f"create_recipe: reading back {created.slug} failed")
+        result = {
+            "id": str(created.id),
+            "name": created.name,
+            "slug": created.slug,
+            "url": recipe_url(ctx.user.group_slug, created.slug),
+        }
+        warnings.append("the recipe was saved, but reading it back failed; use get_recipe to see it")
+    try:
+        writer.publish(created, "create")
+    except Exception:
+        logger.exception(f"create_recipe: publishing the event for {created.slug} failed")
+        warnings.append("the recipe was saved, but Mealie's notifications for it failed")
+    if warnings:
+        result["warning"] = "; ".join(warnings) + ". Don't create it again."
     return result
+
+
+# The SDK validates arguments against the signature before the tool runs, with an unreadable
+# message, so every parameter accepts anything (`Any`) and `RecipeCreateIn` does the validation.
+# `WithJsonSchema` still shows Claude the real shape.
+_STR = {"type": "string"}
+_INGREDIENT = {
+    "anyOf": [
+        {"type": "string", "description": 'a plain line, e.g. "200 g spaghetti"'},
+        {
+            "type": "object",
+            "properties": {
+                "quantity": {"type": "number"},
+                "unit": _STR,
+                "food": _STR,
+                "note": _STR,
+                "section": _STR,
+            },
+        },
+    ]
+}
+_STEP = {
+    "anyOf": [
+        _STR,
+        {
+            "type": "object",
+            "properties": {"text": _STR, "title": _STR, "timer_minutes": {"type": "integer"}},
+            "required": ["text"],
+        },
+    ]
+}
+_NOTE = {"type": "object", "properties": {"title": _STR, "text": _STR}, "required": ["title", "text"]}
+
+
+def _schema(schema: dict[str, Any], optional: bool = True) -> WithJsonSchema:
+    return WithJsonSchema({"anyOf": [schema, {"type": "null"}]} if optional else schema)
+
+
+Str = Annotated[Any, _schema(_STR)]
+Number = Annotated[Any, _schema({"type": "number"})]
+Integer = Annotated[Any, _schema({"type": "integer"})]
+Names = Annotated[Any, _schema({"type": "array", "items": _STR})]
 
 
 @mcp_server.tool()
 @require_scope("recipes:write")
 async def create_recipe(
-    name: str,
-    ingredients: list[dict[str, Any] | str],
-    instructions: list[dict[str, Any] | str],
-    description: str | None = None,
-    servings: float | None = None,
-    yield_text: str | None = None,
-    prep_minutes: int | None = None,
-    cook_minutes: int | None = None,
-    total_minutes: int | None = None,
-    tags: list[str] | None = None,
-    categories: list[str] | None = None,
-    tools: list[str] | None = None,
-    notes: list[dict[str, Any]] | None = None,
-    source_url: str | None = None,
+    name: Annotated[Any, _schema(_STR, optional=False)],
+    ingredients: Annotated[Any, _schema({"type": "array", "items": _INGREDIENT}, optional=False)],
+    instructions: Annotated[Any, _schema({"type": "array", "items": _STEP}, optional=False)],
+    description: Str = None,
+    servings: Number = None,
+    yield_text: Str = None,
+    prep_minutes: Integer = None,
+    cook_minutes: Integer = None,
+    total_minutes: Integer = None,
+    tags: Names = None,
+    categories: Names = None,
+    tools: Names = None,
+    notes: Annotated[Any, _schema({"type": "array", "items": _NOTE})] = None,
+    source_url: Str = None,
 ) -> dict[str, Any]:
     """Save a recipe you wrote (or adapted) to Mealie, owned by the user, in their household. When
     cooking for the household, check get_household_context first: respect every member's allergies
@@ -102,7 +186,8 @@ async def create_recipe(
     Lengths: recipe name 200, food/unit/tag/title 100, ingredient line or note 300, step/note text and
     description 5000 characters. Duplicate names are allowed (Mealie saves "Name (1)").
     Returns the recipe as get_recipe does (with its Mealie `url`), plus `similar_existing`: up to 3
-    earlier recipes with the same name, worth mentioning to the user."""
+    earlier recipes with the same name, worth mentioning to the user. A `warning` means the recipe was
+    saved but something after the save failed: don't create it again."""
     try:
         fields = RecipeCreateIn(
             name=name,
@@ -112,12 +197,12 @@ async def create_recipe(
             prep_minutes=prep_minutes,
             cook_minutes=cook_minutes,
             total_minutes=total_minutes,
-            ingredients=ingredients,  # type: ignore[arg-type]  # validated here
-            instructions=instructions,  # type: ignore[arg-type]
+            ingredients=ingredients,
+            instructions=instructions,
             tags=tags,
             categories=categories,
             tools=tools,
-            notes=notes,  # type: ignore[arg-type]
+            notes=notes,
             source_url=source_url,
         )
     except ValidationError as e:
