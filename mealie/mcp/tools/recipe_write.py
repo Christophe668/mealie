@@ -1,7 +1,9 @@
 """Recipe-writing tools (spec § 3). Thin wrappers over `RecipeWriter`, which maps the input to a Mealie
 recipe; saving goes through `RecipeService`, as in the UI."""
 
-from typing import Annotated, Any
+from collections.abc import Callable
+from typing import Annotated, Any, Literal
+from uuid import uuid4
 
 from pydantic import ValidationError, WithJsonSchema
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,6 +16,7 @@ from mealie.mcp.server import mcp_server
 from mealie.mcp.tools import run_in_context
 from mealie.mcp.tools._summaries import recipe_url
 from mealie.mcp.tools.recipes import get_recipe_impl
+from mealie.schema.recipe.recipe import Recipe
 from mealie.services.claude_context.recipe_writer import IngredientIn, NoteIn, RecipeCreateIn, RecipeWriter, StepIn
 
 logger = get_logger(__name__)
@@ -72,40 +75,80 @@ async def create_recipe_impl(ctx: McpContext, fields: RecipeCreateIn) -> dict[st
     """Validated input → plan (read-only) → create the missing foods, units and organizers → save → event.
 
     Repositories commit on every write, so refusals happen before `apply()`: `RecipeCreateIn`
-    validates, and `build()` parses and matches without writing. If `apply()` or the save still
-    fails, the rows `apply()` created in this call (and only those) are deleted, so nothing stays
-    behind. Once the recipe is saved the call succeeds: a failing read-back or event is logged and
-    reported as a `warning`, so Claude doesn't retry and create a duplicate."""
+    validates, and `build()` parses and matches without writing.
+
+    If `apply()` or the save still fails, what happens depends on whether the recipe row was
+    committed (`create_one` commits it before adding the rating and the timeline event):
+    - not saved: the rows `apply()` created in this call, and only those, are deleted, and the
+      error says nothing was saved;
+    - saved: nothing is deleted (the recipe uses those rows) and the call succeeds with a `warning`.
+    Once the recipe is saved, a failing read-back or event is also only a `warning`, so Claude
+    doesn't retry and create a duplicate."""
     writer = RecipeWriter(ctx.repos, ctx.user, ctx.household, ctx.translator)
     planned = await writer.build(fields)
-
-    try:
-        created = writer.service.create_one(writer.apply(planned))
-    except Exception as e:
-        logger.exception("create_recipe: saving the recipe failed; removing the rows this call created")
-        ctx.session.rollback()
-        writer.discard_created()
-        raise _save_error(e) from e
+    # our own id, so a failed save can tell whether the recipe row was committed
+    recipe_id = planned.recipe.id = planned.recipe.id or uuid4()
 
     warnings: list[str] = []
     try:
-        result = get_recipe_impl(ctx, str(created.id))
+        created = writer.service.create_one(writer.apply(planned))
+    except Exception as e:
+        logger.exception("create_recipe: saving the recipe failed")
+        ctx.session.rollback()
+        saved = ctx.repos.recipes.get_one(recipe_id, "id")
+        if saved is None:
+            writer.discard_created()
+            raise _save_error(e) from e
+        created = saved
+        warnings.append("the recipe was saved, but one of Mealie's follow-up steps (rating, timeline) failed")
+
+    def add_similar(result: dict[str, Any]) -> None:
         # Mealie saved a duplicate name as "Name (1)"; list the earlier recipes, not the new one
         result["similar_existing"] = writer.similar_existing(fields.name, exclude_id=created.id)
-    except Exception:
-        logger.exception(f"create_recipe: reading back {created.slug} failed")
-        result = {
-            "id": str(created.id),
-            "name": created.name,
-            "slug": created.slug,
-            "url": recipe_url(ctx.user.group_slug, created.slug),
-        }
-        warnings.append("the recipe was saved, but reading it back failed; use get_recipe to see it")
+
+    return finish_saved(ctx, writer, created, "create", warnings, add_similar)
+
+
+def saved_recipe_fallback(ctx: McpContext, recipe: Recipe, warnings: list[str]) -> dict[str, Any]:
+    """The minimal result for a recipe that is saved although a later step failed: enough for Claude
+    to point the user at it, and a `warning` that tells it not to write the recipe again."""
+    return {
+        "id": str(recipe.id),
+        "name": recipe.name,
+        "slug": recipe.slug,
+        "url": recipe_url(ctx.user.group_slug, recipe.slug),
+        "warning": "; ".join(warnings) + ". Don't create it again.",
+    }
+
+
+def finish_saved(
+    ctx: McpContext,
+    writer: RecipeWriter,
+    recipe: Recipe,
+    operation: Literal["create", "update"],
+    warnings: list[str],
+    extend: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """Everything after a committed save, none of which may fail the call: the `get_recipe` shape for
+    the result (plus `extend`'s fields), then the event. A failure is logged and becomes a `warning`
+    (with the minimal `saved_recipe_fallback` result when the read-back itself failed)."""
+    result: dict[str, Any] | None
     try:
-        writer.publish(created, "create")
+        result = get_recipe_impl(ctx, str(recipe.id))
+        if extend is not None:
+            extend(result)
     except Exception:
-        logger.exception(f"create_recipe: publishing the event for {created.slug} failed")
-        warnings.append("the recipe was saved, but Mealie's notifications for it failed")
+        logger.exception(f"reading back recipe {recipe.slug} failed")
+        result = None
+        warnings = [*warnings, "the recipe was saved, but reading it back failed; use get_recipe to see it"]
+    try:
+        writer.publish(recipe, operation)
+    except Exception:
+        logger.exception(f"publishing the {operation} event for {recipe.slug} failed")
+        warnings = [*warnings, "the recipe was saved, but Mealie's notifications for it failed"]
+
+    if result is None:
+        return saved_recipe_fallback(ctx, recipe, warnings)
     if warnings:
         result["warning"] = "; ".join(warnings) + ". Don't create it again."
     return result

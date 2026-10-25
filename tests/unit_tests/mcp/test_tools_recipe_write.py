@@ -23,8 +23,9 @@ from mealie.schema.recipe.recipe_category import TagSave
 from mealie.schema.recipe.recipe_ingredient import SaveIngredientFood, SaveIngredientUnit
 from mealie.schema.response.pagination import PaginationQuery
 from mealie.services.claude_context import recipe_writer as recipe_writer_module
-from mealie.services.claude_context.recipe_writer import RecipeCreateIn, RecipeWriter
+from mealie.services.claude_context.recipe_writer import IngredientIn, NoteIn, RecipeCreateIn, RecipeWriter, StepIn
 from mealie.services.event_bus_service.event_types import EventTypes
+from mealie.services.recipe import recipe_service as recipe_service_module
 from mealie.services.recipe.recipe_service import RecipeService
 from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
@@ -490,7 +491,7 @@ def test_food_and_unit_names_must_have_a_letter_or_digit(name: str):
         RecipeCreateIn(name="Soup", ingredients=[{"food": "egg", "unit": name}], instructions=["Cook."])
 
 
-@pytest.mark.parametrize("bad", ["a\x00b", "a\x07b", "a\x1bb", "a\rb"])
+@pytest.mark.parametrize("bad", ["a\x00b", "a\x07b", "a\x0bb", "a\x0cb", "a\x1bb"])
 def test_control_characters_refused(bad: str):
     base: dict[str, Any] = {"name": "Soup", "ingredients": ["1 egg"], "instructions": ["Cook."]}
     for override in (
@@ -532,3 +533,171 @@ def test_time_text_never_says_zero_minutes():
     assert time_text(None, 30) == "1 minute"
     assert time_text(None, 1) == "1 minute"
     assert time_text(None, 89) == "1 minute"
+
+
+def test_line_breaks_are_normalised():
+    fields = RecipeCreateIn(
+        name="Soup",
+        description="one\r\ntwo\rthree",
+        ingredients=["1 egg"],
+        instructions=["Boil.\r\nThen drain.", {"text": "Serve\r\nhot.", "title": "End"}],
+        notes=[{"title": "Tip", "text": "a\rb"}],
+    )
+
+    assert fields.description == "one\ntwo\nthree"
+    assert fields.instructions[0] == "Boil.\nThen drain."
+    step = fields.instructions[1]
+    assert isinstance(step, StepIn) and step.text == "Serve\nhot."
+    assert fields.notes is not None and fields.notes[0].text == "a\nb"
+
+
+# ---------------------------------------------------------------------- partial saves and cleanup
+
+
+@pytest.mark.asyncio
+async def test_failure_after_the_recipe_is_committed_keeps_it(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    """create_one commits the recipe, then adds the timeline event: if that fails, the recipe and the
+    foods and organizers it uses stay, and the result says it was saved."""
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    food, tag = random_string(10), random_string(10)
+    before = _counts(user)
+
+    def broken_timeline_event(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("timeline down")
+
+    monkeypatch.setattr(recipe_service_module, "RecipeTimelineEventCreate", broken_timeline_event)
+
+    result = await create_recipe(
+        name="Pilaf", ingredients=[{"quantity": 1, "food": food}], instructions=["Cook."], tags=[tag]
+    )
+
+    assert "saved" in result["warning"] and "Don't create it again" in result["warning"]
+    assert result["slug"] and result["url"].endswith(f"/r/{result['slug']}")
+    stored = _stored(user, result["slug"])
+    assert [t.name for t in stored.tags or []] == [tag]
+    assert stored.recipe_ingredient[0].food is not None and stored.recipe_ingredient[0].food.name == food
+    after = _counts(user)
+    assert (after["recipes"], after["foods"], after["tags"]) == (
+        before["recipes"] + 1,
+        before["foods"] + 1,
+        before["tags"] + 1,
+    )
+    assert result["tags"] == [tag]  # the read-back still worked, so the full shape is returned
+
+
+@pytest.mark.asyncio
+async def test_a_failing_cleanup_delete_is_logged_and_the_error_stays_readable(
+    monkeypatch: pytest.MonkeyPatch,
+    session: Session,
+    unique_user_fn_scoped: TestUser,
+    caplog: pytest.LogCaptureFixture,
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    before = _counts(user)
+    tags_repo_class = type(user.repos.tags)
+    real_delete = tags_repo_class.delete
+
+    def flaky_delete(self, value, match_key=None):
+        if self.model.__tablename__ == "tags":
+            raise RuntimeError("tag delete failed")
+        return real_delete(self, value, match_key)
+
+    def broken_create_one(self, recipe):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(tags_repo_class, "delete", flaky_delete)
+    monkeypatch.setattr(RecipeService, "create_one", broken_create_one)
+
+    with pytest.raises(McpToolError, match="^Mealie couldn't save the recipe: disk full. Nothing was saved"):
+        await create_recipe(
+            name="Soup",
+            ingredients=[{"quantity": 1, "food": random_string(10)}],
+            instructions=["Cook."],
+            tags=[random_string(10)],
+            categories=[random_string(10)],
+        )
+
+    assert "Could not remove" in caplog.text
+    session.expire_all()
+    after = _counts(user)
+    assert after["tags"] == before["tags"] + 1  # the one that couldn't be deleted (logged)
+    assert {k: v for k, v in after.items() if k != "tags"} == {k: v for k, v in before.items() if k != "tags"}
+
+
+# ---------------------------------------------------------------------- organizer matching
+
+
+async def _new_tag_rows(monkeypatch: pytest.MonkeyPatch, session: Session, user: TestUser, tags: list[str]):
+    _as_user(monkeypatch, session, user)
+    before = _counts(user)["tags"]
+    result = await create_recipe(name="Dish", ingredients=["1 egg"], instructions=["Cook."], tags=tags)
+    return _counts(user)["tags"] - before, result["tags"]
+
+
+@pytest.mark.asyncio
+async def test_non_transitive_near_names_follow_the_plan(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    """abcdefghij ~ abcdefghik and abcdefghik ~ abcdefghkk, but abcdefghij !~ abcdefghkk: the middle name
+    folds into the first and the third stays separate, in the plan and in the database."""
+    created, tags = await _new_tag_rows(
+        monkeypatch, session, unique_user_fn_scoped, ["abcdefghij", "abcdefghik", "abcdefghkk"]
+    )
+
+    assert created == 2
+    assert sorted(tags) == ["abcdefghij", "abcdefghkk"]
+
+
+@pytest.mark.asyncio
+async def test_accent_and_case_variants_are_one_organizer(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    t = random_string(6)
+    created, tags = await _new_tag_rows(
+        monkeypatch, session, unique_user_fn_scoped, [f"Crème{t}", f"CREME{t}", f"crème{t}"]
+    )
+
+    assert created == 1
+    assert tags == [f"Crème{t}"]
+
+
+@pytest.mark.asyncio
+async def test_existing_organizer_plus_near_duplicates_creates_only_the_new_one(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    t = random_string(6)
+    existing = user.repos.tags.create(TagSave(name=f"Dinner{t}", group_id=user.group_id))
+
+    created, tags = await _new_tag_rows(monkeypatch, session, user, [f"Dinners{t}", f"Dinnerr{t}", f"Lunch{t}"])
+
+    assert created == 1
+    assert sorted(tags) == sorted([existing.name, f"Lunch{t}"])
+    assert user.repos.tags.get_one(existing.id) is not None
+
+
+# ---------------------------------------------------------------------- schema drift
+
+
+@pytest.mark.asyncio
+async def test_hand_written_schema_matches_the_models():
+    tools = {tool.name: tool for tool in await mcp_server.list_tools()}
+    schema = tools["create_recipe"].input_schema
+
+    assert set(schema["properties"]) == set(RecipeCreateIn.model_fields)
+    assert set(schema["required"]) == {n for n, f in RecipeCreateIn.model_fields.items() if f.is_required()}
+
+    def object_branch(prop: dict[str, Any]) -> dict[str, Any]:
+        return next(item for item in prop["items"]["anyOf"] if item.get("type") == "object")
+
+    ingredient = object_branch(schema["properties"]["ingredients"])
+    step = object_branch(schema["properties"]["instructions"])
+    note = next(item for item in schema["properties"]["notes"]["anyOf"] if item.get("type") == "array")["items"]
+    for shown, model in ((ingredient, IngredientIn), (step, StepIn), (note, NoteIn)):
+        assert set(shown["properties"]) == set(model.model_fields), model.__name__
+        required = {n for n, f in model.model_fields.items() if f.is_required()}
+        assert set(shown.get("required", [])) == required, model.__name__

@@ -69,14 +69,15 @@ MAX_TEXT = 5000  # step text, note text, description
 MAX_URL = 2000
 
 
-# C0 control characters other than tab and newline; PostgreSQL refuses NUL in text columns
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f]")
+# C0 control characters other than tab, newline and carriage return; PostgreSQL refuses NUL in text
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 def _printable(text: str) -> str:
+    """Refuses control characters and turns Windows (CRLF) and old Mac (CR) line ends into newlines."""
     if _CONTROL_CHARS.search(text):
-        raise ValueError("text must not contain control characters (only tab and newline are allowed)")
-    return text
+        raise ValueError("text must not contain control characters (only tab and line breaks are allowed)")
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _capped(max_length: int, min_length: int = 1) -> StringConstraints:
