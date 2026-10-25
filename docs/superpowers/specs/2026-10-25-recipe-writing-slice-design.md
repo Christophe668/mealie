@@ -40,10 +40,10 @@ The server instructions in `mealie/mcp/server.py` currently say "Always confirm 
 
 > Follow the user's own instructions about confirming changes. When they haven't said, confirm before writing.
 
-Write tools docstrings that say "always confirm before writing" are aligned to the same wording. That covers the meal plan, shopping, pantry, feedback and household tools. Two semantic guards stay, because they are about truth, not confirmation:
+The policy lives in the server instructions only. Write tool docstrings no longer mention confirming: the household tool's "always confirm" is removed, not reworded, and the meal plan, shopping, pantry and feedback tools never had one. Two semantic guards stay in the docstrings, because they are about truth, not confirmation:
 
 - the profile tool's "never infer allergies";
-- feedback's rule about not inventing verdicts.
+- feedback's "Record only what the user actually said; don't invent a verdict." (added by the final review fix; the tool had no such line before).
 
 Builder's call: keeping "confirm by default" when the user has said nothing is the safe default. Christophe's skills override it.
 
@@ -171,11 +171,12 @@ Shipped on `feat/recipe-writing` (2026-10-25) in:
 - `b4d20208e`, `5e4d4704f` and `f19ca520a`: `update_recipe`;
 - `623a72f52` and `ce2db1c1f`: `import_recipe_from_url` and the shared web import;
 - `99a49aca2`: log name and PostgreSQL link order;
-- the docs commit.
+- `4c9599f2c`: docs;
+- the final-review fix commit, `fix(recipes): match singular and plural foods; import and docs accuracy`.
 
 No schema or database change was needed. Where the code differs from the sections above, or settles something they left open:
 
-1. **Confirmation.** The MCP server provides the ability. Whether Claude asks before writing is up to the user's own claude.ai skills and instructions; the server default is to confirm when the user hasn't said (Christophe's decision). The server instructions and every write tool's docstring use the § 2 wording. The truth guards (never infer allergies, never invent verdicts) stay.
+1. **Confirmation.** The MCP server provides the ability. Whether Claude asks before writing is up to the user's own claude.ai skills and instructions; the server default is to confirm when the user hasn't said (Christophe's decision). The server instructions carry the § 2 wording. Write tool docstrings no longer mention confirming. The truth guards stay in the docstrings: `update_household_profile` never infers allergies, and `record_recipe_feedback` records only what the user said, never an invented verdict.
 2. **Input rules.**
    - `RecipeCreateIn` requires name, ingredients and instructions. Strings must not be blank.
    - A structured ingredient needs a food or a note. A list that is sent must not be empty.
@@ -186,6 +187,10 @@ No schema or database change was needed. Where the code differs from the section
    - Times are stored in `*_time_seconds`, and the text fields are cleared. `get_recipe` and the search results fall back to the seconds when the text is empty.
    - The parameters are loosely typed with an explicit JSON schema, so a wrong type gets a readable message rather than a raw validation dump.
 3. **Plain lines** go through `nlp` with `brute` as the fallback. A line the parser can't give a food is kept as a note. Quantity 0 means no quantity.
+   - **Singular and plural foods are one food** (final review I1). Plain lines and imports create foods named as the line says them ("eggs"), while the docstring asks Claude for singular structured foods ("egg"). Before a new food is planned, the writer looks for an exact match on simple singular and plural variants of the normalised name: "eggs"/"egg", "tomatoes"/"tomato", "berries"/"berry", "leaves"/"leaf".
+   - It matches against the group's food names, plural names and aliases, and against the foods already planned in the same call.
+   - This applies to structured foods, to foods the parser leaves unmatched (plain lines and imports), and once more just before a food is created.
+   - It is never fuzzy. A name ending in "ss" is never shortened, and no "s" is added after an "s", so "grass" and "gras" stay apart. Stems are at least 3 characters. With no match, the food is created as before.
 4. **Organizers.** Near-duplicate new organizers ("Dinner", "dinners") collapse at plan time. This avoids a duplicate tag on the recipe and an `IntegrityError` after a stray tag was committed.
 5. **Nothing written on a refusal.**
    - Mealie's repositories commit on every write. So `build()` is read-only, and `apply()` runs only after validation, just before the save.
@@ -215,6 +220,7 @@ No schema or database change was needed. Where the code differs from the section
     - An uppercase scheme is lower-cased before the fetch. A malformed URL (bad IPv6 host, bad port, control characters) gets the "must be a web link" message.
     - A refused tool import removes the image folder it downloaded, but only when the recipe wasn't saved.
     - Scraped categories are never applied (`include_categories` is false). The spec only names `include_tags`.
+    - **An adapted recipe counts as imported** (final review m1). The duplicate check matches any recipe in the group whose `org_url` is the page, and `create_recipe` stores `source_url` there. There is no separate "imported" marker. So a recipe Claude adapted from a page makes a later import of that page return the adaptation with `already_existed: true`. This is accepted as the rule, and the `create_recipe` docstring says so: "source_url marks the recipe as imported from that page: importing that URL later returns this recipe". To import the original anyway, clear the adaptation's `source_url` with `update_recipe` first.
 11. **Tests and checks.**
     - The import tests serve recorded pages. One test drives the real HTTP client against a loopback server ("no network" means no external network).
     - The access log names the public tool (`tool=update_recipe`, not `_update_recipe`).

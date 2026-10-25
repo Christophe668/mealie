@@ -401,7 +401,11 @@ class RecipeWriter:
         food: IngredientFood | CreateIngredientFood | None = None
         unit: IngredientUnit | CreateIngredientUnit | None = None
         if item.food:
-            food = matcher.find_food_match(item.food) or CreateIngredientFood(name=item.food)
+            food = (
+                matcher.find_food_match(item.food)
+                or self._food_variant_match(item.food)
+                or CreateIngredientFood(name=item.food)
+            )
         if item.unit:
             unit = matcher.find_unit_match(item.unit) or CreateIngredientUnit(name=item.unit)
         return RecipeIngredient(quantity=item.quantity, unit=unit, food=food, note=item.note, title=item.section)
@@ -421,6 +425,9 @@ class RecipeWriter:
 
         if parsed is None or parsed.food is None or not IngredientFoodModel.normalize(parsed.food.name or ""):
             return _note_only(line)
+        if not isinstance(parsed.food, IngredientFood):
+            # "2 eggs" when the group already has "egg": the parser's fuzzy match can miss it
+            parsed.food = self._food_variant_match(parsed.food.name) or parsed.food
 
         return RecipeIngredient(
             quantity=parsed.quantity,
@@ -430,6 +437,15 @@ class RecipeWriter:
             original_text=line,
             substitutions=parsed.substitutions,
         )
+
+    def _food_variant_match(self, name: str) -> IngredientFood | None:
+        """An existing food of the group whose name, plural name or alias is exactly a singular or
+        plural variant of `name` ("eggs" finds "egg", "berry" finds "berries"). Never fuzzy."""
+        foods = self.service._get_data_matcher().foods_by_alias
+        for variant in food_name_variants(IngredientFoodModel.normalize(name)):
+            if variant in foods:
+                return foods[variant]
+        return None
 
     def _parser(self, kind: RegisteredParser) -> ABCIngredientParser:
         if kind == RegisteredParser.nlp:
@@ -446,7 +462,13 @@ class RecipeWriter:
         units: dict[str, str] = {}
         for ingredient in planned.recipe.recipe_ingredient:
             if ingredient.food is not None and not isinstance(ingredient.food, IngredientFood):
-                foods.setdefault(IngredientFoodModel.normalize(ingredient.food.name), ingredient.food.name)
+                key = IngredientFoodModel.normalize(ingredient.food.name)
+                if key not in foods:
+                    earlier = next((v for v in food_name_variants(key) if v in foods), None)
+                    if earlier is not None:  # "2 eggs" and "1 egg" in one recipe: one new food
+                        ingredient.food.name = foods[earlier]
+                        continue
+                foods.setdefault(key, ingredient.food.name)
             if ingredient.unit is not None and not isinstance(ingredient.unit, IngredientUnit):
                 units.setdefault(IngredientUnitModel.normalize(ingredient.unit.name), ingredient.unit.name)
         planned.new_foods = list(foods.values())
@@ -566,7 +588,7 @@ class RecipeWriter:
         key = IngredientFoodModel.normalize(name)
         if key not in created:
             # matched once more first, so only a food this call really creates is recorded
-            food = self.service._get_data_matcher().find_food_match(name)
+            food = self.service._get_data_matcher().find_food_match(name) or self._food_variant_match(name)
             if food is None:
                 # the importer's helper: creates the food in the user's group
                 data = self.service._transform_food({"name": name})
@@ -728,6 +750,38 @@ def _clean(text: str | None) -> str | None:
     if text is None:
         return None
     return _CONTROL_CHARS.sub("", text).replace("\r\n", "\n").replace("\r", "\n")
+
+
+_VOWELS = set("aeiou")
+
+
+def food_name_variants(key: str) -> list[str]:
+    """Simple English singular and plural forms of a normalised food name, for exact matching only:
+    "egg"/"eggs", "tomato"/"tomatoes", "berry"/"berries", "leaf"/"leaves". Conservative on purpose:
+    a name ending in "ss" ("grass") is never shortened, a name ending in "s" never gets another
+    "s" ("gras" doesn't become "grass"), and a stem is at least 3 characters."""
+    variants: list[str] = []
+
+    def add(value: str) -> None:
+        if len(value) >= 3 and value != key and value not in variants:
+            variants.append(value)
+
+    if key.endswith("ies"):
+        add(key[:-3] + "y")  # berries -> berry
+    if key.endswith("ves"):
+        add(key[:-3] + "f")  # leaves -> leaf
+    if key.endswith("es") and not key.endswith("ies"):
+        add(key[:-2])  # tomatoes -> tomato
+    if key.endswith("s") and not key.endswith("ss"):
+        add(key[:-1])  # eggs -> egg
+    if not key.endswith("s"):
+        if key.endswith("y") and len(key) > 1 and key[-2] not in _VOWELS:
+            add(key[:-1] + "ies")  # berry -> berries
+        if key.endswith("f"):
+            add(key[:-1] + "ves")  # leaf -> leaves
+        add(key + "s")  # egg -> eggs
+        add(key + "es")  # tomato -> tomatoes
+    return variants
 
 
 def clean_scraped_text(recipe: Recipe) -> None:

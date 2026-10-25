@@ -466,13 +466,16 @@ async def create_recipe(
     and exclusions. Afterwards add_mealplan_entries can plan the new recipe, for tonight for example.
     ingredients (1-100): prefer structured entries {quantity?, unit?, food?, note?, section?} (food or
     note required) so the shopping list, the pantry and scaling work on them. Structured foods and
-    units match existing ones by exact name (ignoring case), and unknown ones are created: reuse the
+    units match existing ones by exact name (ignoring case; a food also by its simple singular or
+    plural, "egg"/"eggs"), and unknown ones are created: reuse the
     food names you saw in get_recipe or search results, and use the singular ("tomato", not
     "tomatoes"). `section` starts a titled group ("Sauce"). A plain line such as "200 g spaghetti"
     is parsed; one with no food ("salt to taste") is kept as a note.
     instructions (1-100): "text" or {text, title?, timer_minutes? (1-1440)}; title is a section title.
     servings 0-100; minutes 0-1440; tags (up to 20), categories, tools: names, matched ignoring case
     or created; notes: [{title, text}]; source_url: the http(s) page you adapted the recipe from.
+    source_url marks the recipe as imported from that page: importing that URL later returns this
+    recipe.
     Lengths: recipe name 200, food/unit/tag/title 100, ingredient line or note 300, step/note text and
     description 5000 characters. Duplicate names are allowed (Mealie saves "Name (1)"). An
     ingredient's `ref` and a step's `uses` are for update_recipe; they are ignored here.

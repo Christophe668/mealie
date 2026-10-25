@@ -705,3 +705,27 @@ def test_usable_organizer_names():
     names = ["Dinner", "  Quick  ", "!!!", "", "x" * 101, "y" * 100, "a\x00b"]
 
     assert recipe_writer_module.usable_organizer_names(names) == ["Dinner", "Quick", "y" * 100, "ab"]
+
+
+# ----------------------------------------------------------- singular and plural foods
+
+
+@pytest.mark.parametrize(
+    "name, expected",
+    [
+        ("eggs", ["egg"]),
+        ("egg", ["eggs", "egges"]),
+        ("tomatoes", ["tomato", "tomatoe"]),
+        ("tomato", ["tomatos", "tomatoes"]),
+        ("berries", ["berry", "berrie"]),
+        ("berry", ["berries", "berrys", "berryes"]),
+        ("leaves", ["leaf", "leav", "leave"]),
+        ("leaf", ["leaves", "leafs", "leafes"]),
+        ("grass", []),  # never "gras": a double "s" isn't stripped
+        ("gras", ["gra"]),  # never "grass": no "s" is added after an "s"
+        ("pea", ["peas", "peaes"]),
+        ("peas", ["pea"]),
+    ],
+)
+def test_food_name_variants(name: str, expected: list[str]):
+    assert recipe_writer_module.food_name_variants(name) == expected

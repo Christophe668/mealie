@@ -2318,3 +2318,151 @@ async def test_import_keeps_absurd_quantities_as_notes(
     assert butter.food is not None and butter.quantity == 200
     units = {u.name.casefold() for u in user.repos.ingredient_units.page_all(PaginationQuery(per_page=-1)).items}
     assert "e400" not in units
+
+
+# ----------------------------------------------------------- singular and plural foods
+
+
+def _food_names(user: TestUser) -> list[str]:
+    user.repos.session.expire_all()
+    return sorted(f.name for f in user.repos.ingredient_foods.page_all(PaginationQuery(page=1, per_page=-1)).items)
+
+
+@pytest.mark.asyncio
+async def test_plural_line_then_singular_food_is_one_food(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    from datetime import datetime, timedelta
+
+    from mealie.mcp.tools.shopping import create_shopping_list_from_mealplan
+    from mealie.schema.meal_plan.new_meal import PlanEntryType, SavePlanEntry
+
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user, scopes=[*SCOPES, "shopping:write"])
+    before = _food_names(user)
+
+    first = await create_recipe(name="Omelette", ingredients=["2 eggs"], instructions=["Whisk and cook."])
+    second = await create_recipe(
+        name="Pancakes",
+        ingredients=[{"quantity": 1, "food": "egg"}, {"quantity": 200, "unit": "gram", "food": "flour"}],
+        instructions=["Mix and fry."],
+    )
+
+    added = [n for n in _food_names(user) if n not in before]
+    assert sorted(n.casefold() for n in added) == ["eggs", "flour"]
+    egg_a = _stored(user, first["slug"]).recipe_ingredient[0].food
+    egg_b = _stored(user, second["slug"]).recipe_ingredient[0].food
+    assert egg_a is not None and egg_b is not None and egg_a.id == egg_b.id
+
+    day = datetime.now().astimezone().date() + timedelta(days=700)
+    for view in (first, second):
+        user.repos.meals.create(
+            SavePlanEntry(
+                date=day,
+                entry_type=PlanEntryType.dinner,
+                recipe_id=view["id"],
+                group_id=user.group_id,
+                user_id=user.user_id,
+            )
+        )
+    shopping = await create_shopping_list_from_mealplan(day, day)
+
+    eggs = [i for i in shopping["items"] if (i["food"] or "").casefold() == "eggs"]
+    assert len(eggs) == 1 and eggs[0]["quantity"] == 3
+
+
+@pytest.mark.asyncio
+async def test_singular_and_plural_in_one_recipe_create_one_food(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    before = _counts(user)
+
+    result = await create_recipe(
+        name="Berry bowl",
+        ingredients=[{"quantity": 100, "food": "blueberries"}, {"quantity": 1, "food": "blueberry", "note": "to top"}],
+        instructions=["Serve."],
+    )
+
+    stored = _stored(user, result["slug"])
+    first, second = stored.recipe_ingredient
+    assert first.food is not None and second.food is not None and first.food.id == second.food.id
+    assert _counts(user)["foods"] == before["foods"] + 1
+
+
+@pytest.mark.asyncio
+async def test_import_plural_lines_match_existing_singular_foods(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    await create_recipe(
+        name="Salad",
+        ingredients=[{"quantity": 2, "food": "shallot"}, {"quantity": 3, "food": "tomato"}],
+        instructions=["Chop."],
+    )
+    before = _food_names(user)
+    _serve(
+        monkeypatch,
+        _json_ld_page(
+            {
+                "name": f"Tart {random_string(6)}",
+                "recipeIngredient": ["3 shallots", "4 tomatoes"],
+                "recipeInstructions": [{"@type": "HowToStep", "text": "Bake."}],
+            }
+        ),
+    )
+
+    result = await import_recipe_from_url(url=_page_url())
+
+    stored = _stored(user, result["slug"])
+    assert [i.food.name.casefold() for i in stored.recipe_ingredient if i.food] == ["shallot", "tomato"]
+    assert _food_names(user) == before
+
+
+@pytest.mark.asyncio
+async def test_similar_food_names_that_are_not_plurals_stay_separate(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    await create_recipe(name="Lawn", ingredients=[{"food": "grass"}, {"food": "pea"}], instructions=["Mix."])
+    before = _counts(user)
+
+    result = await create_recipe(name="Odd", ingredients=[{"food": "gras"}, {"food": "peach"}], instructions=["Mix."])
+
+    names = [i.food.name for i in _stored(user, result["slug"]).recipe_ingredient if i.food]
+    assert names == ["gras", "peach"]
+    assert _counts(user)["foods"] == before["foods"] + 2
+
+
+@pytest.mark.asyncio
+async def test_singular_food_matches_a_plural_food_an_import_created(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    _serve(
+        monkeypatch,
+        _json_ld_page(
+            {
+                "name": f"Tart {random_string(6)}",
+                "recipeIngredient": ["3 shallots", "2 cherries"],
+                "recipeInstructions": [{"@type": "HowToStep", "text": "Bake."}],
+            }
+        ),
+    )
+    imported = await import_recipe_from_url(url=_page_url())
+    before = _food_names(user)
+
+    written = await create_recipe(
+        name="Pickles",
+        ingredients=[{"quantity": 4, "food": "shallot"}, {"quantity": 10, "food": "cherry"}],
+        instructions=["Pickle."],
+    )
+
+    assert _food_names(user) == before
+    old = [i.food.id for i in _stored(user, imported["slug"]).recipe_ingredient if i.food]
+    new = [i.food.id for i in _stored(user, written["slug"]).recipe_ingredient if i.food]
+    assert new == old and len(new) == 2
