@@ -1,17 +1,22 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from mealie.core.config import get_app_settings
+from mealie.db.models._model_base import SqlAlchemyBase
 from mealie.db.models.household.household import Household
+from mealie.db.models.household.household_profile import HouseholdMealPreferences, HouseholdMemberProfile
 from mealie.db.models.users.users import User
 from mealie.schema.household.household_profile import (
     Diet,
     HouseholdProfileOut,
     MealPreferencesUpdate,
     MemberProfileCreate,
+    MemberProfileOut,
     MemberProfileUpdate,
 )
 from mealie.services.query_filter.builder import NonFilterableValueError, QueryFilterBuilder
@@ -101,10 +106,13 @@ def test_ordered_by_position_then_name_then_id(unique_user: TestUser):
     repo.create(MemberProfileCreate(name=f"{tag} zoe", position=1))
     repo.create(MemberProfileCreate(name=f"{tag} Bob", position=2))
     repo.create(MemberProfileCreate(name=f"{tag} amy", position=2))
-    repo.create(MemberProfileCreate(name=f"{tag} Émile", position=0))
+    # same position as "zoe": only accent- and case-insensitive comparison puts "É" before "z" (SQLite's ASCII
+    # `lower()` and plain `casefold()` both put it after)
+    repo.create(MemberProfileCreate(name=f"{tag} Émile", position=1))
+    repo.create(MemberProfileCreate(name=f"{tag} last", position=0))
 
     names = [row.name for row in repo.ordered() if row.name.startswith(tag)]
-    assert names == [f"{tag} Émile", f"{tag} zoe", f"{tag} amy", f"{tag} Bob"]
+    assert names == [f"{tag} last", f"{tag} Émile", f"{tag} zoe", f"{tag} amy", f"{tag} Bob"]
 
 
 def test_ordered_ties_break_on_id_desc(unique_user: TestUser):
@@ -331,5 +339,80 @@ def test_member_query_filters_cannot_reach_profiles(attr_string: str):
         QueryFilterBuilder.get_model_and_model_attr_from_attr_string(attr_string, User)
 
 
-def test_user_has_no_back_reference_to_profiles():
-    assert not any("profile" in key for key in User.__mapper__.relationships.keys())
+def test_only_household_relationships_reach_profiles():
+    """No relationship on `User` or any other model targets the profile tables; `Household`'s are not filterable."""
+    targets = {HouseholdMemberProfile, HouseholdMealPreferences}
+    assert not any(rel.mapper.class_ in targets for rel in User.__mapper__.relationships)
+
+    reaching = [
+        (mapper.class_, rel)
+        for mapper in SqlAlchemyBase.registry.mappers
+        for rel in mapper.relationships
+        if rel.mapper.class_ in targets
+    ]
+    assert {(cls, rel.key) for cls, rel in reaching} == {
+        (Household, "member_profiles"),
+        (Household, "meal_preferences"),
+    }
+    assert all(rel.info.get("filterable") is False for _, rel in reaching)
+
+
+def test_member_null_lists_are_stored_empty(unique_user: TestUser):
+    """A full `MemberProfileUpdate.model_dump()` carries `None` for unsent lists; the model stores `[]`."""
+    data = {**MemberProfileUpdate(name=f"Full {random_string(8)}").model_dump(), "is_child": False, "diet": "none"}
+    data["position"] = 0
+    assert data["allergies"] is None
+
+    created = unique_user.repos.member_profiles.create(data)
+
+    assert (created.allergies, created.exclusions, created.dislikes, created.likes) == ([], [], [], [])
+
+
+# --- Out schemas load rows that break today's write rules ---
+
+
+def test_out_schemas_load_rows_breaking_write_rules(unique_user: TestUser):
+    repos = unique_user.repos
+    profile = repos.member_profiles.create(MemberProfileCreate(name=f"Old {random_string(8)}"))
+    prefs = repos.meal_preferences.get_for_household() or repos.meal_preferences.create(MealPreferencesUpdate())
+    too_many = [f"item {i}" for i in range(43)] + ["x" * 80, "item 0"]
+
+    repos.session.execute(
+        update(HouseholdMemberProfile)
+        .where(HouseholdMemberProfile.id == profile.id)
+        .values(name="  ", diet="carnivore", allergies=too_many, position=-3, notes="n" * 900)
+    )
+    repos.session.execute(
+        update(HouseholdMealPreferences)
+        .where(HouseholdMealPreferences.id == prefs.id)
+        .values(default_servings=99, quick_weekdays=[9, 9], favourite_cuisines=too_many, notes="n" * 900)
+    )
+    repos.session.commit()
+    repos.session.expire_all()
+
+    loaded = repos.member_profiles.get_one(profile.id)
+    assert loaded is not None
+    assert loaded.name == "  "
+    assert loaded.diet == Diet.other
+    assert loaded.allergies == too_many
+    assert loaded.position == -3
+    assert profile.id in {row.id for row in repos.member_profiles.ordered()}
+
+    loaded_prefs = repos.meal_preferences.get_for_household()
+    assert loaded_prefs is not None
+    assert loaded_prefs.default_servings == 99
+    assert loaded_prefs.quick_weekdays == [9, 9]
+    assert loaded_prefs.favourite_cuisines == too_many
+
+
+@pytest.mark.parametrize("stored", ["vegan", Diet.halal])
+def test_member_out_keeps_known_diets(stored: str):
+    assert MemberProfileOut.model_validate(_out_row(diet=stored)).diet == Diet(stored)
+
+
+def test_member_out_maps_unknown_diet_to_other():
+    assert MemberProfileOut.model_validate(_out_row(diet="carnivore")).diet == Diet.other
+
+
+def _out_row(**overrides) -> dict:
+    return {"id": uuid4(), "group_id": uuid4(), "household_id": uuid4(), "name": "Sam", **overrides}

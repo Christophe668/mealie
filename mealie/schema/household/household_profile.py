@@ -148,6 +148,18 @@ class MemberProfileOut(MealieModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("diet", mode="before")
+    @classmethod
+    def unknown_diet_is_other(cls, value: Any) -> Any:
+        """A stored diet outside the enum (a value dropped later, a hand-edited row, a newer backup) reads as
+        `other` instead of failing the whole household's profile."""
+        if value is None:
+            return Diet.none
+        try:
+            return Diet(value)
+        except ValueError:
+            return Diet.other
+
 
 class MealPreferencesUpdate(MealieModel):
     """A partial update: only the fields sent are changed; nullable fields accept null to clear them."""

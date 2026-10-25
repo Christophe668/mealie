@@ -1,3 +1,4 @@
+import unicodedata
 from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
@@ -25,6 +26,14 @@ def _with_scope(repo: HouseholdRepositoryGeneric, data: BaseModel | dict) -> dic
     return values
 
 
+def _name_sort_key(name: str) -> tuple[str, str]:
+    """Accents stripped and case folded ("Émile" between "amy" and "zoe"), then case folded to order "Emile" and
+    "Émile" consistently. `casefold()` alone keeps "é" after "z"."""
+    folded = name.casefold()
+    decomposed = unicodedata.normalize("NFKD", folded)
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch)), folded
+
+
 class RepositoryMemberProfiles(HouseholdRepositoryGeneric[MemberProfileOut, HouseholdMemberProfile]):
     def create(self, data: MemberProfileOut | BaseModel | dict) -> MemberProfileOut:
         return super().create(_with_scope(self, data))
@@ -44,14 +53,15 @@ class RepositoryMemberProfiles(HouseholdRepositoryGeneric[MemberProfileOut, Hous
         return [self.schema.model_validate(row) for row in self.session.execute(stmt).scalars().all()]
 
     def ordered(self) -> list[MemberProfileOut]:
-        """Profiles in display order: `position` ascending, then name case-folded, then `id` descending.
+        """Profiles in display order: `position` ascending, then name ignoring accents and case, then `id` descending.
 
-        The name is folded in Python because SQLite's `lower()` only folds ASCII ("Émile" would sort after "zoe").
+        The name is compared in Python: SQLite's `lower()` only folds ASCII and neither database ignores accents
+        by default, so "Émile" would sort after "zoe".
         """
         stmt = self._scoped_select().order_by(HouseholdMemberProfile.position.asc(), HouseholdMemberProfile.id.desc())
         rows = self._all(stmt)
-        # `sorted` is stable, so equal (position, folded name) keep the query's `id` descending order.
-        return sorted(rows, key=lambda row: (row.position, row.name.casefold()))
+        # `sorted` is stable, so equal (position, name key) keep the query's `id` descending order.
+        return sorted(rows, key=lambda row: (row.position, *_name_sort_key(row.name)))
 
     def by_user(self, user_id: UUID) -> MemberProfileOut | None:
         """The household's profile linked to `user_id`, if any (at most one, enforced by a unique constraint)."""
