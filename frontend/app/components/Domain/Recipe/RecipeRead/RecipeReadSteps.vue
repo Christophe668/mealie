@@ -15,7 +15,10 @@
               <DsIcon :name="step.action.icon" :size="16" />
               {{ $t(`step-action.${step.action.key}`) }}
             </p>
-            <SafeMarkdown class="read-steps__text ds-body" :source="step.text" />
+            <div v-if="step.thermomix" class="read-steps__thermomix">
+              <RecipeThermomixTiles v-for="(program, pIndex) in step.thermomix.programs" :key="pIndex" :program="program" />
+            </div>
+            <SafeMarkdown class="read-steps__text ds-body" :source="step.thermomix ? step.thermomix.text : step.text" />
             <ul v-if="step.timers.length" class="read-steps__timers" role="list">
               <li v-for="(timer, tIndex) in step.timers" :key="tIndex">
                 <DsChip>
@@ -37,7 +40,9 @@ import { useId } from "vue";
 import DsChip from "~/components/Design/DsChip.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
 import SafeMarkdown from "~/components/global/SafeMarkdown.vue";
+import RecipeThermomixTiles from "~/components/Domain/Recipe/RecipeThermomixTiles.vue";
 import { stepAction } from "~/lib/recipe/step-action";
+import { parseThermomix } from "~/lib/recipe/thermomix";
 import { findStepTimers } from "~/lib/recipe/step-timers";
 import type { RecipeStep } from "~/lib/api/types/recipe";
 
@@ -46,13 +51,18 @@ const props = defineProps<{ steps: RecipeStep[] }>();
 const headingId = useId();
 
 const items = computed(() =>
-  props.steps.map((step, index) => ({
-    key: step.id || `step-${index}`,
-    title: step.title?.trim() || "",
-    text: step.text || "",
-    timers: findStepTimers(step.text),
-    action: stepAction(step.text),
-  })),
+  props.steps.map((step, index) => {
+    const thermomix = parseThermomix(step.text);
+    return {
+      key: step.id || `step-${index}`,
+      title: step.title?.trim() || "",
+      text: step.text || "",
+      thermomix,
+      // A Thermomix program shows its own time in its tiles; only other durations get a timer chip.
+      timers: findStepTimers(thermomix ? thermomix.text : step.text),
+      action: stepAction(step.text),
+    };
+  }),
 );
 </script>
 
@@ -106,6 +116,14 @@ const items = computed(() =>
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.read-steps__thermomix {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ds-space) * 1.5);
+  max-width: 420px;
+  margin-bottom: calc(var(--ds-space) * 1.5);
 }
 
 .read-steps__text {

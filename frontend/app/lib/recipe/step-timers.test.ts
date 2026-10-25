@@ -97,4 +97,8 @@ describe("timerName", () => {
     expect(timerName("10 minutes", 0)).toBeNull();
     expect(nameOf("About 2 minutes.")).toEqual([null]);
   });
+
+  test("Markdown emphasis around a duration doesn't end up in the timer name", () => {
+    expect(findStepTimers("Cuire **15 min**/**100°C**/**vitesse 1**.")[0]?.name).toBe("Cuire");
+  });
 });

@@ -1494,6 +1494,20 @@
     "rinse": "Rincer",
     "serve": "Servir"
   },
+  "thermomix": {
+    "time": "Temps",
+    "temperature": "Temp.",
+    "speed": "Vitesse",
+    "reverse": "Sens inverse",
+    "turbo": "Turbo",
+    "dough": "Pétrin",
+    "spoon": "Mijotage",
+    "start": "Lancer",
+    "pause": "Pause",
+    "resume": "Reprendre",
+    "restart": "Relancer",
+    "settings": "Thermomix : {summary}"
+  },
   "recipe-read": {
     "ingredients": "Ingrédients",
     "method": "Préparation",

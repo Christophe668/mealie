@@ -23,11 +23,21 @@
         {{ $t(`step-action.${action.key}`) }}
       </span>
     </div>
+    <div v-if="thermomix" class="cook-step__thermomix">
+      <RecipeThermomixTiles
+        v-for="(program, pIndex) in thermomix.programs"
+        :key="pIndex"
+        :program="program"
+        size="cook"
+        :timer="programTimers[pIndex] ?? null"
+        @toggle="programTimers[pIndex] && emit('toggle-timer', programTimers[pIndex]!)"
+      />
+    </div>
     <!-- Sanitised markdown, as everywhere else steps are shown. -->
     <!-- eslint-disable-next-line vue/no-v-html -->
     <div class="cook-step__text" v-html="html" />
-    <ul v-if="timers.length" class="cook-step__timers" role="list">
-      <li v-for="timer in timers" :key="timer.id">
+    <ul v-if="otherTimers.length" class="cook-step__timers" role="list">
+      <li v-for="timer in otherTimers" :key="timer.id">
         <DsButton
           variant="ghost"
           :icon="timer.state === 'running' ? 'pause' : 'clockOutline'"
@@ -45,9 +55,11 @@
 import { marked } from "marked";
 import DsButton from "~/components/Design/DsButton.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
+import RecipeThermomixTiles from "~/components/Domain/Recipe/RecipeThermomixTiles.vue";
 import type { CookTimerSpec } from "~/composables/use-cook-timers";
 import type { RecipeStep } from "~/lib/api/types/recipe";
 import { stepAction } from "~/lib/recipe/step-action";
+import { parseThermomix } from "~/lib/recipe/thermomix";
 import { sanitizeMarkdownHtml } from "~/lib/sanitize/markdown";
 
 export type StepTimerState = "idle" | "running" | "paused" | "done";
@@ -56,7 +68,7 @@ const props = withDefaults(defineProps<{
   step: RecipeStep;
   number: number;
   kind?: "current" | "previous" | "next";
-  timers?: (CookTimerSpec & { state: StepTimerState })[];
+  timers?: (CookTimerSpec & { state: StepTimerState; remaining?: number })[];
 }>(), {
   kind: "current",
   timers: () => [],
@@ -75,8 +87,30 @@ const timerActionKey: Record<StepTimerState, string> = {
 };
 
 const action = computed(() => stepAction(props.step.text));
+const thermomix = computed(() => parseThermomix(props.step.text));
 
-const html = computed(() => sanitizeMarkdownHtml(marked.parse(props.step.text || "", { async: false, breaks: true }) as string, []));
+const sameTime = (a: string, b: string) => a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
+
+/** Each Thermomix program's time tile is the step timer for the same duration (in order, each used once). */
+const programTimers = computed(() => {
+  const free = [...props.timers];
+  return (thermomix.value?.programs ?? []).map((program) => {
+    const i = program.time ? free.findIndex(timer => sameTime(timer.label, program.time!)) : -1;
+    if (i < 0) {
+      return undefined;
+    }
+    const [timer] = free.splice(i, 1);
+    return { ...timer!, remaining: timer!.remaining ?? timer!.total };
+  });
+});
+
+/** Timers not shown as a time tile keep their usual button. */
+const otherTimers = computed(() => {
+  const used = new Set(programTimers.value.filter(Boolean).map(timer => timer!.id));
+  return props.timers.filter(timer => !used.has(timer.id));
+});
+
+const html = computed(() => sanitizeMarkdownHtml(marked.parse(thermomix.value?.text ?? props.step.text ?? "", { async: false, breaks: true }) as string, []));
 
 /** The preview drops the markup: a neighbour is a hint, not a second copy of the step. */
 const plain = computed(() => {
@@ -161,6 +195,14 @@ const plain = computed(() => {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.cook-step__thermomix {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ds-space) * 1.5);
+  max-width: 520px;
+  margin-bottom: calc(var(--ds-space) * 2);
 }
 
 .cook-step__text {

@@ -529,6 +529,11 @@ async def create_recipe(
     "tomatoes"). `section` starts a titled group ("Sauce"). A plain line such as "200 g spaghetti"
     is parsed; one with no food ("salt to taste") is kept as a note.
     instructions (1-100): "text" or {text, title?, timer_minutes? (1-1440)}; title is a section title.
+    For a Thermomix recipe, write each machine step with its settings as "time / temperature / speed"
+    in the sentence, e.g. "Cuire 15 min / 100°C / vitesse 1 sans le gobelet doseur." (add "⟲" or
+    "sens inverse" for reverse, "Varoma" as the temperature, "vitesse mijotage", "Turbo",
+    "mode pétrin"; "speed"/"reverse" in English). Mealie shows those as the machine's display with
+    the time as a timer.
     servings 0-100; minutes 0-1440; tags (up to 20), categories, tools: names, matched ignoring case
     or created; notes: [{title, text}]; source_url: the http(s) page you adapted the recipe from.
     source_url marks the recipe as imported from that page: importing that URL later returns this

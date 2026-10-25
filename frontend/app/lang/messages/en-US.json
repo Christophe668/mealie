@@ -1494,6 +1494,20 @@
     "rinse": "Rinse",
     "serve": "Serve"
   },
+  "thermomix": {
+    "time": "Time",
+    "temperature": "Temp.",
+    "speed": "Speed",
+    "reverse": "Reverse",
+    "turbo": "Turbo",
+    "dough": "Dough mode",
+    "spoon": "Gentle stir",
+    "start": "Start",
+    "pause": "Pause",
+    "resume": "Resume",
+    "restart": "Again",
+    "settings": "Thermomix: {summary}"
+  },
   "recipe-read": {
     "ingredients": "Ingredients",
     "method": "Method",

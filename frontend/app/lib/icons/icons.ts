@@ -162,6 +162,7 @@ import {
   mdiThermometer,
   mdiToasterOven,
   mdiWater,
+  mdiSilverwareSpoon,
 } from "@mdi/js";
 
 export const icons = {
@@ -341,4 +342,6 @@ export const icons = {
   thermometer: mdiThermometer,
   oven: mdiToasterOven,
   water: mdiWater,
+  // Thermomix speed "mijotage" (lib/recipe/thermomix.ts)
+  spoon: mdiSilverwareSpoon,
 };
