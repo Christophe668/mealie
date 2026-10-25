@@ -86,7 +86,8 @@ def find_imported_recipe(session: Session, group_id: UUID, url: str) -> UUID | N
     compared with `normalise_source_url`.
 
     Stored `org_url` values are normalised here, in Python, so older rows match without being
-    rewritten; only the `id` and `org_url` columns are read."""
+    rewritten; only the `id` and `org_url` columns are read. A stored value that isn't a valid URL
+    (Mealie lets a user type any source) is skipped, so one bad row can't block every import."""
     target = normalise_source_url(url)
     stmt = (
         sa.select(RecipeModel.id, RecipeModel.org_url)
@@ -94,6 +95,12 @@ def find_imported_recipe(session: Session, group_id: UUID, url: str) -> UUID | N
         .order_by(RecipeModel.created_at)
     )
     for row in session.execute(stmt):
-        if row.org_url and normalise_source_url(row.org_url) == target:
+        if not row.org_url:
+            continue
+        try:
+            stored = normalise_source_url(row.org_url)
+        except ValueError:  # e.g. "http://[::1": urlsplit refuses it
+            continue
+        if stored == target:
             return row.id
     return None

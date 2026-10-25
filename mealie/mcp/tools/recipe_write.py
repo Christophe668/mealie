@@ -1,6 +1,7 @@
 """Recipe-writing tools (spec § 3). Thin wrappers over `RecipeWriter`, which maps the input to a Mealie
 recipe; saving goes through `RecipeService`, as in the UI."""
 
+import re
 import warnings
 from collections.abc import Callable
 from typing import Annotated, Any, Literal
@@ -32,6 +33,7 @@ from mealie.services.claude_context.recipe_writer import (
     StepIn,
 )
 from mealie.services.recipe.import_workflow.exceptions import NoRecipeDataError
+from mealie.services.recipe.recipe_data_service import RecipeDataService
 from mealie.services.recipe.recipe_web_import import find_imported_recipe, import_from_web
 from mealie.services.scraper.scraped_extras import ScrapedExtras
 
@@ -268,14 +270,26 @@ async def update_recipe_impl(
     return result
 
 
+_URL_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
 def _import_url(url: Any) -> str:
-    """The link to import, checked before anything is fetched: an http(s) URL with a host."""
+    """The link to import, checked before anything is fetched: an http(s) URL with a host and a
+    valid port, without spaces or control characters. The scheme is returned lower-cased (the
+    scraper only recognises "http://" and "https://")."""
+    refusal = McpToolError("url must be a web link starting with http:// or https://")
     text = url.strip() if isinstance(url, str) else ""
-    parts = urlsplit(text)
-    web = parts.scheme.lower() in ("http", "https") and bool(parts.hostname)
-    if not web or any(c.isspace() for c in text):
-        raise McpToolError("url must be a web link starting with http:// or https://")
-    return text
+    if not text or any(c.isspace() for c in text) or _URL_CONTROL_CHARS.search(text):
+        raise refusal
+    try:
+        parts = urlsplit(text)
+        _ = parts.port  # raises ValueError for a port that isn't a number in 0-65535
+        host = parts.hostname
+    except ValueError as e:  # e.g. "http://[::1" or "http://[abc]/x"
+        raise refusal from e
+    if parts.scheme.lower() not in ("http", "https") or not host:
+        raise refusal
+    return parts.scheme.lower() + text[len(parts.scheme) :]
 
 
 def _scrape_error(exc: Exception, url: str) -> McpToolError | None:
@@ -300,6 +314,17 @@ def _scrape_error(exc: Exception, url: str) -> McpToolError | None:
             "access). Nothing was imported."
         )
     return None
+
+
+def _discard_downloaded_image(recipe: Recipe) -> None:
+    """Removes the files the scraper wrote for a recipe that wasn't saved (its image, downloaded
+    under the new recipe's id before the save). Best effort: a failure is logged."""
+    if recipe.id is None:
+        return
+    try:
+        RecipeDataService(recipe.id).delete_all_data()
+    except Exception:
+        logger.exception(f"Could not remove the downloaded files of unsaved recipe {recipe.id}")
 
 
 async def import_recipe_from_url_impl(ctx: McpContext, url: str, include_tags: bool = True) -> dict[str, Any]:
@@ -343,6 +368,7 @@ async def import_recipe_from_url_impl(ctx: McpContext, url: str, include_tags: b
         saved = ctx.repos.recipes.get_one(scraped[0].id, "id") if scraped[0].id else None
         if saved is None:
             writer.discard_created()
+            _discard_downloaded_image(scraped[0])
             raise _save_error(e) from e
         created = saved
         warnings.append("the recipe was saved, but one of Mealie's follow-up steps (rating, timeline) failed")

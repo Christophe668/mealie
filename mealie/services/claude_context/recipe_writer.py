@@ -31,7 +31,7 @@ from mealie.db.models.recipe.recipe import RecipeModel
 from mealie.lang.providers import Translator
 from mealie.repos.repository_factory import AllRepositories
 from mealie.schema.household.household import HouseholdInDB
-from mealie.schema.recipe.recipe import Recipe, RecipeTag
+from mealie.schema.recipe.recipe import Recipe, RecipeTag, create_recipe_slug
 from mealie.schema.recipe.recipe_ingredient import (
     CreateIngredientFood,
     CreateIngredientUnit,
@@ -489,9 +489,11 @@ class RecipeWriter:
         what is missing.
 
         Scraped data skips the input models' validators (a page can exceed their caps), so the
-        limits are applied here: a line over 300 characters, or one whose parsed food or unit name
-        is over 100, is kept as a note-only line, and organizer names with no slug or over 100
-        characters are skipped."""
+        limits are applied here: control characters are removed from every text (PostgreSQL refuses
+        NUL), a line over 300 characters, one with an absurd number ("1e400", a quantity over
+        100000) or one whose parsed food or unit name is over 100 is kept as a note-only line, and
+        organizer names with no slug or over 100 characters are skipped."""
+        clean_scraped_text(recipe)
         planned = PlannedRecipe(recipe=recipe)
         recipe.recipe_ingredient = [await self._import_line(line) for line in recipe.recipe_ingredient]
         self._plan_foods_and_units(planned)
@@ -515,11 +517,13 @@ class RecipeWriter:
         text = _CONTROL_CHARS.sub("", line.note or line.original_text or "").strip()
         if line.food is not None or not text:
             return line
-        parsed = await self._parse_line(text) if len(text) <= MAX_LINE else _note_only(text)
+        parsable = len(text) <= MAX_LINE and not _SCIENTIFIC_NUMBER.search(text)
+        parsed = await self._parse_line(text) if parsable else _note_only(text)
         too_long = (parsed.food is not None and len(parsed.food.name or "") > MAX_NAME) or (
             parsed.unit is not None and len(parsed.unit.name or "") > MAX_NAME
         )
-        if too_long:
+        absurd = parsed.quantity is not None and (not math.isfinite(parsed.quantity) or parsed.quantity > MAX_QUANTITY)
+        if too_long or absurd:
             parsed = _note_only(text)
         parsed.title = line.title
         parsed.reference_id = line.reference_id
@@ -713,6 +717,35 @@ class RecipeWriter:
 
 def _note_only(line: str) -> RecipeIngredient:
     return RecipeIngredient(quantity=None, note=line, original_text=line)
+
+
+# "1e400", "2.5E3": the NLP parser reads "1" and a unit "e400"; no ingredient line means it
+_SCIENTIFIC_NUMBER = re.compile(r"\d(?:[.,]\d+)?e[+-]?\d", re.IGNORECASE)
+
+
+def _clean(text: str | None) -> str | None:
+    """`text` without control characters (tab and line breaks stay; CR and CRLF become LF)."""
+    if text is None:
+        return None
+    return _CONTROL_CHARS.sub("", text).replace("\r\n", "\n").replace("\r", "\n")
+
+
+def clean_scraped_text(recipe: Recipe) -> None:
+    """Removes NUL and the other control characters from a scraped recipe's texts, in place: the
+    name, description, yield, step titles and texts, ingredient section titles and notes, and the
+    recipe notes. PostgreSQL refuses NUL in text, which would fail the whole save."""
+    name = _clean(recipe.name) or "Untitled"
+    if name != recipe.name:
+        recipe.name, recipe.slug = name, create_recipe_slug(name)
+    recipe.description = _clean(recipe.description)
+    recipe.recipe_yield = _clean(recipe.recipe_yield)
+    for step in recipe.recipe_instructions or []:
+        step.title, step.summary = _clean(step.title), _clean(step.summary)
+        step.text = _clean(step.text) or ""
+    for line in recipe.recipe_ingredient:
+        line.title, line.note, line.original_text = _clean(line.title), _clean(line.note), _clean(line.original_text)
+    for note in recipe.notes or []:
+        note.title, note.text = _clean(note.title) or "", _clean(note.text) or ""
 
 
 def usable_organizer_names(names: list[str]) -> list[str]:

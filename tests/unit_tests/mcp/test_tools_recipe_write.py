@@ -2000,7 +2000,20 @@ async def test_import_errors(monkeypatch: pytest.MonkeyPatch, session: Session, 
     before = _counts(user)
 
     # not a web link: refused before anything is fetched
-    for bad in ("ftp://example.com/r", "file:///etc/passwd", "javascript:alert(1)", "example.com/r", "", "https://"):
+    for bad in (
+        "ftp://example.com/r",
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "example.com/r",
+        "",
+        "https://",
+        "http://[::1",
+        "http://[abc]/x",
+        "http://exa\x00mple.com/r",
+        "https://example.com/r\x07",
+        "http://a:99999999/x",
+        "http://a:port/x",
+    ):
         with pytest.raises(McpToolError, match="url must be a web link"):
             await import_recipe_from_url(url=bad)
 
@@ -2178,3 +2191,123 @@ async def test_import_tool_is_registered():
     assert set(schema["properties"]) == {"url", "include_tags"}
     assert schema["required"] == ["url"]
     assert "already_existed" in (tools["import_recipe_from_url"].description or "")
+
+
+@pytest.mark.asyncio
+async def test_import_skips_a_malformed_stored_link(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    """One recipe whose stored source isn't a valid URL doesn't block imports for the group."""
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    fetched = _serve(monkeypatch, CHICKEN.read_text())
+    broken = await _new_recipe(monkeypatch, session, user)
+    stored = _stored(user, broken.slug)
+    stored.org_url = "http://[::1"
+    user.repos.recipes.update(stored.slug, stored)
+    url = _page_url()
+    match = await create_recipe(name="Match", ingredients=["1 egg"], instructions=["Cook."], source_url=url)
+
+    result = await import_recipe_from_url(url=url)
+
+    assert result["already_existed"] is True and result["id"] == match["id"]
+    assert fetched == []
+
+
+@pytest.mark.asyncio
+async def test_import_accepts_an_uppercase_scheme(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    fetched = _serve(monkeypatch, CHICKEN.read_text())
+    path = random_string(8)
+
+    result = await import_recipe_from_url(url=f"HTTPS://WWW.Example.com/{path}")
+
+    assert result["already_existed"] is False
+    assert fetched == [f"https://WWW.Example.com/{path}"]
+
+
+@pytest.mark.asyncio
+async def test_import_removes_control_characters_from_scraped_text(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    name = f"Bread {random_string(6)}"
+    _serve(
+        monkeypatch,
+        _json_ld_page(
+            {
+                "name": name.replace(" ", "\x00 "),
+                "description": "Crusty\x07 loaf.",
+                "recipeIngredient": ["500 g flour"],
+                "recipeInstructions": [{"@type": "HowToStep", "text": "Knead\x00 well.\r\nBake."}],
+            }
+        ),
+    )
+
+    result = await import_recipe_from_url(url=_page_url())
+
+    stored = _stored(user, result["slug"])
+    assert stored.name == name
+    assert "\x00" not in (stored.description or "") and "\x07" not in (stored.description or "")
+    step = (stored.recipe_instructions or [])[0].text
+    assert "\x00" not in step and "\r" not in step and step.startswith("Knead well.")
+
+
+@pytest.mark.asyncio
+async def test_failed_import_removes_the_downloaded_image(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    _serve(monkeypatch, CHICKEN.read_text())
+    downloaded: list[RecipeDataService] = []
+
+    async def fake_image(self: RecipeDataService, *_: Any) -> Any:
+        path = self.dir_image / "original.webp"
+        path.write_bytes(b"image")
+        downloaded.append(self)
+        return path
+
+    def broken_create_one(self: RecipeService, data: Any) -> Recipe:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(RecipeDataService, "scrape_image", fake_image)
+    monkeypatch.setattr(RecipeService, "create_one", broken_create_one)
+
+    with pytest.raises(McpToolError, match="Nothing was saved"):
+        await import_recipe_from_url(url=_page_url())
+
+    assert len(downloaded) == 1
+    assert not downloaded[0].dir_data.exists()
+
+
+@pytest.mark.asyncio
+async def test_import_keeps_absurd_quantities_as_notes(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    lines = ["1e400 g sugar", "99999999999999999999 g sugar"]
+    _serve(
+        monkeypatch,
+        _json_ld_page(
+            {
+                "name": f"Fudge {random_string(6)}",
+                "recipeIngredient": [*lines, "200 g butter"],
+                "recipeInstructions": [{"@type": "HowToStep", "text": "Melt."}],
+            }
+        ),
+    )
+
+    result = await import_recipe_from_url(url=_page_url())
+
+    sugar_a, sugar_b, butter = _stored(user, result["slug"]).recipe_ingredient
+    for line, text in ((sugar_a, lines[0]), (sugar_b, lines[1])):
+        assert (line.food, line.unit, line.quantity, line.note) == (None, None, None, text)
+    assert butter.food is not None and butter.quantity == 200
+    units = {u.name.casefold() for u in user.repos.ingredient_units.page_all(PaginationQuery(per_page=-1)).items}
+    assert "e400" not in units
