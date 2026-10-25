@@ -104,4 +104,30 @@ describe("PlannerEntryCard cooked toggle", () => {
     expect(alertError).toHaveBeenCalledWith("Couldn’t update that meal. Try again.");
     expect(wrapper.find(".planner-card__cooked").attributes("aria-pressed")).toBe("false");
   });
+
+  test("a second click while the first is pending calls the API once", async () => {
+    let resolve!: (value: unknown) => void;
+    markCooked.mockReturnValue(new Promise((r) => {
+      resolve = r;
+    }));
+    const wrapper = render(makeEntry());
+
+    await wrapper.find(".planner-card__cooked").trigger("click");
+    await wrapper.find(".planner-card__cooked").trigger("click");
+    resolve({ data: null, error: null, response: { status: 200 } });
+    await flushPromises();
+
+    expect(markCooked).toHaveBeenCalledTimes(1);
+  });
+
+  test("a failed unmark stays done and shows the error toast", async () => {
+    unmarkCooked.mockResolvedValue({ data: null, error: new Error("boom"), response: { status: 500 } });
+    const wrapper = render(makeEntry({ cookedAt: "2026-10-24T12:00:00" }));
+
+    await wrapper.find(".planner-card__cooked").trigger("click");
+    await flushPromises();
+
+    expect(alertError).toHaveBeenCalled();
+    expect(wrapper.find(".planner-card__cooked").attributes("aria-pressed")).toBe("true");
+  });
 });

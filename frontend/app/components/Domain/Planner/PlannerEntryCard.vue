@@ -338,6 +338,7 @@ function onMenuClick(event: MouseEvent) {
   align-items: center;
   align-self: flex-start;
   gap: calc(var(--ds-space) * 0.5);
+  min-height: 32px;
   padding: 0 calc(var(--ds-space) * 0.75) 0 calc(var(--ds-space) * 0.5);
   border: 1px solid var(--ds-border);
   border-radius: var(--ds-radius-ctl);
@@ -351,15 +352,15 @@ function onMenuClick(event: MouseEvent) {
 
 .planner-card__cooked[aria-pressed="true"] {
   border-color: var(--ds-accent);
-  color: var(--ds-accent);
+  background: var(--ds-accent);
+  color: var(--ds-accent-text);
 }
 
 .planner-card__cooked:disabled {
   cursor: progress;
 }
 
-.planner-card--done .planner-card__media,
-.planner-card--done .planner-card__title {
+.planner-card--done .planner-card__media {
   opacity: 0.6;
 }
 
