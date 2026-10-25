@@ -39,6 +39,7 @@
         @edit="openEditor"
         @opened="item => markOpened(item.id)"
         @remove="removeItem"
+        @move="moveItem"
       />
     </div>
 
@@ -63,7 +64,7 @@ import { useAppShellTitle } from "~/composables/use-app-shell-title";
 import { useDayRollover } from "~/composables/use-day-rollover";
 import { usePantry } from "~/composables/use-pantry";
 import { alert } from "~/composables/use-toast";
-import type { PantryItemOut } from "~/lib/api/types/household";
+import type { PantryItemOut, PantryLocation } from "~/lib/api/types/household";
 
 definePageMeta({
   middleware: ["auth"],
@@ -128,6 +129,14 @@ const editor = reactive({ open: false, item: null as PantryItemOut | null });
 function openEditor(item: PantryItemOut) {
   editor.item = item;
   editor.open = true;
+}
+
+/** A drag onto another place: saved at once; on failure the reload puts the item back where it is stored. */
+function moveItem(itemId: string, location: PantryLocation) {
+  const current = items.value.find(item => item.id === itemId);
+  if (current && current.location !== location) {
+    update(itemId, { location });
+  }
 }
 
 async function removeItem(item: PantryItemOut) {

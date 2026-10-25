@@ -1,7 +1,20 @@
 import { mount } from "@vue/test-utils";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import PantryList from "./PantryList.vue";
 import type { PantryItemOut, PantryLocation } from "~/lib/api/types/household";
+
+// Sortable needs real pointer events; the stand-in lets a test play the events Sortable fires.
+vi.mock("vue-draggable-plus", async () => {
+  const { defineComponent, h } = await import("vue");
+  return {
+    VueDraggable: defineComponent({
+      name: "VueDraggable",
+      props: { modelValue: { type: Array, default: () => [] }, tag: { type: String, default: "div" } },
+      emits: ["add", "start", "end", "update:modelValue"],
+      setup: (props, { slots, attrs }) => () => h(props.tag, { ...attrs }, slots.default?.()),
+    }),
+  };
+});
 
 const stubs = {
   "v-icon": { template: "<i class=\"v-icon\" aria-hidden=\"true\" />" },
@@ -34,8 +47,14 @@ function render(byLocation: Array<{ location: PantryLocation; items: PantryItemO
 }
 
 function headings(wrapper: ReturnType<typeof render>) {
-  return wrapper.findAll("section h2").map(h => h.find(".pantry-group__name").text());
+  return wrapper.findAll("section").filter(s => s.isVisible()).map(s => s.find(".pantry-group__name").text());
 }
+
+function draggables(wrapper: ReturnType<typeof render>, cls: string, location: PantryLocation) {
+  return wrapper.findAllComponents({ name: "VueDraggable" }).find(c => c.classes(cls) && c.attributes("data-location") === location)!;
+}
+const groupList = (wrapper: ReturnType<typeof render>, location: PantryLocation) => draggables(wrapper, "pantry-group__items", location);
+const barTarget = (wrapper: ReturnType<typeof render>, location: PantryLocation) => draggables(wrapper, "pantry-list__target", location);
 
 describe("PantryList", () => {
   afterEach(() => {
@@ -118,5 +137,42 @@ describe("PantryList", () => {
     await trigger.trigger("click");
     await wrapper.findAll("[role=menu] [role=menuitem]")[1]!.trigger("click");
     expect(wrapper.emitted("edit")).toEqual([[rice]]);
+  });
+
+  test("dropping a row on another place asks to move it there", () => {
+    const wrapper = render([
+      { location: "fridge", items: [milk] },
+      { location: "cupboard", items: [rice] },
+    ]);
+    const item = document.createElement("li");
+    item.dataset.itemId = "rice";
+
+    groupList(wrapper, "fridge").vm.$emit("add", { item });
+
+    expect(wrapper.emitted("move")).toEqual([["rice", "fridge"]]);
+  });
+
+  test("while dragging, a floating bar offers every place, empty ones included, without showing empty groups", async () => {
+    const wrapper = render([{ location: "fridge", items: [milk] }]);
+    const bar = () => wrapper.find(".pantry-list__dropbar");
+    const shown = () => bar().classes("pantry-list__dropbar--on") && bar().attributes("aria-hidden") === undefined;
+    expect(shown()).toBe(false);
+
+    groupList(wrapper, "fridge").vm.$emit("start");
+    await wrapper.vm.$nextTick();
+    expect(shown()).toBe(true);
+    expect(bar().findAll(".pantry-list__target-name").map(n => n.text())).toEqual(["Fridge", "Freezer", "Cupboard", "Other"]);
+    expect(headings(wrapper)).toEqual(["Fridge"]);
+
+    const item = document.createElement("li");
+    item.dataset.itemId = "milk";
+    document.body.appendChild(item);
+    barTarget(wrapper, "freezer").vm.$emit("add", { item });
+    groupList(wrapper, "fridge").vm.$emit("end");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.emitted("move")).toEqual([["milk", "freezer"]]);
+    expect(item.isConnected).toBe(false);
+    expect(shown()).toBe(false);
   });
 });

@@ -15,12 +15,14 @@ vi.mock("~/composables/store", async () => {
   const { ref } = await import("vue");
   return { useUnitStore: () => ({ store: ref([]) }) };
 });
-// The list itself is covered by PantryList.test.ts; here it only needs to ask for a removal.
+// The list itself is covered by PantryList.test.ts; here it only needs to ask for a removal or a move.
 vi.mock("~/components/Domain/Pantry/PantryList.vue", () => ({
   default: {
     props: ["byLocation"],
-    emits: ["remove"],
-    template: "<button class=\"remove-milk\" @click=\"$emit('remove', byLocation[0].items[0])\">Remove</button>",
+    emits: ["remove", "move"],
+    template: "<div><button class=\"remove-milk\" @click=\"$emit('remove', byLocation[0].items[0])\">Remove</button>"
+      + "<button class=\"milk-to-freezer\" @click=\"$emit('move', 'milk', 'freezer')\">Freezer</button>"
+      + "<button class=\"milk-to-fridge\" @click=\"$emit('move', 'milk', 'fridge')\">Fridge</button></div>",
   },
 }));
 
@@ -77,5 +79,16 @@ describe("pantry page", () => {
     options!.action!.onClick();
     options!.action!.onClick();
     expect(pantry.current.restore).toHaveBeenCalledExactlyOnceWith(milk);
+  });
+
+  test("a drop on another place saves the new location; a drop on its own place saves nothing", async () => {
+    const wrapper = await render();
+    await flushPromises();
+
+    await wrapper.find(".milk-to-fridge").trigger("click");
+    expect(pantry.current.update).not.toHaveBeenCalled();
+
+    await wrapper.find(".milk-to-freezer").trigger("click");
+    expect(pantry.current.update).toHaveBeenCalledWith("milk", { location: "freezer" });
   });
 });
