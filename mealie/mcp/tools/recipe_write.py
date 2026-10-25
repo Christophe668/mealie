@@ -11,15 +11,29 @@ from sqlalchemy.exc import SQLAlchemyError
 from mealie.core.root_logger import get_logger
 from mealie.mcp.auth import require_scope
 from mealie.mcp.context import McpContext
-from mealie.mcp.errors import McpToolError
+from mealie.mcp.errors import McpToolError, not_found
 from mealie.mcp.server import mcp_server
 from mealie.mcp.tools import run_in_context
 from mealie.mcp.tools._summaries import recipe_url
-from mealie.mcp.tools.recipes import get_recipe_impl
-from mealie.schema.recipe.recipe import Recipe
-from mealie.services.claude_context.recipe_writer import IngredientIn, NoteIn, RecipeCreateIn, RecipeWriter, StepIn
+from mealie.mcp.tools.recipes import _find_recipe, get_recipe_impl
+from mealie.schema.recipe.recipe import Recipe, create_recipe_slug
+from mealie.services.claude_context.recipe_writer import (
+    IngredientIn,
+    NoteIn,
+    RecipeCreateIn,
+    RecipeFieldsIn,
+    RecipeUpdateIn,
+    RecipeWriter,
+    StepIn,
+)
 
 logger = get_logger(__name__)
+
+CANT_EDIT = (
+    "You can't edit this recipe in Mealie (it is locked, or it belongs to another household that doesn't allow edits)."
+)
+# what a `warning` tells Claude not to do, so a retry doesn't write the recipe (or scale it) twice
+_DONT_REPEAT = {"create": "Don't create it again.", "update": "Don't send the same update again."}
 
 # Pydantic tags an error inside a union member with the member: a model name ("StepIn") or a
 # validator description ("constrained-str", "function-after[_printable(), constrained-str]").
@@ -65,10 +79,15 @@ def to_tool_error(exc: Exception) -> McpToolError:
     return McpToolError("; ".join(messages) or str(exc))
 
 
-def _save_error(exc: Exception) -> McpToolError:
+def _failure_reason(exc: Exception) -> str:
     # no SQL in the message: the details are in the log
-    reason = "a database error" if isinstance(exc, SQLAlchemyError) else str(exc) or type(exc).__name__
-    return McpToolError(f"Mealie couldn't save the recipe: {reason}. Nothing was saved; you can try again.")
+    return "a database error" if isinstance(exc, SQLAlchemyError) else str(exc) or type(exc).__name__
+
+
+def _save_error(exc: Exception) -> McpToolError:
+    return McpToolError(
+        f"Mealie couldn't save the recipe: {_failure_reason(exc)}. Nothing was saved; you can try again."
+    )
 
 
 async def create_recipe_impl(ctx: McpContext, fields: RecipeCreateIn) -> dict[str, Any]:
@@ -109,7 +128,9 @@ async def create_recipe_impl(ctx: McpContext, fields: RecipeCreateIn) -> dict[st
     return finish_saved(ctx, writer, created, "create", warnings, add_similar)
 
 
-def saved_recipe_fallback(ctx: McpContext, recipe: Recipe, warnings: list[str]) -> dict[str, Any]:
+def saved_recipe_fallback(
+    ctx: McpContext, recipe: Recipe, warnings: list[str], operation: Literal["create", "update"] = "create"
+) -> dict[str, Any]:
     """The minimal result for a recipe that is saved although a later step failed: enough for Claude
     to point the user at it, and a `warning` that tells it not to write the recipe again."""
     return {
@@ -117,8 +138,12 @@ def saved_recipe_fallback(ctx: McpContext, recipe: Recipe, warnings: list[str]) 
         "name": recipe.name,
         "slug": recipe.slug,
         "url": recipe_url(ctx.user.group_slug, recipe.slug),
-        "warning": "; ".join(warnings) + ". Don't create it again.",
+        "warning": _warning(warnings, operation),
     }
+
+
+def _warning(warnings: list[str], operation: Literal["create", "update"]) -> str:
+    return "; ".join(warnings) + ". " + _DONT_REPEAT[operation]
 
 
 def finish_saved(
@@ -148,9 +173,84 @@ def finish_saved(
         warnings = [*warnings, "the recipe was saved, but Mealie's notifications for it failed"]
 
     if result is None:
-        return saved_recipe_fallback(ctx, recipe, warnings)
+        return saved_recipe_fallback(ctx, recipe, warnings, operation)
     if warnings:
-        result["warning"] = "; ".join(warnings) + ". Don't create it again."
+        result["warning"] = _warning(warnings, operation)
+    return result
+
+
+def _update_refusal(
+    writer: RecipeWriter, current: Recipe, fields: RecipeFieldsIn, scale_to_servings: float | None
+) -> str | None:
+    """Why this update can't be made, checked before anything is written; None when it can."""
+    if not writer.service.can_update([current.slug]):
+        return CANT_EDIT
+    # the tool passes every parameter, so "sent" means "not None"
+    if scale_to_servings is None and all(getattr(fields, name) is None for name in RecipeFieldsIn.model_fields):
+        return "Nothing to change: send at least one field, or scale_to_servings."
+    if scale_to_servings is not None:
+        if fields.ingredients is not None:
+            return (
+                "scale_to_servings can't be combined with ingredients: send the new ingredient list with "
+                "the quantities you want (and servings), or scale the current ones, not both."
+            )
+        if fields.servings is not None:
+            return "Send either servings or scale_to_servings, not both: scale_to_servings sets the servings too."
+        if not current.recipe_servings or current.recipe_servings <= 0:
+            return (
+                "This recipe has no servings to scale from. Set servings first (how many the current "
+                "quantities serve), then scale."
+            )
+    if fields.name is not None and fields.name != current.name:
+        # the slug (URL) follows the name; Mealie would fail on a slug another recipe already has
+        slug = create_recipe_slug(fields.name)
+        other = writer.service.group_recipes.get_one(slug, "slug")
+        if slug != current.slug and other is not None:
+            return f"Another recipe in the group is already called {other.name!r}; pick a different name."
+    return None
+
+
+async def update_recipe_impl(
+    ctx: McpContext, slug_or_id: str, fields: RecipeFieldsIn, scale_to_servings: float | None = None
+) -> dict[str, Any]:
+    """Find (group-wide) → refuse what can't be done → plan over the current recipe (read-only) →
+    scale → create the missing foods, units and organizers → `update_one` → event.
+
+    Every refusal (permissions, nothing sent, the scaling rules, a taken name) happens before
+    `apply()`, which commits. `update_one` overwrites the row, so when `apply()` or the update
+    raises, the recipe is read again: if it is unchanged (`date_updated`, which every update sets),
+    the rows this call created are deleted and the error says nothing was changed; if the update
+    landed, nothing is deleted (the recipe now uses those rows) and the call succeeds with a `warning`.
+    """
+    current = _find_recipe(ctx, slug_or_id)
+    if current is None:
+        raise not_found("recipe", slug_or_id)
+    writer = RecipeWriter(ctx.repos, ctx.user, ctx.household, ctx.translator)
+    if refusal := _update_refusal(writer, current, fields, scale_to_servings):
+        raise McpToolError(refusal)
+
+    planned = await writer.build(fields, base=current)
+    not_scaled: list[str] = []
+    if scale_to_servings is not None:
+        planned.recipe, not_scaled = writer.scale(planned.recipe, scale_to_servings)
+
+    warnings: list[str] = []
+    try:
+        updated = writer.service.update_one(current.slug, writer.apply(planned))
+    except Exception as e:
+        logger.exception(f"update_recipe: updating {current.slug} failed")
+        ctx.session.rollback()
+        fresh = writer.service.group_recipes.get_one(current.id, "id")
+        if fresh is None or fresh.date_updated == current.date_updated:
+            writer.discard_created()
+            raise McpToolError(
+                f"Mealie couldn't update the recipe: {_failure_reason(e)}. Nothing was changed; you can try again."
+            ) from e
+        updated = fresh
+        warnings.append("the recipe was updated, but one of Mealie's follow-up steps (assets) failed")
+
+    result = finish_saved(ctx, writer, updated, "update", warnings)
+    result["not_scaled"] = not_scaled
     return result
 
 
@@ -251,3 +351,60 @@ async def create_recipe(
     except ValidationError as e:
         raise to_tool_error(e) from e
     return await run_in_context(create_recipe_impl, fields)
+
+
+@mcp_server.tool()
+@require_scope("recipes:write")
+async def update_recipe(
+    slug_or_id: str,
+    name: Str = None,
+    description: Str = None,
+    servings: Number = None,
+    yield_text: Str = None,
+    prep_minutes: Integer = None,
+    cook_minutes: Integer = None,
+    total_minutes: Integer = None,
+    ingredients: Annotated[Any, _schema({"type": "array", "items": _INGREDIENT})] = None,
+    instructions: Annotated[Any, _schema({"type": "array", "items": _STEP})] = None,
+    tags: Names = None,
+    categories: Names = None,
+    tools: Names = None,
+    notes: Annotated[Any, _schema({"type": "array", "items": _NOTE})] = None,
+    source_url: Str = None,
+    scale_to_servings: Number = None,
+) -> dict[str, Any]:
+    """Change an existing recipe (by slug or id, as get_recipe and search_recipes return them). Send
+    only what changes: a field left out stays as it is. A list that is sent (ingredients,
+    instructions, tags, categories, tools, notes) replaces the whole list, so to change one
+    ingredient call get_recipe first and send the full new list; the field formats and limits are
+    create_recipe's (prefer structured ingredients; reuse existing food names). An empty
+    description or notes list clears it. Changing servings also scales the yield quantity
+    ("12 cookies"); changing prep or cook minutes recomputes the total when it was their sum.
+    scale_to_servings (0-100) multiplies every ingredient quantity by new/old servings and sets the
+    servings: "make the carbonara for 4". It needs the recipe to have servings, and can't be sent
+    with ingredients or servings. Ingredients without a quantity ("salt to taste") stay as they are
+    and are listed in `not_scaled`. You can edit what the user could edit in Mealie: a recipe that
+    is locked, or belongs to another household that doesn't allow edits, is refused.
+    Returns the recipe as get_recipe does, plus `not_scaled`. A `warning` means the change was saved
+    but something after it failed: don't send the same update again (a repeated scale would scale twice)."""
+    try:
+        fields = RecipeUpdateIn(
+            name=name,
+            description=description,
+            servings=servings,
+            yield_text=yield_text,
+            prep_minutes=prep_minutes,
+            cook_minutes=cook_minutes,
+            total_minutes=total_minutes,
+            ingredients=ingredients,
+            instructions=instructions,
+            tags=tags,
+            categories=categories,
+            tools=tools,
+            notes=notes,
+            source_url=source_url,
+            scale_to_servings=scale_to_servings,
+        )
+    except ValidationError as e:
+        raise to_tool_error(e) from e
+    return await run_in_context(update_recipe_impl, slug_or_id, fields, fields.scale_to_servings)

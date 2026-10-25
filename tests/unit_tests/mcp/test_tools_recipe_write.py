@@ -1,6 +1,7 @@
 import contextlib
 import inspect
 from collections.abc import Callable
+from fractions import Fraction
 from typing import Any
 
 import pytest
@@ -16,14 +17,23 @@ from mealie.mcp.errors import McpToolError
 from mealie.mcp.server import INSTRUCTIONS, mcp_server
 from mealie.mcp.tools import recipe_write
 from mealie.mcp.tools._summaries import time_text
-from mealie.mcp.tools.recipe_write import create_recipe, to_tool_error
+from mealie.mcp.tools.recipe_write import create_recipe, to_tool_error, update_recipe
 from mealie.mcp.tools.recipes import get_recipe_impl
+from mealie.repos.all_repositories import get_repositories
 from mealie.schema.recipe.recipe import Recipe
 from mealie.schema.recipe.recipe_category import TagSave
-from mealie.schema.recipe.recipe_ingredient import SaveIngredientFood, SaveIngredientUnit
+from mealie.schema.recipe.recipe_ingredient import RecipeIngredient, SaveIngredientFood, SaveIngredientUnit
+from mealie.schema.recipe.recipe_step import IngredientReferences
 from mealie.schema.response.pagination import PaginationQuery
 from mealie.services.claude_context import recipe_writer as recipe_writer_module
-from mealie.services.claude_context.recipe_writer import IngredientIn, NoteIn, RecipeCreateIn, RecipeWriter, StepIn
+from mealie.services.claude_context.recipe_writer import (
+    IngredientIn,
+    NoteIn,
+    RecipeCreateIn,
+    RecipeFieldsIn,
+    RecipeWriter,
+    StepIn,
+)
 from mealie.services.event_bus_service.event_types import EventTypes
 from mealie.services.recipe import recipe_service as recipe_service_module
 from mealie.services.recipe.recipe_service import RecipeService
@@ -701,3 +711,537 @@ async def test_hand_written_schema_matches_the_models():
         assert set(shown["properties"]) == set(model.model_fields), model.__name__
         required = {n for n, f in model.model_fields.items() if f.is_required()}
         assert set(shown.get("required", [])) == required, model.__name__
+
+
+# ---------------------------------------------------------------------- update
+
+CANT_EDIT = (
+    "You can't edit this recipe in Mealie (it is locked, or it belongs to another household that doesn't allow edits)."
+)
+
+
+async def _new_recipe(monkeypatch: pytest.MonkeyPatch, session: Session, user: TestUser, **kwargs: Any) -> Recipe:
+    """A recipe created through create_recipe as `user`; returns it as stored."""
+    _as_user(monkeypatch, session, user)
+    data: dict[str, Any] = {
+        "name": f"Dish {random_string(6)}",
+        "ingredients": ["200 g spaghetti"],
+        "instructions": ["Cook."],
+    }
+    data.update(kwargs)
+    result = await create_recipe(**data)
+    return _stored(user, result["slug"])
+
+
+def _snapshot(user: TestUser, recipe_id: Any) -> dict[str, Any]:
+    """What a refused update must leave alone."""
+    user.repos.session.expire_all()
+    recipe = cross_group_recipes(user).get_one(recipe_id, "id")
+    assert recipe is not None
+    return recipe.model_dump(exclude={"updated_at", "update_at"})
+
+
+def cross_group_recipes(user: TestUser):
+    return get_repositories(user.repos.session, group_id=user.group_id, household_id=None).recipes
+
+
+def _set_household_lock(user: TestUser, household_id: Any, locked: bool) -> None:
+    household = user.repos.households.get_one(household_id)
+    assert household and household.preferences
+    household.preferences.lock_recipe_edits_from_other_households = locked
+    user.repos.household_preferences.update(household.id, household.preferences)
+
+
+@pytest.mark.asyncio
+async def test_update_partial(monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    tag = random_string(8)
+    recipe = await _new_recipe(
+        monkeypatch,
+        session,
+        user,
+        ingredients=["200 g spaghetti", "salt to taste"],
+        instructions=[{"text": "Boil.", "title": "Pasta", "timer_minutes": 9}],
+        tags=[tag],
+        servings=2,
+    )
+    user.repos.recipes.update_image(recipe.slug, "webp")
+    image = _stored(user, recipe.slug).image
+    assert image
+    before = _stored(user, recipe.slug)
+
+    result = await update_recipe(slug_or_id=recipe.slug, description="Now with a description.")
+
+    after = _stored(user, recipe.slug)
+    assert after.description == "Now with a description."
+    assert after.name == before.name and after.slug == before.slug
+    assert [i.display for i in after.recipe_ingredient] == [i.display for i in before.recipe_ingredient]
+    assert [(s.title, s.text, s.duration_seconds) for s in after.recipe_instructions or []] == [("Pasta", "Boil.", 540)]
+    assert [t.name for t in after.tags or []] == [tag]
+    assert after.recipe_servings == 2
+    assert after.image == image
+    assert result["description"] == "Now with a description."
+    assert result["not_scaled"] == []
+    assert result["url"].endswith(f"/r/{recipe.slug}")
+
+
+@pytest.mark.asyncio
+async def test_update_by_id_and_rename(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(monkeypatch, session, user)
+    new_name = f"Renamed {random_string(6)}"
+
+    result = await update_recipe(slug_or_id=str(recipe.id), name=new_name)
+
+    assert result["name"] == new_name and result["id"] == str(recipe.id)
+    assert _stored(user, result["slug"]).name == new_name
+
+
+@pytest.mark.asyncio
+async def test_rename_onto_an_existing_name_is_refused(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    first = await _new_recipe(monkeypatch, session, user)
+    second = await _new_recipe(monkeypatch, session, user)
+    before = _counts(user)
+    snapshot = _snapshot(user, second.id)
+
+    with pytest.raises(McpToolError, match="already"):
+        await update_recipe(slug_or_id=second.slug, name=first.name.upper(), tags=[random_string(8)])
+
+    assert _counts(user) == before
+    assert _snapshot(user, second.id) == snapshot
+
+
+@pytest.mark.asyncio
+async def test_update_replaces_lists(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(
+        monkeypatch,
+        session,
+        user,
+        ingredients=["200 g spaghetti", "2 eggs", "50 g pecorino"],
+        instructions=["Boil.", "Mix."],
+        tags=[random_string(8), random_string(8)],
+        notes=[{"title": "Tip", "text": "Old tip."}],
+    )
+    # the UI links ingredients to steps: step 2 uses the eggs and the pecorino
+    stored = _stored(user, recipe.slug)
+    steps = stored.recipe_instructions or []
+    steps[1].ingredient_references = [
+        IngredientReferences(reference_id=stored.recipe_ingredient[1].reference_id),
+        IngredientReferences(reference_id=stored.recipe_ingredient[2].reference_id),
+    ]
+    user.repos.recipes.update(stored.slug, stored)
+    assert len((_stored(user, recipe.slug).recipe_instructions or [])[1].ingredient_references) == 2
+    new_tag = random_string(8)
+
+    result = await update_recipe(
+        slug_or_id=recipe.slug,
+        ingredients=[{"quantity": 400, "unit": "g", "food": "spaghetti"}, "1 clove garlic"],
+        tags=[new_tag],
+        notes=[],
+    )
+
+    after = _stored(user, recipe.slug)
+    assert len(after.recipe_ingredient) == 2
+    assert [t.name for t in after.tags or []] == [new_tag]
+    assert after.notes == []
+    # the steps were not sent: they stay, and their references to the removed ingredients are dropped
+    assert [s.text for s in after.recipe_instructions or []] == ["Boil.", "Mix."]
+    assert all(s.ingredient_references == [] for s in after.recipe_instructions or [])
+    assert len(result["ingredients"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_scale_to_servings(monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(
+        monkeypatch,
+        session,
+        user,
+        servings=2,
+        ingredients=[
+            {"quantity": 200, "unit": "g", "food": "spaghetti"},
+            {"food": "salt", "note": "to taste"},
+            {"quantity": 0, "food": "pepper"},
+            {"note": "a handful of basil"},
+        ],
+    )
+
+    result = await update_recipe(slug_or_id=recipe.slug, scale_to_servings=4)
+
+    after = _stored(user, recipe.slug)
+    assert after.recipe_servings == 4
+    assert [i.quantity for i in after.recipe_ingredient] == [400, None, 0, None]
+    assert result["not_scaled"] == ["salt to taste", "pepper", "a handful of basil"]
+    assert result["servings"] == 4
+    assert result["ingredients"][0]["quantity"] == 400
+
+
+@pytest.mark.asyncio
+async def test_scale_has_no_float_noise(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(
+        monkeypatch, session, user, servings=3, ingredients=[{"quantity": 1.5, "unit": "cup", "food": "rice"}]
+    )
+
+    await update_recipe(slug_or_id=recipe.slug, scale_to_servings=2)
+
+    assert _stored(user, recipe.slug).recipe_ingredient[0].quantity == 1.0
+
+
+@pytest.mark.asyncio
+async def test_scale_refusals_write_nothing(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    no_servings = await _new_recipe(monkeypatch, session, user)
+    with_servings = await _new_recipe(monkeypatch, session, user, servings=2)
+    before = _counts(user)
+    snapshots = {r.id: _snapshot(user, r.id) for r in (no_servings, with_servings)}
+
+    with pytest.raises(McpToolError, match="no servings"):
+        await update_recipe(slug_or_id=no_servings.slug, scale_to_servings=4, tags=[random_string(8)])
+    with pytest.raises(McpToolError, match="ingredients"):
+        await update_recipe(
+            slug_or_id=with_servings.slug, scale_to_servings=4, ingredients=[{"quantity": 1, "food": random_string(9)}]
+        )
+    with pytest.raises(McpToolError, match="servings"):
+        await update_recipe(slug_or_id=with_servings.slug, scale_to_servings=4, servings=6)
+    with pytest.raises(McpToolError, match="scale_to_servings"):
+        await update_recipe(slug_or_id=with_servings.slug, scale_to_servings=0)
+
+    assert _counts(user) == before
+    assert {r_id: _snapshot(user, r_id) for r_id in snapshots} == snapshots
+
+
+@pytest.mark.asyncio
+async def test_servings_change_keeps_the_yield_quantity_in_step(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    """The UI scales servings and yield quantity by the same factor; so do scale_to_servings and servings."""
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(monkeypatch, session, user, servings=4, yield_text="cookies")
+    stored = _stored(user, recipe.slug)
+    stored.recipe_yield_quantity = 12  # e.g. a scraped "12 cookies"
+    user.repos.recipes.update(stored.slug, stored)
+
+    await update_recipe(slug_or_id=recipe.slug, scale_to_servings=8)
+    assert _stored(user, recipe.slug).recipe_yield_quantity == 24
+
+    await update_recipe(slug_or_id=recipe.slug, servings=2)
+    after = _stored(user, recipe.slug)
+    assert (after.recipe_servings, after.recipe_yield_quantity) == (2, 6)
+    assert after.recipe_yield_display == "6 cookies"
+
+    # no yield quantity: nothing to keep in step
+    plain = await _new_recipe(monkeypatch, session, user, servings=4)
+    await update_recipe(slug_or_id=plain.slug, servings=6)
+    assert _stored(user, plain.slug).recipe_yield_quantity == 0
+
+
+@pytest.mark.asyncio
+async def test_total_time_follows_its_parts_when_it_was_their_sum(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+
+    summed = await _new_recipe(monkeypatch, session, user, prep_minutes=10, cook_minutes=20, total_minutes=30)
+    await update_recipe(slug_or_id=summed.slug, cook_minutes=25)
+    assert _stored(user, summed.slug).total_time_seconds == 35 * 60
+
+    # a total with resting time in it was not the sum of its parts: it stays
+    rested = await _new_recipe(monkeypatch, session, user, prep_minutes=10, cook_minutes=20, total_minutes=90)
+    await update_recipe(slug_or_id=rested.slug, cook_minutes=25)
+    assert _stored(user, rested.slug).total_time_seconds == 90 * 60
+
+    # an explicit total wins
+    await update_recipe(slug_or_id=summed.slug, prep_minutes=5, total_minutes=60)
+    assert _stored(user, summed.slug).total_time_seconds == 60 * 60
+
+    # no times at all: the parts sent become the total
+    blank = await _new_recipe(monkeypatch, session, user)
+    await update_recipe(slug_or_id=blank.slug, prep_minutes=15)
+    stored = _stored(user, blank.slug)
+    assert (stored.prep_time_seconds, stored.total_time_seconds) == (15 * 60, 15 * 60)
+
+    # free-text times (scraped): nothing to add up, the total stays
+    texts = await _new_recipe(monkeypatch, session, user)
+    raw = _stored(user, texts.slug)
+    raw.total_time, raw.prep_time = "1 hour", "15 min"
+    user.repos.recipes.update(raw.slug, raw)
+    await update_recipe(slug_or_id=texts.slug, cook_minutes=20)
+    stored = _stored(user, texts.slug)
+    assert (stored.total_time, stored.total_time_seconds) == ("1 hour", None)
+
+
+@pytest.mark.asyncio
+async def test_nothing_to_change_is_refused(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(monkeypatch, session, user)
+
+    with pytest.raises(McpToolError, match="Nothing to change"):
+        await update_recipe(slug_or_id=recipe.slug)
+
+
+@pytest.mark.asyncio
+async def test_refused_update_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(monkeypatch, session, user, servings=2)
+    before = _counts(user)
+    snapshot = _snapshot(user, recipe.id)
+
+    with pytest.raises(McpToolError, match="servings"):
+        await update_recipe(slug_or_id=recipe.slug, tags=[random_string(8)], servings=0)
+    with pytest.raises(McpToolError, match=r"instructions\.0"):
+        await update_recipe(
+            slug_or_id=recipe.slug, ingredients=[{"quantity": 1, "food": random_string(9)}], instructions=[" "]
+        )
+    with pytest.raises(McpToolError, match="instructions"):
+        await update_recipe(slug_or_id=recipe.slug, instructions=[])
+    with pytest.raises(McpToolError, match="recipe not found"):
+        await update_recipe(slug_or_id="no-such-recipe", tags=[random_string(8)])
+
+    assert _counts(user) == before
+    assert _snapshot(user, recipe.id) == snapshot
+
+
+@pytest.mark.asyncio
+async def test_update_permissions_locked_recipe(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user: TestUser, h2_user: TestUser
+):
+    """Another household allows edits, but its owner locked this recipe."""
+    _set_household_lock(unique_user, h2_user.household_id, False)
+    try:
+        recipe = await _new_recipe(monkeypatch, session, h2_user)
+        stored = _stored(h2_user, recipe.slug)
+        assert stored.settings is not None
+        stored.settings.locked = True
+        h2_user.repos.recipes.update(stored.slug, stored)
+
+        _as_user(monkeypatch, session, unique_user)
+        before = _counts(unique_user)
+        snapshot = _snapshot(unique_user, recipe.id)
+
+        with pytest.raises(McpToolError) as caught:
+            await update_recipe(slug_or_id=recipe.slug, description="mine now", tags=[random_string(8)])
+
+        assert str(caught.value) == CANT_EDIT
+        assert _counts(unique_user) == before
+        assert _snapshot(unique_user, recipe.id) == snapshot
+    finally:
+        _set_household_lock(unique_user, h2_user.household_id, True)
+
+
+@pytest.mark.parametrize("household_locks_edits", [True, False])
+@pytest.mark.asyncio
+async def test_update_permissions_other_household(
+    monkeypatch: pytest.MonkeyPatch,
+    session: Session,
+    unique_user: TestUser,
+    h2_user: TestUser,
+    household_locks_edits: bool,
+):
+    _set_household_lock(unique_user, h2_user.household_id, household_locks_edits)
+    try:
+        recipe = await _new_recipe(monkeypatch, session, h2_user)
+        stored = _stored(h2_user, recipe.slug)
+        assert stored.settings is not None
+        stored.settings.locked = False
+        h2_user.repos.recipes.update(stored.slug, stored)
+
+        _as_user(monkeypatch, session, unique_user)
+        before = _counts(unique_user)
+        snapshot = _snapshot(unique_user, recipe.id)
+
+        if household_locks_edits:
+            with pytest.raises(McpToolError) as caught:
+                await update_recipe(slug_or_id=recipe.slug, description="from next door", tags=[random_string(8)])
+            assert str(caught.value) == CANT_EDIT
+            assert _counts(unique_user) == before
+            assert _snapshot(unique_user, recipe.id) == snapshot
+        else:
+            result = await update_recipe(slug_or_id=recipe.slug, description="from next door")
+            assert result["description"] == "from next door"
+            unique_user.repos.session.expire_all()
+            updated = cross_group_recipes(unique_user).get_one(recipe.id, "id")
+            assert updated is not None and updated.description == "from next door"
+            assert str(updated.household_id) == str(h2_user.household_id)  # it stays theirs
+            assert str(updated.user_id) == str(h2_user.user_id)
+    finally:
+        _set_household_lock(unique_user, h2_user.household_id, True)
+
+
+@pytest.mark.asyncio
+async def test_update_permissions_other_group(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser, g2_user: TestUser
+):
+    recipe = await _new_recipe(monkeypatch, session, g2_user)
+    snapshot = _snapshot(g2_user, recipe.id)
+
+    _as_user(monkeypatch, session, unique_user_fn_scoped)
+    before = _counts(unique_user_fn_scoped)
+    for key in (recipe.slug, str(recipe.id)):
+        with pytest.raises(McpToolError, match=f"^recipe not found: {key}$"):
+            await update_recipe(slug_or_id=key, description="hijack", tags=[random_string(8)])
+
+    assert _counts(unique_user_fn_scoped) == before
+    assert _snapshot(g2_user, recipe.id) == snapshot
+
+
+@pytest.mark.asyncio
+async def test_update_publishes_event(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(monkeypatch, session, user)
+    calls: list[dict[str, Any]] = []
+
+    class FakeBus:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def dispatch(self, **kwargs: Any) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setattr(recipe_writer_module, "EventBusService", FakeBus)
+
+    await update_recipe(slug_or_id=recipe.slug, description="Updated.")
+
+    assert [c["event_type"] for c in calls] == [EventTypes.recipe_updated]
+    assert calls[0]["document_data"].recipe_slug == recipe.slug
+
+
+@pytest.mark.asyncio
+async def test_update_requires_recipes_write(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(monkeypatch, session, user)
+    snapshot = _snapshot(user, recipe.id)
+    _as_user(monkeypatch, session, user, scopes=["recipes:read"])
+
+    with pytest.raises(McpToolError, match="recipes:write"):
+        await update_recipe(slug_or_id=recipe.slug, description="nope")
+
+    assert _snapshot(user, recipe.id) == snapshot
+
+
+@pytest.mark.asyncio
+async def test_failed_update_that_did_not_land_removes_rows_this_call_created(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(monkeypatch, session, user, servings=2)
+    before = _counts(user)
+    snapshot = _snapshot(user, recipe.id)
+
+    def broken_update(self, match_value, new_data):
+        raise IntegrityError("UPDATE recipes ...", {}, Exception("constraint failed"))
+
+    monkeypatch.setattr(type(cross_group_recipes(user)), "update", broken_update)
+
+    with pytest.raises(McpToolError) as caught:
+        await update_recipe(
+            slug_or_id=recipe.slug,
+            ingredients=[{"quantity": 1, "unit": random_string(8), "food": random_string(10)}],
+            tags=[random_string(8)],
+            categories=[random_string(8)],
+        )
+
+    message = str(caught.value)
+    assert message.startswith("Mealie couldn't update the recipe: a database error")
+    assert "Nothing was changed" in message and "UPDATE" not in message
+    session.expire_all()
+    assert _counts(user) == before
+    assert _snapshot(user, recipe.id) == snapshot
+
+
+@pytest.mark.asyncio
+async def test_failed_update_that_landed_keeps_it_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    """update_one commits, then checks the assets: if that fails, the change is saved and the rows it
+    uses stay."""
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(monkeypatch, session, user, servings=2)
+    food, tag = random_string(10), random_string(8)
+    before = _counts(user)
+
+    def broken_check_assets(self, recipe, original_slug):
+        raise RuntimeError("assets folder gone")
+
+    monkeypatch.setattr(RecipeService, "check_assets", broken_check_assets)
+
+    result = await update_recipe(
+        slug_or_id=recipe.slug, ingredients=[{"quantity": 1, "food": food}], tags=[tag], scale_to_servings=None
+    )
+
+    assert "updated" in result["warning"] and "Don't send the same update again" in result["warning"]
+    stored = _stored(user, recipe.slug)
+    assert [t.name for t in stored.tags or []] == [tag]
+    assert stored.recipe_ingredient[0].food is not None and stored.recipe_ingredient[0].food.name == food
+    after = _counts(user)
+    assert (after["foods"], after["tags"]) == (before["foods"] + 1, before["tags"] + 1)
+    assert result["tags"] == [tag]
+
+
+@pytest.mark.asyncio
+async def test_update_tool_schema_matches_the_models():
+    tools = {tool.name: tool for tool in await mcp_server.list_tools()}
+    schema = tools["update_recipe"].input_schema
+
+    assert set(schema["properties"]) == {"slug_or_id", "scale_to_servings", *RecipeFieldsIn.model_fields}
+    assert schema["required"] == ["slug_or_id"]
+    ingredient = next(i for i in schema["properties"]["ingredients"]["anyOf"] if i.get("type") == "array")
+    object_item = next(item for item in ingredient["items"]["anyOf"] if item["type"] == "object")
+    assert set(object_item["properties"]) == set(IngredientIn.model_fields)
+
+
+def test_writer_scale_treats_zero_and_none_as_no_quantity():
+    recipe = Recipe(
+        name="Soup",
+        recipe_servings=2,
+        recipe_yield_quantity=4,
+        recipe_ingredient=[
+            RecipeIngredient(quantity=0.667, note="cups of stock"),
+            RecipeIngredient(quantity=0.0, note="salt to taste"),
+            RecipeIngredient(quantity=None, note="pepper"),
+        ],
+    )
+
+    scaled, not_scaled = RecipeWriter.scale(recipe, 3)
+
+    assert [i.quantity for i in scaled.recipe_ingredient] == [1.0, 0.0, None]
+    assert not_scaled == ["salt to taste", "pepper"]
+    assert (scaled.recipe_servings, scaled.recipe_yield_quantity) == (3, 6)
+    assert recipe.recipe_servings == 2  # the input is left alone
+
+
+@pytest.mark.parametrize(
+    ("quantity", "factor", "expected"),
+    [
+        (0.667, Fraction(3, 2), 1.0),  # stored 2/3
+        (1.5, Fraction(2, 3), 1.0),
+        (0.333, Fraction(3), 1.0),  # stored 1/3
+        (200, Fraction(2), 400),
+        (0.1, Fraction(3), 0.3),
+        (1.234, Fraction(1), 1.234),  # not near a kitchen fraction: kept as is
+        (0.0625, Fraction(2), 0.125),
+        (2.5, Fraction(4, 3), 3.333),
+    ],
+)
+def test_scaled_quantity_has_no_float_noise(quantity: float, factor: Fraction, expected: float):
+    assert recipe_writer_module._scaled_quantity(quantity, factor) == expected

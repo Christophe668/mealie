@@ -13,6 +13,7 @@ import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -184,6 +185,12 @@ class RecipeFieldsIn(_In):
     source_url: SourceUrl | None = None
 
 
+class RecipeUpdateIn(RecipeFieldsIn):
+    """An update: any recipe field, plus `scale_to_servings` (multiplies the ingredient quantities)."""
+
+    scale_to_servings: float | None = Field(default=None, gt=0, le=MAX_SERVINGS)
+
+
 class RecipeCreateIn(RecipeFieldsIn):
     """A new recipe: a name, at least one ingredient and at least one instruction are required."""
 
@@ -247,6 +254,8 @@ class RecipeWriter:
         recipe = base.model_copy(deep=True) if base is not None else Recipe(name=fields.name)
         planned = PlannedRecipe(recipe=recipe)
         self._map_scalars(fields, recipe)
+        if base is not None:
+            self._keep_derived_values(fields, base, recipe)
 
         if fields.ingredients is not None:
             recipe.recipe_ingredient = [await self._ingredient(item) for item in fields.ingredients]
@@ -290,6 +299,47 @@ class RecipeWriter:
             recipe.perform_time_seconds, recipe.perform_time = fields.cook_minutes * 60, None
         if fields.total_minutes is not None:
             recipe.total_time_seconds, recipe.total_time = fields.total_minutes * 60, None
+
+    @staticmethod
+    def _keep_derived_values(fields: RecipeFieldsIn, base: Recipe, recipe: Recipe) -> None:
+        """On an update, keeps the values that follow from the ones sent consistent with them.
+
+        - Servings: the yield quantity changes by the same factor, as the UI's scaling does
+          ("12 cookies" for 4 servings becomes "6 cookies" for 2).
+        - Times: when prep or cook minutes are sent without `total_minutes`, the total is recomputed
+          only if it was the sum of its parts (a blank total over blank parts counts). A total that
+          includes resting or marinating time ("prep 10, cook 20, total 90"), or free-text times
+          from a scraped page, are left alone: they can't be recomputed from the parts.
+        """
+        if fields.servings is not None:
+            _follow_servings(recipe, base.recipe_servings, fields.servings)
+
+        parts_sent = fields.prep_minutes is not None or fields.cook_minutes is not None
+        if fields.total_minutes is None and parts_sent and _total_is_sum_of_parts(base):
+            total = (recipe.prep_time_seconds or 0) + (recipe.perform_time_seconds or 0)
+            recipe.total_time_seconds, recipe.total_time = total or None, None
+
+    @staticmethod
+    def scale(recipe: Recipe, servings: float) -> tuple[Recipe, list[str]]:
+        """A copy of `recipe` for `servings` servings: every ingredient quantity is multiplied by
+        new / old servings, and the yield quantity follows. An ingredient with no quantity (None, or
+        0, which the NLP parser stores for "salt to taste") stays as it is; their display texts are
+        returned as `not_scaled`.
+
+        The caller makes sure the recipe has servings."""
+        old = recipe.recipe_servings
+        if not old or old <= 0:
+            raise ValueError("the recipe has no servings to scale from")
+        scaled = recipe.model_copy(deep=True)
+        factor = Fraction(servings) / Fraction(old)
+        not_scaled: list[str] = []
+        for ingredient in scaled.recipe_ingredient:
+            if not ingredient.quantity:
+                not_scaled.append(_ingredient_text(ingredient))
+                continue
+            ingredient.quantity = _scaled_quantity(ingredient.quantity, factor)
+        _follow_servings(scaled, old, servings)
+        return scaled, not_scaled
 
     @staticmethod
     def _step(item: StepIn | str) -> RecipeStep:
@@ -569,6 +619,35 @@ class RecipeWriter:
                     logger.exception(f"Publishing the {event_type.name} event for {recipe.slug} failed")
 
         dispatch_off_request(run_listeners)
+
+
+def _follow_servings(recipe: Recipe, old: float, new: float) -> None:
+    """Sets the servings, and scales the yield quantity by the same factor when both were set."""
+    if old and old > 0 and recipe.recipe_yield_quantity:
+        recipe.recipe_yield_quantity = round(recipe.recipe_yield_quantity * new / old, 3)
+    recipe.recipe_servings = new
+
+
+def _scaled_quantity(quantity: float, factor: Fraction) -> float:
+    """`quantity x factor`, rounded to Mealie's 3 decimals. Quantities are stored rounded (2/3 is
+    0.667), so one within that rounding of a kitchen fraction (denominator up to 16) is taken as the
+    fraction first: 0.667 x 3/2 gives 1.0, not 1.001."""
+    exact = Fraction(quantity)
+    kitchen = exact.limit_denominator(16)
+    base = kitchen if abs(kitchen - exact) <= Fraction(1, 2000) else exact
+    return round(float(base * factor), 3)
+
+
+def _total_is_sum_of_parts(recipe: Recipe) -> bool:
+    if recipe.total_time or recipe.prep_time or recipe.perform_time:
+        return False  # free text: nothing to add up
+    parts = (recipe.prep_time_seconds or 0) + (recipe.perform_time_seconds or 0)
+    return (recipe.total_time_seconds or 0) == parts
+
+
+def _ingredient_text(ingredient: RecipeIngredient) -> str:
+    food = ingredient.food.name if ingredient.food else None
+    return ingredient.display or ingredient.original_text or ingredient.note or food or ""
 
 
 def _start_daemon_thread(task: Callable[[], None]) -> None:
