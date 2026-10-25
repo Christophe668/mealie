@@ -65,6 +65,15 @@ from .household_preferences import (
     SaveHouseholdPreferences,
     UpdateHouseholdPreferences,
 )
+from .household_profile import (
+    Diet,
+    HouseholdProfileOut,
+    MealPreferencesOut,
+    MealPreferencesUpdate,
+    MemberProfileCreate,
+    MemberProfileOut,
+    MemberProfileUpdate,
+)
 from .household_statistics import HouseholdStatistics
 from .invite_token import CreateInviteToken, EmailInitationResponse, EmailInvitation, ReadInviteToken, SaveInviteToken
 from .pantry import (
@@ -107,6 +116,13 @@ __all__ = [
     "GroupEventNotifierUpdate",
     "GroupEventPagination",
     "HouseholdStatistics",
+    "Diet",
+    "HouseholdProfileOut",
+    "MealPreferencesOut",
+    "MealPreferencesUpdate",
+    "MemberProfileCreate",
+    "MemberProfileOut",
+    "MemberProfileUpdate",
     "ShoppingListAddRecipeParams",
     "ShoppingListAddRecipeParamsBulk",
     "ShoppingListCreate",

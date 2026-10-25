@@ -13,6 +13,7 @@ from mealie.db.models.group.preferences import GroupPreferencesModel
 from mealie.db.models.household.cookbook import CookBook
 from mealie.db.models.household.events import GroupEventNotifierModel
 from mealie.db.models.household.household import Household
+from mealie.db.models.household.household_profile import HouseholdMealPreferences, HouseholdMemberProfile
 from mealie.db.models.household.household_to_recipe import HouseholdToRecipe
 from mealie.db.models.household.invite_tokens import GroupInviteToken
 from mealie.db.models.household.mealplan import GroupMealPlan, GroupMealPlanRules
@@ -44,6 +45,7 @@ from mealie.repos.repository_ai_provider import GroupRepositoryAIPromptOverride,
 from mealie.repos.repository_cookbooks import RepositoryCookbooks
 from mealie.repos.repository_foods import RepositoryFood
 from mealie.repos.repository_household import RepositoryHousehold, RepositoryHouseholdRecipes
+from mealie.repos.repository_household_profile import RepositoryMealPreferences, RepositoryMemberProfiles
 from mealie.repos.repository_meal_plan_rules import RepositoryMealPlanRules
 from mealie.repos.repository_pantry import RepositoryPantryItems
 from mealie.repos.repository_recipe_feedback import RepositoryRecipeFeedback
@@ -63,6 +65,7 @@ from mealie.schema.household.group_shopping_list import (
 )
 from mealie.schema.household.household import HouseholdInDB, HouseholdRecipeOut
 from mealie.schema.household.household_preferences import ReadHouseholdPreferences
+from mealie.schema.household.household_profile import MealPreferencesOut, MemberProfileOut
 from mealie.schema.household.invite_token import ReadInviteToken
 from mealie.schema.household.pantry import PantryItemOut
 from mealie.schema.household.recipe_feedback import RecipeFeedbackOut
@@ -490,6 +493,28 @@ class AllRepositories:
             PK_ID,
             RecipeFeedback,
             RecipeFeedbackOut,
+            group_id=self.group_id,
+            household_id=self.household_id,
+        )
+
+    @cached_property
+    def member_profiles(self) -> RepositoryMemberProfiles:
+        return RepositoryMemberProfiles(
+            self.session,
+            PK_ID,
+            HouseholdMemberProfile,
+            MemberProfileOut,
+            group_id=self.group_id,
+            household_id=self.household_id,
+        )
+
+    @cached_property
+    def meal_preferences(self) -> RepositoryMealPreferences:
+        return RepositoryMealPreferences(
+            self.session,
+            PK_ID,
+            HouseholdMealPreferences,
+            MealPreferencesOut,
             group_id=self.group_id,
             household_id=self.household_id,
         )
