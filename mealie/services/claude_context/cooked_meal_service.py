@@ -1,4 +1,5 @@
 import math
+from collections import Counter
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 
@@ -89,7 +90,7 @@ class CookedMealService(BaseService):
             raise NoEntryFound("Recipe not found.")
         return recipe
 
-    def _matching_items(self, recipe: Recipe) -> list[PantryItemOut]:
+    def _matching_items(self, recipe: Recipe, pantry: list[PantryItemOut] | None = None) -> list[PantryItemOut]:
         """Pantry items matching the recipe's foods: by `food_id`, or (items without a food) by the food's name or
         its simple singular/plural, case-insensitively. In `get_pantry` order."""
         food_ids: set[str] = set()
@@ -107,7 +108,8 @@ class CookedMealService(BaseService):
                 return str(item.food_id) in food_ids
             return IngredientFoodModel.normalize(item.name) in names
 
-        return [item for item in self.repos.pantry_items.ordered() if matches(item)]
+        items = self.repos.pantry_items.ordered() if pantry is None else pantry
+        return [item for item in items if matches(item)]
 
     def _suggested_portions(self, recipe: Recipe, scale: float) -> int:
         """Servings cooked minus the household's `default_servings`, when both are known and positive; else 0."""
@@ -185,7 +187,9 @@ class CookedMealService(BaseService):
             else:
                 move_last_made_forward(self.repos, self.user, recipe, local_noon(data.cooked_on))
 
-            marked = self.repos.meals.patch(entry.id, {"cooked_at": datetime.now(UTC)}) if entry else None
+            # local noon of the cooking date (not "now"), so a back-dated repeat is still caught as already recorded
+            cooked_at = local_noon(data.cooked_on)
+            marked = self.repos.meals.patch(entry.id, {"cooked_at": cooked_at}) if entry else None
 
             removed_ids: list[UUID] = []
             kept: list[PantryItemOut] = []
@@ -238,15 +242,17 @@ class CookedMealService(BaseService):
 
     def _checked_outcomes(self, recipe: Recipe, data: CookedMealCreate) -> list[tuple[PantryItemOut, PantryOutcome]]:
         ids = [str(outcome.pantry_item_id) for outcome in data.pantry]
-        repeated = sorted({item_id for item_id in ids if ids.count(item_id) > 1})
+        repeated = sorted(item_id for item_id, count in Counter(ids).items() if count > 1)
         if repeated:
             raise PantryItemNotInRecipeError(repeated, reason="pantry items listed more than once")
 
-        missing = [item_id for item_id in ids if self.repos.pantry_items.get_one(UUID(item_id)) is None]
+        pantry = self.repos.pantry_items.ordered()  # household-scoped
+        in_household = {str(item.id) for item in pantry}
+        missing = [item_id for item_id in ids if item_id not in in_household]
         if missing:
             raise NoEntryFound(f"pantry items not found: {', '.join(missing)}")
 
-        matched = {str(item.id): item for item in self._matching_items(recipe)}
+        matched = {str(item.id): item for item in self._matching_items(recipe, pantry)}
         not_in_recipe = [item_id for item_id in ids if item_id not in matched]
         if not_in_recipe:
             raise PantryItemNotInRecipeError(not_in_recipe)

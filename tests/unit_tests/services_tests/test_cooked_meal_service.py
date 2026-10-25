@@ -30,7 +30,7 @@ from mealie.services.claude_context.recipe_feedback_service import FutureMadeOnE
 from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
 
-# `cooked_at` is "now", and "already recorded" compares its local date with the cooking date: use the real today.
+# `record` refuses a cooking date later than the server's tomorrow, so tests use the real today.
 TODAY = datetime.now().astimezone().date()
 
 
@@ -87,6 +87,11 @@ def _noon(day: date) -> datetime:
     return datetime.combine(day, time(12)).astimezone()
 
 
+def _rating(user: TestUser, recipe: Recipe) -> float | None:
+    rating = user.repos.user_ratings.get_by_user_and_recipe(user.user_id, recipe.id)
+    return rating.rating if rating else None
+
+
 def _snapshot(user: TestUser, recipe: Recipe, entry_ids: list[int]) -> dict[str, Any]:
     user.repos.session.expire_all()
     return {
@@ -96,6 +101,8 @@ def _snapshot(user: TestUser, recipe: Recipe, entry_ids: list[int]) -> dict[str,
         "feedback": user.repos.recipe_feedback.page_newest_first(1, 100, recipe.id).total,
         "cooked_at": [_entry(user, entry_id).cooked_at for entry_id in entry_ids],
         "last_made": _last_made(user, recipe),
+        "rating": _rating(user, recipe),
+        "timeline_events": user.repos.recipe_timeline_events.count_all(match_key="recipe_id", match_value=recipe.id),
     }
 
 
@@ -232,7 +239,9 @@ def test_record_full(unique_user: TestUser):
 
     assert out.meal_plan_entry is not None and out.meal_plan_entry.id == entry.id
     stored = _entry(unique_user, entry.id)
+    # local noon of the cooking date, stored as UTC
     assert stored.cooked_at is not None
+    assert stored.cooked_at.replace(tzinfo=stored.cooked_at.tzinfo or UTC) == _noon(TODAY)
     assert stored.recipe_id == recipe.id and stored.date == TODAY  # nothing else changed on the entry
 
     assert out.removed_item_ids == [used.id]
@@ -392,6 +401,22 @@ def test_record_twice_refused(unique_user: TestUser):
 
     service.record(data)
     with pytest.raises(AlreadyCookedError, match=f"already recorded as cooked on {TODAY.isoformat()}"):
+        service.record(data)
+
+    leftovers = [i for i in unique_user.repos.pantry_items.ordered() if i.name == f"Leftover {recipe.name}"]
+    assert len(leftovers) == 1
+
+
+def test_record_back_dated_twice_refused(unique_user: TestUser):
+    service = _service(unique_user)
+    recipe = _recipe(unique_user)
+    yesterday = TODAY - timedelta(days=1)
+    _plan(unique_user, recipe, yesterday)
+    data = CookedMealCreate(recipe_id=recipe.id, cooked_on=yesterday, leftovers=CookedLeftovers(portions=2))
+
+    first = service.record(data)
+    assert first.meal_plan_entry is not None
+    with pytest.raises(AlreadyCookedError, match=f"already recorded as cooked on {yesterday.isoformat()}"):
         service.record(data)
 
     leftovers = [i for i in unique_user.repos.pantry_items.ordered() if i.name == f"Leftover {recipe.name}"]
