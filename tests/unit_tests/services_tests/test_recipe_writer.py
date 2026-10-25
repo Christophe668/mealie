@@ -1,7 +1,12 @@
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
 import pytest
+import sqlalchemy as sa
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
@@ -9,9 +14,10 @@ from starlette.testclient import TestClient
 from mealie.lang.providers import get_locale_provider
 from mealie.mcp import context as mcp_context_module
 from mealie.mcp.context import McpContext
+from mealie.schema.household.group_events import GroupEventNotifierOptions, GroupEventNotifierSave
 from mealie.schema.household.household import HouseholdInDB
 from mealie.schema.recipe.recipe import Recipe
-from mealie.schema.recipe.recipe_category import TagSave
+from mealie.schema.recipe.recipe_category import CategorySave, TagSave
 from mealie.schema.recipe.recipe_ingredient import (
     IngredientFood,
     IngredientUnit,
@@ -20,7 +26,7 @@ from mealie.schema.recipe.recipe_ingredient import (
 )
 from mealie.schema.recipe.recipe_tool import RecipeToolSave
 from mealie.schema.response.pagination import PaginationQuery
-from mealie.schema.user.user import PrivateUser
+from mealie.schema.user.user import DEFAULT_INTEGRATION_ID, PrivateUser
 from mealie.services.claude_context import recipe_writer as recipe_writer_module
 from mealie.services.claude_context.recipe_writer import (
     IngredientIn,
@@ -30,7 +36,9 @@ from mealie.services.claude_context.recipe_writer import (
     RecipeWriter,
     StepIn,
 )
+from mealie.services.event_bus_service.event_bus_service import EventBusService
 from mealie.services.event_bus_service.event_types import EventTypes
+from mealie.services.event_bus_service.publisher import ApprisePublisher
 from mealie.services.parser_services.ingredient_parser import NLPParser
 from tests.utils import api_routes
 from tests.utils.factories import random_string
@@ -324,7 +332,20 @@ def test_similar_existing(api_client: TestClient, unique_user: TestUser, h2_user
     assert len(writer.similar_existing(name, exclude_id=None)) == 3
 
 
-def test_publish(monkeypatch: pytest.MonkeyPatch, unique_user: TestUser):
+@pytest.fixture
+def dispatch_inline(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Runs the off-request event dispatch synchronously; returns the names of the tasks it ran."""
+    ran: list[str] = []
+
+    def run_now(task: Callable[[], None]) -> None:
+        ran.append(getattr(task, "__name__", "task"))
+        task()
+
+    monkeypatch.setattr(recipe_writer_module, "dispatch_off_request", run_now)
+    return ran
+
+
+def test_publish(monkeypatch: pytest.MonkeyPatch, unique_user: TestUser, dispatch_inline: list[str]):
     calls: list[dict[str, Any]] = []
 
     class FakeBus:
@@ -353,18 +374,91 @@ def test_publish(monkeypatch: pytest.MonkeyPatch, unique_user: TestUser):
     assert "carbonara-x" in calls[0]["message"]
 
 
-def test_publish_failure_is_swallowed(monkeypatch: pytest.MonkeyPatch, unique_user: TestUser):
-    class BrokenBus:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            pass
+def test_publish_does_not_wait_for_listeners(monkeypatch: pytest.MonkeyPatch, unique_user: TestUser):
+    """The listeners (Apprise, webhooks) run on another thread, so a slow notifier never holds the tool call."""
+    release = threading.Event()
+    published = threading.Event()
 
-        def dispatch(self, **kwargs: Any) -> None:
-            raise RuntimeError("apprise down")
+    def slow_publish(self, event, group_id, household_id) -> None:
+        release.wait(5)
+        published.set()
 
-    monkeypatch.setattr(recipe_writer_module, "EventBusService", BrokenBus)
-    recipe = Recipe(name="Carbonara", slug="carbonara-y", group_id=unique_user.group_id)
+    monkeypatch.setattr(EventBusService, "_publish_event", slow_publish)
+    recipe = Recipe(
+        name="Carbonara", slug="carbonara-s", group_id=unique_user.group_id, household_id=unique_user.household_id
+    )
+
+    _writer(unique_user).publish(recipe, "create")  # returns although the listener is still blocked
+
+    assert not published.is_set()
+    release.set()
+    assert published.wait(5)
+
+
+def test_publish_listener_failure_is_logged(
+    monkeypatch: pytest.MonkeyPatch, unique_user: TestUser, dispatch_inline: list[str], caplog: pytest.LogCaptureFixture
+):
+    def broken(self, event, group_id, household_id) -> None:
+        raise RuntimeError("apprise down")
+
+    monkeypatch.setattr(EventBusService, "_publish_event", broken)
+    recipe = Recipe(
+        name="Carbonara", slug="carbonara-y", group_id=unique_user.group_id, household_id=unique_user.household_id
+    )
 
     _writer(unique_user).publish(recipe, "create")  # the recipe is already saved; a notifier must not undo that
+
+    assert dispatch_inline
+    assert "carbonara-y" in caplog.text
+
+
+def test_publish_coding_errors_surface(
+    monkeypatch: pytest.MonkeyPatch, unique_user: TestUser, dispatch_inline: list[str]
+):
+    """Building the event (URL, message) is not wrapped: a broken message key must not be hidden in a log."""
+
+    def broken_t(*args: Any, **kwargs: Any) -> str:
+        raise KeyError("notifications.missing-key")
+
+    writer = _writer(unique_user)
+    writer.translator = SimpleNamespace(t=broken_t)  # type: ignore[assignment]
+    recipe = Recipe(
+        name="Carbonara", slug="carbonara-z", group_id=unique_user.group_id, household_id=unique_user.household_id
+    )
+
+    with pytest.raises(KeyError):
+        writer.publish(recipe, "create")
+    assert dispatch_inline == []
+
+
+def test_publish_through_the_real_event_bus(
+    monkeypatch: pytest.MonkeyPatch, unique_user_fn_scoped: TestUser, dispatch_inline: list[str]
+):
+    """The real EventBusService path: an enabled notifier of the user's household receives the event."""
+    user = unique_user_fn_scoped
+    user.repos.group_event_notifier.create(
+        GroupEventNotifierSave(
+            name=random_string(8),
+            apprise_url="json://localhost:1/hook",
+            group_id=user.group_id,
+            household_id=user.household_id,
+            options=GroupEventNotifierOptions(recipe_created=True),
+        )
+    )
+    received: list[tuple[Any, list[str]]] = []
+    monkeypatch.setattr(ApprisePublisher, "publish", lambda self, event, urls: received.append((event, urls)))
+    recipe = Recipe(name="Carbonara", slug=random_string(10), group_id=user.group_id, household_id=user.household_id)
+
+    _writer(user).publish(recipe, "create")
+    _writer(user).publish(recipe, "update")  # the notifier didn't subscribe to updates
+
+    assert len(received) == 1
+    event, urls = received[0]
+    assert event.event_type == EventTypes.recipe_created
+    assert event.document_data.recipe_slug == recipe.slug
+    assert event.integration_id == DEFAULT_INTEGRATION_ID
+    assert recipe.slug in event.message.body
+    assert urls and urls[0].startswith("json://localhost:1/hook")
 
 
 def test_mcp_context_household_and_translator(session: Session, unique_user: TestUser):
@@ -376,3 +470,208 @@ def test_mcp_context_household_and_translator(session: Session, unique_user: Tes
     assert ctx.household is ctx.household
     assert ctx.translator.t("recipe.recipe-defaults.step-text")
     assert mcp_context_module.DEFAULT_LOCALE == "en-US"
+
+
+# --- limits on names and free text ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("field", ["tags", "categories", "tools"])
+@pytest.mark.parametrize("name", ["!!!", "🍝", "🔪 ✨"])
+def test_organizer_names_must_slugify(field: str, name: str):
+    with pytest.raises(ValidationError, match="letter or digit"):
+        RecipeFieldsIn(**{field: [name]})
+
+    assert RecipeFieldsIn(**{field: ["Crème brûlée"]})
+
+
+def test_text_length_caps():
+    def refused(**kwargs: Any) -> None:
+        with pytest.raises(ValidationError):
+            RecipeFieldsIn(**kwargs)
+
+    refused(name="x" * 201)
+    refused(description="x" * 5001)
+    refused(yield_text="x" * 101)
+    refused(ingredients=["x" * 301])
+    refused(ingredients=[{"food": "x" * 101}])
+    refused(ingredients=[{"food": "egg", "unit": "x" * 101}])
+    refused(ingredients=[{"food": "egg", "note": "x" * 301}])
+    refused(ingredients=[{"food": "egg", "section": "x" * 101}])
+    refused(instructions=["x" * 5001])
+    refused(instructions=[{"text": "x" * 5001}])
+    refused(instructions=[{"text": "Boil.", "title": "x" * 101}])
+    refused(notes=[{"title": "x" * 101, "text": "ok"}])
+    refused(notes=[{"title": "Tip", "text": "x" * 5001}])
+    refused(tags=["x" * 101])
+    refused(categories=["x" * 101])
+    refused(tools=["x" * 101])
+    refused(source_url="https://example.com/" + "x" * 2000)
+    refused(source_url="ftp://example.com/recipe")
+    refused(source_url="javascript:alert(1)")
+    refused(source_url="example.com/recipe")
+
+    accepted = RecipeFieldsIn(
+        name="x" * 200,
+        description="x" * 5000,
+        yield_text="x" * 100,
+        ingredients=["x" * 300, {"food": "x" * 100, "unit": "x" * 100, "note": "x" * 300, "section": "x" * 100}],
+        instructions=["x" * 5000, {"text": "x" * 5000, "title": "x" * 100}],
+        notes=[{"title": "x" * 100, "text": "x" * 5000}],
+        tags=["x" * 100],
+        source_url="HTTP://Example.com/" + "x" * 1981,
+    )
+    assert accepted.source_url is not None and len(accepted.source_url) == 2000
+
+
+def test_similar_existing_matches_only_numbered_duplicates(api_client: TestClient, unique_user: TestUser):
+    name = f"Pasta {random_string(8)}"
+    first_slug, _ = _create_recipe(api_client, unique_user, name)
+    renamed_slug, _ = _create_recipe(api_client, unique_user, name)  # Mealie saves it as "NAME (1)"
+    _create_recipe(api_client, unique_user, f"{name} 2")  # a different recipe that happens to end in a number
+    _create_recipe(api_client, unique_user, f"{name} (spicy)")
+    _create_recipe(api_client, unique_user, f"{name} (2b)")
+
+    found = _writer(unique_user).similar_existing(name.lower(), exclude_id=None)
+
+    assert [f["slug"] for f in found] == [first_slug, renamed_slug]
+    assert found[1]["name"].endswith("(1)")
+
+
+# --- build writes nothing; group isolation ----------------------------------------------------
+
+
+@contextmanager
+def _sql_writes(session: Session) -> Iterator[list[str]]:
+    """Records every INSERT/UPDATE/DELETE the session's engine runs, plus flushes and commits."""
+    writes: list[str] = []
+    engine = session.get_bind()
+
+    def on_execute(conn, cursor, statement: str, *args: Any) -> None:
+        if statement.lstrip().split(" ", 1)[0].upper() in {"INSERT", "UPDATE", "DELETE"}:
+            writes.append(statement)
+
+    def on_flush(*args: Any) -> None:
+        writes.append("flush")
+
+    def on_commit(*args: Any) -> None:
+        writes.append("commit")
+
+    sa.event.listen(engine, "before_cursor_execute", on_execute)
+    sa.event.listen(session, "after_flush", on_flush)
+    sa.event.listen(session, "after_commit", on_commit)
+    try:
+        yield writes
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", on_execute)
+        sa.event.remove(session, "after_flush", on_flush)
+        sa.event.remove(session, "after_commit", on_commit)
+
+
+@pytest.mark.asyncio
+async def test_build_writes_nothing(unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    writer = _writer(user)
+    # load the matcher and parsers once, so their first-use reads aren't mistaken for anything else
+    await writer.build(_fields())
+    session = user.repos.session
+    counts = [
+        _count(repo)
+        for repo in (
+            user.repos.ingredient_foods,
+            user.repos.ingredient_units,
+            user.repos.tags,
+            user.repos.categories,
+            user.repos.tools,
+        )
+    ]
+
+    with _sql_writes(session) as writes:
+        planned = await writer.build(
+            _fields(
+                ingredients=[
+                    IngredientIn(quantity=1, unit=random_string(10), food=random_string(10)),
+                    f"2 tablespoons {random_string(8)}",
+                    f"1 cup {random_string(8)}",
+                    f"a pinch of {random_string(8)}",
+                    f"1.5 kilogram {random_string(8)}",
+                    "salt to taste",
+                ],
+                tags=[random_string(8), random_string(8)],
+                categories=[random_string(8)],
+                tools=[random_string(8)],
+            )
+        )
+        await writer.build(RecipeFieldsIn(ingredients=["3 cups flour"], tags=[random_string(8)]), base=planned.recipe)
+
+    assert writes == []
+    assert not session.new and not session.dirty and not session.deleted
+    assert planned.new_foods and planned.new_units
+    assert len(planned.new_tags) == 2 and planned.new_categories and planned.new_tools
+    assert counts == [
+        _count(repo)
+        for repo in (
+            user.repos.ingredient_foods,
+            user.repos.ingredient_units,
+            user.repos.tags,
+            user.repos.categories,
+            user.repos.tools,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_other_groups_foods_units_and_organizers_never_match(unique_user: TestUser, g2_user: TestUser):
+    food, unit, abbreviation = random_string(10), random_string(10), random_string(4)
+    tag, category, tool = random_string(10), random_string(10), random_string(10)
+    theirs = {
+        "food": g2_user.repos.ingredient_foods.create(SaveIngredientFood(name=food, group_id=g2_user.group_id)),
+        "unit": g2_user.repos.ingredient_units.create(
+            SaveIngredientUnit(name=unit, abbreviation=abbreviation, group_id=g2_user.group_id)
+        ),
+        "tag": g2_user.repos.tags.create(TagSave(name=tag, group_id=g2_user.group_id)),
+        "category": g2_user.repos.categories.create(CategorySave(name=category, group_id=g2_user.group_id)),
+        "tool": g2_user.repos.tools.create(RecipeToolSave(name=tool, group_id=g2_user.group_id)),
+    }
+    their_ids = {item.id for item in theirs.values()}
+    writer = _writer(unique_user)
+
+    planned = await writer.build(
+        _fields(
+            ingredients=[
+                IngredientIn(quantity=1, unit=unit, food=food),
+                IngredientIn(quantity=2, unit=abbreviation, food=food.upper()),
+            ],
+            tags=[tag],
+            categories=[category],
+            tools=[tool],
+        )
+    )
+
+    assert planned.new_foods == [food]
+    assert sorted(planned.new_units) == sorted([unit, abbreviation])
+    assert (planned.new_tags, planned.new_categories, planned.new_tools) == ([tag], [category], [tool])
+
+    recipe = writer.apply(planned)
+
+    created = [
+        *(i.food for i in recipe.recipe_ingredient),
+        *(i.unit for i in recipe.recipe_ingredient),
+        *(recipe.tags or []),
+        *(recipe.recipe_category or []),
+        *recipe.tools,
+    ]
+    assert all(item is not None and item.id not in their_ids for item in created)
+    mine = unique_user.repos
+    for item, repo in [
+        (recipe.recipe_ingredient[0].food, mine.ingredient_foods),
+        (recipe.recipe_ingredient[0].unit, mine.ingredient_units),
+        ((recipe.tags or [])[0], mine.tags),
+        ((recipe.recipe_category or [])[0], mine.categories),
+        (recipe.tools[0], mine.tools),
+    ]:
+        assert item is not None
+        assert repo.get_one(item.id) is not None  # the user's repositories are scoped to their group
+    # their rows are untouched and still theirs
+    assert g2_user.repos.ingredient_foods.get_one(theirs["food"].id) is not None
+    assert g2_user.repos.tags.get_one(tag, "name") is not None
+    assert mine.ingredient_foods.get_one(theirs["food"].id) is None

@@ -10,13 +10,17 @@ so a call refused during validation or building leaves nothing behind.
 """
 
 import re
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import sqlalchemy as sa
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from slugify import slugify
+from starlette.background import BackgroundTasks
 
 from mealie.core.config import get_app_settings
 from mealie.core.root_logger import get_logger
@@ -57,9 +61,39 @@ MAX_MINUTES = 1440
 MAX_SERVINGS = 100
 SIMILAR_LIMIT = 3
 
-Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-"""A string that must not be blank; surrounding whitespace is dropped."""
+MAX_NAME = 100  # food, unit, organizer, step title, ingredient section, note title, yield
+MAX_RECIPE_NAME = 200
+MAX_LINE = 300  # a plain ingredient line, an ingredient note
+MAX_TEXT = 5000  # step text, note text, description
+MAX_URL = 2000
+
+
+# Strings that must not be blank, with a length cap; surrounding whitespace is dropped.
+ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_NAME)]
+RecipeName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_RECIPE_NAME)]
+Line = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_LINE)]
+LongText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_TEXT)]
 Minutes = Annotated[int, Field(ge=0, le=MAX_MINUTES)]
+
+
+def _sluggable(name: str) -> str:
+    # tags, categories and tools are matched and stored by slug; a name with no slug would be dropped silently
+    if not slugify(name):
+        raise ValueError("a tag, category or tool name needs at least one letter or digit")
+    return name
+
+
+def _web_url(url: str) -> str:
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
+        raise ValueError("source_url must be an http or https link")
+    return url
+
+
+OrganizerName = Annotated[ShortText, AfterValidator(_sluggable)]
+SourceUrl = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_URL), AfterValidator(_web_url)
+]
 
 
 class _In(BaseModel):
@@ -70,10 +104,10 @@ class IngredientIn(_In):
     """One structured ingredient line. `section` is the section title the line starts."""
 
     quantity: float | None = Field(default=None, ge=0)
-    unit: Text | None = None
-    food: Text | None = None
-    note: Text | None = None
-    section: Text | None = None
+    unit: ShortText | None = None
+    food: ShortText | None = None
+    note: Line | None = None
+    section: ShortText | None = None
 
     @model_validator(mode="after")
     def _has_content(self) -> IngredientIn:
@@ -83,42 +117,46 @@ class IngredientIn(_In):
 
 
 class StepIn(_In):
-    text: Text
-    title: Text | None = None
+    text: LongText
+    title: ShortText | None = None
     timer_minutes: int | None = Field(default=None, ge=1, le=MAX_MINUTES)
 
 
 class NoteIn(_In):
-    title: Text
-    text: Text
+    title: ShortText
+    text: LongText
+
+
+Ingredients = Annotated[list[IngredientIn | Line], Field(min_length=1, max_length=MAX_INGREDIENTS)]
+Steps = Annotated[list[StepIn | LongText], Field(min_length=1, max_length=MAX_STEPS)]
 
 
 class RecipeFieldsIn(_In):
     """Recipe fields as Claude sends them. Every field is optional: on an update, a field left out
     keeps its current value, and a list that is sent replaces the whole list."""
 
-    name: Text | None = None
-    description: str | None = None
+    name: RecipeName | None = None
+    description: Annotated[str, StringConstraints(max_length=MAX_TEXT)] | None = None
     servings: float | None = Field(default=None, gt=0, le=MAX_SERVINGS)
-    yield_text: str | None = None
+    yield_text: Annotated[str, StringConstraints(max_length=MAX_NAME)] | None = None
     prep_minutes: Minutes | None = None
     cook_minutes: Minutes | None = None
     total_minutes: Minutes | None = None
-    ingredients: Annotated[list[IngredientIn | Text], Field(min_length=1, max_length=MAX_INGREDIENTS)] | None = None
-    instructions: Annotated[list[StepIn | Text], Field(min_length=1, max_length=MAX_STEPS)] | None = None
-    tags: Annotated[list[Text], Field(max_length=MAX_TAGS)] | None = None
-    categories: Annotated[list[Text], Field(max_length=MAX_ORGANIZERS)] | None = None
-    tools: Annotated[list[Text], Field(max_length=MAX_ORGANIZERS)] | None = None
+    ingredients: Ingredients | None = None
+    instructions: Steps | None = None
+    tags: Annotated[list[OrganizerName], Field(max_length=MAX_TAGS)] | None = None
+    categories: Annotated[list[OrganizerName], Field(max_length=MAX_ORGANIZERS)] | None = None
+    tools: Annotated[list[OrganizerName], Field(max_length=MAX_ORGANIZERS)] | None = None
     notes: Annotated[list[NoteIn], Field(max_length=MAX_NOTES)] | None = None
-    source_url: Text | None = None
+    source_url: SourceUrl | None = None
 
 
 class RecipeCreateIn(RecipeFieldsIn):
     """A new recipe: a name, at least one ingredient and at least one instruction are required."""
 
-    name: Text
-    ingredients: Annotated[list[IngredientIn | Text], Field(min_length=1, max_length=MAX_INGREDIENTS)]
-    instructions: Annotated[list[StepIn | Text], Field(min_length=1, max_length=MAX_STEPS)]
+    name: RecipeName
+    ingredients: Ingredients
+    instructions: Steps
 
 
 @dataclass
@@ -281,7 +319,8 @@ class RecipeWriter:
         for name in names:
             matches = resolve([name], create_missing=False)
             if not matches:
-                if name.casefold() not in {n.casefold() for n in new}:
+                # the resolver creates one organizer per slug, so "Quick meal" and "quick-meal" are one
+                if slugify(name) not in {slugify(n) for n in new}:
                     new.append(name)
             elif matches[0].id not in seen:
                 seen.add(matches[0].id)
@@ -345,13 +384,15 @@ class RecipeWriter:
     def similar_existing(self, name: str, exclude_id: UUID | None) -> list[dict[str, Any]]:
         """Up to 3 recipes in the user's group (any household) with the same name, ignoring case.
 
-        Mealie saves a duplicate name as "Name (1)", "Name (2)"…, so those count as the same name.
+        Mealie saves a duplicate name as "Name (1)", "Name (2)"…, so those count as the same name;
+        "Name 2" or "Name (spicy)" are different recipes.
         """
+        target = name.strip().casefold()
+        numbered = re.compile(rf"{re.escape(target)} \(\d+\)")
         normalized = RecipeModel.normalize(name)
-        # RecipeModel.normalize turns "Name (1)" into "name  1"
-        numbered = re.compile(rf"^{re.escape(normalized)}\s+\d+$")
         stmt = (
-            sa.select(RecipeModel.name, RecipeModel.slug, RecipeModel.name_normalized)
+            # narrows on the indexed normalized name ("Name (1)" normalizes to "name  1"); the exact rule is below
+            sa.select(RecipeModel.name, RecipeModel.slug)
             .where(
                 RecipeModel.group_id == self.user.group_id,
                 sa.or_(
@@ -367,7 +408,7 @@ class RecipeWriter:
         rows = [
             row
             for row in self.repos.session.execute(stmt)
-            if row.name_normalized == normalized or numbered.match(row.name_normalized)
+            if row.name.casefold() == target or numbered.fullmatch(row.name.casefold())
         ]
         base_url = get_app_settings().BASE_URL
         return [
@@ -377,9 +418,14 @@ class RecipeWriter:
 
     def publish(self, recipe: Recipe, operation: Literal["create", "update"]) -> None:
         """Publishes `recipe_created` / `recipe_updated` with the same payload and message as the REST
-        routes. Runs after the save (the repositories commit on write), synchronously, since there are
-        no background tasks outside a request. A failing notifier is logged, never raised: the recipe
-        is already saved."""
+        routes. Call it after the save (the repositories commit on write).
+
+        The event, URL and message are built here, unguarded, so a coding error surfaces. As in the
+        routes, where the event bus hands the listeners to FastAPI's `BackgroundTasks`, the listeners
+        (Apprise, webhooks: HTTP calls with a 15 s timeout each) run off the request path: they are
+        queued on a `BackgroundTasks` and run by `dispatch_off_request`, on a daemon thread. They open
+        their own session. A failing listener is logged, never raised: the recipe is already saved.
+        """
         if operation == "create":
             event_type, event_op, message_key = (
                 EventTypes.recipe_created,
@@ -393,15 +439,32 @@ class RecipeWriter:
                 "notifications.generic-updated-with-url",
             )
 
-        try:
-            url = urls.recipe_url(self.user.group_slug, recipe.slug, get_app_settings().BASE_URL)
-            EventBusService(session=self.repos.session, translator=self.translator).dispatch(
-                integration_id=DEFAULT_INTEGRATION_ID,
-                group_id=recipe.group_id,
-                household_id=recipe.household_id,
-                event_type=event_type,
-                document_data=EventRecipeData(operation=event_op, recipe_slug=recipe.slug),
-                message=self.translator.t(message_key, name=recipe.name, url=url),
-            )
-        except Exception:
-            logger.exception(f"Publishing the {event_type.name} event for {recipe.slug} failed")
+        url = urls.recipe_url(self.user.group_slug, recipe.slug, get_app_settings().BASE_URL)
+        listeners = BackgroundTasks()
+        EventBusService(bg=listeners, session=self.repos.session, translator=self.translator).dispatch(
+            integration_id=DEFAULT_INTEGRATION_ID,
+            group_id=recipe.group_id,
+            household_id=recipe.household_id,
+            event_type=event_type,
+            document_data=EventRecipeData(operation=event_op, recipe_slug=recipe.slug),
+            message=self.translator.t(message_key, name=recipe.name, url=url),
+        )
+        if not listeners.tasks:
+            return
+
+        def run_listeners() -> None:
+            for task in listeners.tasks:
+                try:
+                    task.func(*task.args, **task.kwargs)
+                except Exception:
+                    logger.exception(f"Publishing the {event_type.name} event for {recipe.slug} failed")
+
+        dispatch_off_request(run_listeners)
+
+
+def _start_daemon_thread(task: Callable[[], None]) -> None:
+    threading.Thread(target=task, name="mcp-recipe-events", daemon=True).start()
+
+
+dispatch_off_request: Callable[[Callable[[], None]], None] = _start_daemon_thread
+"""Runs the queued event listeners; tests swap it for a synchronous call."""
