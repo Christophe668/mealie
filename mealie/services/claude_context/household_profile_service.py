@@ -26,6 +26,22 @@ class ProfileConflict(ValueError):
     """A second profile with the same name (case-insensitive) or for the same user in this household."""
 
 
+USER_LINK_CONSTRAINT = "household_member_profiles_household_id_user_id_key"
+
+
+def _is_user_link_violation(error: IntegrityError) -> bool:
+    """Whether `error` is the `(household_id, user_id)` unique constraint: PostgreSQL names the constraint, SQLite
+    lists its columns ("UNIQUE constraint failed: household_member_profiles.household_id, …user_id")."""
+    message = str(error.orig)
+    if USER_LINK_CONSTRAINT in message:
+        return True
+    return (
+        "UNIQUE constraint failed" in message
+        and "household_member_profiles.household_id" in message
+        and "household_member_profiles.user_id" in message
+    )
+
+
 class HouseholdProfileService(BaseService):
     """Member profiles and meal habits of the user's household (spec § 2, § 4).
 
@@ -39,6 +55,11 @@ class HouseholdProfileService(BaseService):
     """
 
     def __init__(self, repos: AllRepositories, user: PrivateUser):
+        # member scope comes from `repos`, the user-link rule from `user`: they must name the same household, so a
+        # group-scoped (or another household's) repos can never reach other households' profiles
+        scope = repos.member_profiles
+        if str(scope.household_id) != str(user.household_id) or str(scope.group_id) != str(user.group_id):
+            raise ValueError("HouseholdProfileService needs repositories scoped to the user's household.")
         self.repos = repos
         self.user = user
         self.members = repos.member_profiles
@@ -77,10 +98,15 @@ class HouseholdProfileService(BaseService):
             member = None
         else:
             member = self.members.get_one(member_id)
-        member = member or self.members.by_name_casefold(member_ref)
-        if member is None:
+        if member is not None:
+            return member
+        matches = self.members.all_by_name_casefold(member_ref)
+        if not matches:
             raise NoEntryFound("Member profile not found.")
-        return member
+        if len(matches) > 1:
+            # never pick one: allergies are hard constraints
+            raise ProfileConflict(f"Several members are named {member_ref.strip()!r}; use the member id instead.")
+        return matches[0]
 
     # ------------------------------------------------------------------ rules
 
@@ -102,12 +128,18 @@ class HouseholdProfileService(BaseService):
             raise ProfileConflict(f"{existing.name!r} is already linked to this user.")
 
     def _write(self, write: Callable[[], MemberProfileOut]) -> MemberProfileOut:
-        """Run one member write, turning a lost race on the `(household_id, user_id)` constraint into a conflict."""
+        """Run one member write, turning any integrity error into a conflict.
+
+        Only a lost race on the `(household_id, user_id)` constraint gets the user-link message; anything else (on
+        PostgreSQL, a linked user deleted between the check and the write breaks the foreign key) stays neutral.
+        """
         try:
             return write()
         except IntegrityError as e:
             self.repos.session.rollback()
-            raise ProfileConflict("This user is already linked to another member.") from e
+            if _is_user_link_violation(e):
+                raise ProfileConflict("This user is already linked to another member.") from e
+            raise ProfileConflict("Conflicting profile data; reload and try again.") from e
 
     # ------------------------------------------------------------------ member writes
 
@@ -142,7 +174,8 @@ class HouseholdProfileService(BaseService):
     def add_to_member(self, member_ref: str, field: ProfileListField, values: list[str]) -> MemberProfileOut:
         """Append `values` to one of a member's lists without replacing it ("Sam doesn't like mushrooms").
 
-        `member_ref` is the profile id or its name (case-insensitive). The combined list goes through the write
+        `member_ref` is the profile id or its name (case-insensitive); a name shared by several profiles raises
+        `ProfileConflict` rather than picking one. The combined list goes through the write
         schemas' rule, so duplicates collapse onto the existing spelling, and an entry over 60 characters or a
         list over 30 entries raises `ValueError` before anything is written.
         """

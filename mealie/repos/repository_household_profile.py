@@ -75,9 +75,16 @@ class RepositoryMemberProfiles(HouseholdRepositoryGeneric[MemberProfileOut, Hous
 
         Compared in Python because SQLite's `lower()` only folds ASCII ("Crème" != "CRÈME").
         """
+        return next(iter(self.all_by_name_casefold(name)), None)
+
+    def all_by_name_casefold(self, name: str) -> list[MemberProfileOut]:
+        """Every profile of the household whose trimmed name equals `name`, case-folded, `id` descending.
+
+        Names are unique per household by a service check only, so old data or a lost race can hold several.
+        """
         target = name.strip().casefold()
         stmt = self._scoped_select().order_by(HouseholdMemberProfile.id.desc())
-        return next((row for row in self._all(stmt) if row.name.strip().casefold() == target), None)
+        return [row for row in self._all(stmt) if row.name.strip().casefold() == target]
 
 
 class RepositoryMealPreferences(HouseholdRepositoryGeneric[MealPreferencesOut, HouseholdMealPreferences]):

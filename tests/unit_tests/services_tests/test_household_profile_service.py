@@ -1,9 +1,13 @@
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 
 from mealie.core.config import get_app_settings
 from mealie.core.exceptions import NoEntryFound
+from mealie.db.models.household.household_profile import HouseholdMemberProfile
+from mealie.repos.all_repositories import get_repositories
 from mealie.schema.household.household_profile import (
     Diet,
     MealPreferencesUpdate,
@@ -328,3 +332,57 @@ def test_other_households_cannot_see_or_change_profiles(unique_user: TestUser, h
 
     fetched = unique_user.repos.member_profiles.get_one(mine.id)
     assert fetched is not None and fetched.likes == ["pasta"]
+
+
+# ------------------------------------------------------------------ guards
+
+
+def test_add_to_refuses_an_ambiguous_name(unique_user_fn_scoped: TestUser):
+    """Old data (or the name race) can hold two profiles with the same folded name: never pick one."""
+    user = unique_user_fn_scoped
+    service = _service(user)
+    first = service.create_member(MemberProfileCreate(name="Sam"))
+    second = service.create_member(MemberProfileCreate(name="Other"))
+    user.repos.session.execute(
+        update(HouseholdMemberProfile).where(HouseholdMemberProfile.id == second.id).values(name="SAM ")
+    )
+    user.repos.session.commit()
+
+    with pytest.raises(ProfileConflict, match="Several members"):
+        service.add_to_member("sam", "allergies", ["peanuts"])
+    # by id still works, and nothing was written by the refused call
+    assert service.add_to_member(str(first.id), "allergies", ["peanuts"]).allergies == ["peanuts"]
+    refetched = user.repos.member_profiles.get_one(second.id)
+    assert refetched is not None and refetched.allergies == []
+
+
+def test_service_refuses_repos_not_scoped_to_the_users_household(unique_user: TestUser, h2_user: TestUser):
+    private_user = unique_user.repos.users.get_one(unique_user.user_id)
+    assert isinstance(private_user, PrivateUser)
+    session = unique_user.repos.session
+    for repos in (
+        get_repositories(session, group_id=unique_user.group_id, household_id=None),
+        get_repositories(session, group_id=None, household_id=None),
+        h2_user.repos,
+    ):
+        with pytest.raises(ValueError, match="scoped to the user's household"):
+            HouseholdProfileService(repos, private_user)
+
+
+def test_write_messages_for_integrity_errors(unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    extra = _extra_user(user)
+    service = _service(user)
+    service.create_member(MemberProfileCreate(name="Linked", user_id=extra))
+
+    # a real lost race on the user-link constraint (the check bypassed) keeps the user-link message
+    with pytest.raises(ProfileConflict, match="already linked"):
+        service._write(lambda: service.members.create({"name": "Racer", "user_id": extra}))
+
+    def other_violation():
+        raise IntegrityError("INSERT ...", {}, Exception('insert violates foreign key constraint "fk_user"'))
+
+    with pytest.raises(ProfileConflict, match="Conflicting profile data") as excinfo:
+        service._write(other_violation)
+    assert "already linked" not in str(excinfo.value)
+    assert [m.name for m in service.get().members] == ["Linked"]
