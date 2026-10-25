@@ -1665,6 +1665,7 @@
   },
   "pantry": {
     "title": "Pantry",
+    "move-to": "Move to",
     "add-item": "Add to pantry",
     "add": "Add",
     "location": {
