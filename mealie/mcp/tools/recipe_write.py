@@ -568,7 +568,9 @@ async def _update_recipe(
     return await run_in_context(update_recipe_impl, slug_or_id, fields, fields.scale_to_servings)
 
 
-update_recipe = _register_quietly(mcp_server.tool(name="update_recipe"), require_scope("recipes:write")(_update_recipe))
+update_recipe = _register_quietly(
+    mcp_server.tool(name="update_recipe"), require_scope("recipes:write", name="update_recipe")(_update_recipe)
+)
 
 
 @mcp_server.tool()

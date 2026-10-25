@@ -169,6 +169,9 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
     service = feedback_service(ctx)
     feedback = service.list(recipe.id, page=1, per_page=RECIPE_FEEDBACK_LIMIT).items
     summary = service.summaries([recipe.id]).get(recipe.id) if recipe.id else None
+    # link rows have no stored order (PostgreSQL returns them in any order):
+    # list them as the recipe lists its ingredients
+    position = {str(i.reference_id): n for n, i in enumerate(recipe.recipe_ingredient)}
     return {
         "id": str(recipe.id),
         "name": recipe.name,
@@ -199,7 +202,10 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
                 "title": s.title,
                 "text": s.text,
                 "timer_minutes": timer_minutes(s.duration_seconds),
-                "uses": [str(r.reference_id) for r in s.ingredient_references if r.reference_id],
+                "uses": sorted(
+                    (str(r.reference_id) for r in s.ingredient_references if r.reference_id),
+                    key=lambda ref: position.get(ref, len(position)),
+                ),
             }
             for s in recipe.recipe_instructions or []
         ],

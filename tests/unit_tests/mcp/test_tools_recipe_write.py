@@ -1299,11 +1299,16 @@ def _links(user: TestUser, slug: str) -> list[tuple[str, int | None, list[str], 
     """Per step: text, timer seconds, the foods it uses, and its number of note links."""
     stored = _stored(user, slug)
     food_by_ref = {i.reference_id: i.food.name if i.food else i.note for i in stored.recipe_ingredient}
+    position = {i.reference_id: n for n, i in enumerate(stored.recipe_ingredient)}
     return [
         (
             s.text,
             s.duration_seconds,
-            [food_by_ref.get(r.reference_id, "?") for r in s.ingredient_references],
+            # link rows have no stored order: list them in the recipe's ingredient order
+            [
+                food_by_ref.get(r.reference_id, "?")
+                for r in sorted(s.ingredient_references, key=lambda r: position.get(r.reference_id, len(position)))
+            ],
             len(s.note_references),
         )
         for s in stored.recipe_instructions or []
@@ -1774,6 +1779,8 @@ async def test_partial_update_keeps_everything_else(
         data = _stored(user, slug).model_dump(exclude={"description", "date_updated", "updated_at"})
         for step in data["recipe_instructions"]:
             step.pop("id")  # every update rewrites the step rows, as in the UI
+            # link rows have no stored order (PostgreSQL returns them in any order)
+            step["ingredient_references"].sort(key=lambda ref: str(ref["reference_id"]))
         return data
 
     before = full(view["slug"])
