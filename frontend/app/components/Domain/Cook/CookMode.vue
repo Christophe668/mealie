@@ -229,7 +229,13 @@ function stateOf(id: string): StepTimerState {
   return timer.done ? "done" : timer.running ? "running" : "paused";
 }
 
-const currentTimers = computed(() => stepTimers(index.value).map(spec => ({ ...spec, state: stateOf(spec.id) })));
+const currentTimers = computed(() =>
+  stepTimers(index.value).map(spec => ({
+    ...spec,
+    state: stateOf(spec.id),
+    remaining: timers.value.find(t => t.id === spec.id)?.remaining ?? spec.total,
+  })),
+);
 
 function toggleTimer(spec: CookTimerSpec) {
   toggle(spec);

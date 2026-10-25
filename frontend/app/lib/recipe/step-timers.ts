@@ -89,7 +89,8 @@ export function timerName(text: string, index: number): string | null {
   if (clause.length > MAX_NAME + 12) {
     clause = clause.slice(0, MAX_NAME + 12).replace(/\s+\S*$/u, "");
   }
-  clause = clause.replace(/[\s,.;:–-]+$/u, "");
+  // Markdown emphasis around the settings ("Cuire **15 min**") is formatting, not part of the name.
+  clause = clause.replace(/(\*\*|__|\*|_)+/gu, "").replace(/[\s,.;:–-]+$/u, "").trim();
   if (clause.length < 3 || !/\p{L}/u.test(clause)) {
     return null;
   }
