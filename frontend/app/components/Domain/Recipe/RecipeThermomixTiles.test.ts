@@ -55,7 +55,8 @@ describe("CookStep with a Thermomix step", () => {
   test("the time tile toggles the matching timer; the other duration keeps its button; settings leave the text", async () => {
     const wrapper = mount(CookStep, { props: { step, number: 2, timers }, global: { stubs } });
 
-    expect(wrapper.find(".cook-step__text").text()).toBe("Mettre la semoule. Cuire, puis laisser reposer 5 min.");
+    // Two sentences, so two bullets; the settings are gone from the text.
+    expect(wrapper.findAll(".cook-step__text li").map(li => li.text())).toEqual(["Mettre la semoule.", "Cuire, puis laisser reposer 5 min."]);
     expect(wrapper.find(".tm__tile--timer").text()).toContain("15:00");
     expect(wrapper.findAll(".cook-step__timers li")).toHaveLength(1);
     expect(wrapper.find(".cook-step__timers").text()).toContain("5 min");

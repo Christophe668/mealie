@@ -59,6 +59,7 @@ import RecipeThermomixTiles from "~/components/Domain/Recipe/RecipeThermomixTile
 import type { CookTimerSpec } from "~/composables/use-cook-timers";
 import type { RecipeStep } from "~/lib/api/types/recipe";
 import { stepAction } from "~/lib/recipe/step-action";
+import { stepMarkdown } from "~/lib/recipe/step-sentences";
 import { parseThermomix } from "~/lib/recipe/thermomix";
 import { sanitizeMarkdownHtml } from "~/lib/sanitize/markdown";
 
@@ -110,7 +111,9 @@ const otherTimers = computed(() => {
   return props.timers.filter(timer => !used.has(timer.id));
 });
 
-const html = computed(() => sanitizeMarkdownHtml(marked.parse(thermomix.value?.text ?? props.step.text ?? "", { async: false, breaks: true }) as string, []));
+const html = computed(() =>
+  sanitizeMarkdownHtml(marked.parse(stepMarkdown(thermomix.value?.text ?? props.step.text ?? ""), { async: false, breaks: true }) as string, []),
+);
 
 /** The preview drops the markup: a neighbour is a hint, not a second copy of the step. */
 const plain = computed(() => {
@@ -221,6 +224,19 @@ const plain = computed(() => {
 
 .cook-step__text :deep(p + p) {
   margin-top: calc(var(--ds-space) * 2);
+}
+
+/* A step of several sentences: one bullet each, well spaced for reading at the stove. */
+.cook-step__text :deep(ul) {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--ds-space) * 2);
+  margin: 0;
+  padding-left: 1.1em;
+}
+
+.cook-step__text :deep(li::marker) {
+  color: var(--ds-accent);
 }
 
 .cook-step__timers {

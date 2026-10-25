@@ -18,7 +18,7 @@
             <div v-if="step.thermomix" class="read-steps__thermomix">
               <RecipeThermomixTiles v-for="(program, pIndex) in step.thermomix.programs" :key="pIndex" :program="program" />
             </div>
-            <SafeMarkdown class="read-steps__text ds-body" :source="step.thermomix ? step.thermomix.text : step.text" />
+            <SafeMarkdown class="read-steps__text ds-body" :source="stepMarkdown(step.thermomix ? step.thermomix.text : step.text)" />
             <ul v-if="step.timers.length" class="read-steps__timers" role="list">
               <li v-for="(timer, tIndex) in step.timers" :key="tIndex">
                 <DsChip>
@@ -42,6 +42,7 @@ import DsIcon from "~/components/Design/DsIcon.vue";
 import SafeMarkdown from "~/components/global/SafeMarkdown.vue";
 import RecipeThermomixTiles from "~/components/Domain/Recipe/RecipeThermomixTiles.vue";
 import { stepAction } from "~/lib/recipe/step-action";
+import { stepMarkdown } from "~/lib/recipe/step-sentences";
 import { parseThermomix } from "~/lib/recipe/thermomix";
 import { findStepTimers } from "~/lib/recipe/step-timers";
 import type { RecipeStep } from "~/lib/api/types/recipe";
@@ -136,6 +137,19 @@ const items = computed(() =>
 
 .read-steps__text :deep(p + p) {
   margin-top: var(--ds-space);
+}
+
+/* A step of several sentences: one bullet each, with room to breathe. */
+.read-steps__text :deep(ul) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space);
+  margin: 0;
+  padding-left: calc(var(--ds-space) * 2.5);
+}
+
+.read-steps__text :deep(li::marker) {
+  color: var(--ds-text-2);
 }
 
 .read-steps__timers {
