@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import UUID
 
 from sqlalchemy import select
 
@@ -28,6 +29,20 @@ class RepositoryMeals(HouseholdRepositoryGeneric[ReadPlanEntry, GroupMealPlan]):
             GroupMealPlan.date >= start_date.date(),
             GroupMealPlan.date <= end_date.date(),
             GroupMealPlan.household_id == self.household_id,
+        )
+        plans = self.session.execute(stmt).scalars().all()
+        return [self.schema.model_validate(x) for x in plans]
+
+    def cooked_between(self, recipe_id: UUID, start: datetime, end: datetime) -> list[ReadPlanEntry]:
+        """The household's entries for `recipe_id` whose `cooked_at` is in `[start, end)` (tz-aware bounds)."""
+        if not self.household_id:
+            raise Exception("household_id not set")
+
+        stmt = select(GroupMealPlan).filter(
+            GroupMealPlan.recipe_id == recipe_id,
+            GroupMealPlan.household_id == self.household_id,
+            GroupMealPlan.cooked_at >= start,
+            GroupMealPlan.cooked_at < end,
         )
         plans = self.session.execute(stmt).scalars().all()
         return [self.schema.model_validate(x) for x in plans]

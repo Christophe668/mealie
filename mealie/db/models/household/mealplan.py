@@ -9,6 +9,7 @@ from mealie.db.models.recipe.tag import Tag, plan_rules_to_tags
 
 from .._model_base import BaseMixins, FilterableColumn, SqlAlchemyBase
 from .._model_utils.auto_init import auto_init
+from .._model_utils.datetime import NaiveDateTime
 from .._model_utils.guid import GUID
 from ..recipe.category import Category, plan_rules_to_categories
 
@@ -66,6 +67,8 @@ class GroupMealPlan(SqlAlchemyBase, BaseMixins):
     household: AssociationProxy[Household] = association_proxy("user", "household")
     user_id: FilterableColumn[GUID | None] = mapped_column(GUID, ForeignKey("users.id"), index=True)
     user: Mapped[User | None] = orm.relationship("User", back_populates="mealplans")
+
+    cooked_at: Mapped[datetime.datetime | None] = mapped_column(NaiveDateTime, nullable=True)
 
     recipe_id: FilterableColumn[GUID | None] = mapped_column(GUID, ForeignKey("recipes.id"), index=True)
     recipe_scale: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)

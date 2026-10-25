@@ -60,17 +60,23 @@ The connector offers these tools, each behind the permission in brackets:
 - Recipes: `search_recipes`, `get_recipe` (`recipes:read`); `create_recipe`, `update_recipe`, `import_recipe_from_url`, `set_recipe_image` (`recipes:write`).
 - Meal plan: `get_mealplan`, `get_recent_meals` (`recipes:read`); `add_mealplan_entries`, `remove_mealplan_entry` (`mealplan:write`).
 - Shopping: `get_shopping_list` (`recipes:read`); `create_shopping_list_from_mealplan`, `add_shopping_items`, `check_shopping_items` (`shopping:write`).
-- Pantry: `get_pantry` (`recipes:read`); `update_pantry`, `put_away_shopping_items` (`pantry:write`).
+- Pantry: `get_pantry` (`recipes:read`); `update_pantry`, `put_away_shopping_items`, `record_meal_cooked` (`pantry:write`).
 - Feedback: `get_recipe_feedback` (`recipes:read`); `record_recipe_feedback` (`recipes:write`).
 - Household: `get_household_context` (`recipes:read`); `update_household_profile` (`household:write`).
 
-Reading the pantry (`get_pantry`) needs only `recipes:read`; changing it (`update_pantry`, `put_away_shopping_items`) needs the `pantry:write` permission. A connection made before that permission existed does not have it: remove the connector in claude.ai and add it again, then approve the new permission. If you see an `invalid_scope` error while reconnecting, that is why; removing and re-adding the connector clears it.
+Reading the pantry (`get_pantry`) needs only `recipes:read`; changing it (`update_pantry`, `put_away_shopping_items`, `record_meal_cooked`) needs the `pantry:write` permission. A connection made before that permission existed does not have it: remove the connector in claude.ai and add it again, then approve the new permission. If you see an `invalid_scope` error while reconnecting, that is why; removing and re-adding the connector clears it.
 
 ## Pantry and freshness
 
 Each household has a pantry (the **Pantry** item in the side rail, just under **Shop**; on mobile, **+** then **Add to pantry**): what you have, where it is (fridge, freezer, cupboard, other), when it was bought and opened, and an optional "use by" date. On the shopping list, **Put away** moves the bought items into the pantry with today's date. A food that is in the pantry counts as "on hand", so shopping lists built from the meal plan skip it.
 
 Mealie only stores the dates. Claude estimates whether something is still good from those dates and general food knowledge, and gives that as guidance, never as food safety advice. The `pantry:write` permission Claude needs to change the pantry is shown as "Manage the pantry" on the consent page.
+
+## After cooking
+
+The last screen of cook mode asks how the meal went and what to do with the pantry. Mealie lists the pantry items that match the recipe: for each, choose **Used up** (it is removed) or **Some left** (it stays, marked as opened). Nothing in the pantry changes unless you choose. You can also put leftovers away: a number of portions, in the fridge (use by 3 days later) or the freezer (use by 90 days later). Finishing marks the meal plan entry done and moves the recipe's last made date forward.
+
+You can say the same to Claude: "we had the carbonara tonight". Claude calls `record_meal_cooked`, and unless your own instructions say otherwise it asks about the pantry items (`get_recipe` lists them as `in_pantry`) and the leftovers first; it never decides on its own. It records how it went with `record_recipe_feedback` only if you said so. Recording the same recipe twice on the same day is refused ("already recorded as cooked on ..."), so Claude checks `get_recent_meals` first, where each entry now shows `cooked`. The tool needs the `pantry:write` permission.
 
 ## Recipe feedback
 

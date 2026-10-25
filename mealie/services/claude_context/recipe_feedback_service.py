@@ -37,9 +37,23 @@ class FutureMadeOnError(ValueError):
     """`made_on` is later than tomorrow (server local date + 1 day of time-zone slack)."""
 
 
-def _local_noon(day: date) -> datetime:
+def local_noon(day: date) -> datetime:
     """`day` at 12:00 in the server's local time zone, tz-aware (the offset that applies on that day)."""
     return datetime.combine(day, time(12)).astimezone()
+
+
+def move_last_made_forward(repos: AllRepositories, user: PrivateUser, recipe: Recipe, made_at: datetime) -> None:
+    """Set the user's household's last made for `recipe` to `made_at` only when that is later; an older cooking
+    never moves it back. Shared by the feedback and cooked-meal services."""
+    current = repos.household_recipes.get_by_recipe(recipe.id)
+    if current is not None and current.last_made is not None:
+        last_made = current.last_made
+        if last_made.tzinfo is None:  # stored as naive UTC; only an unrefreshed in-session value can be naive
+            last_made = last_made.replace(tzinfo=UTC)
+        if last_made >= made_at:
+            return
+    household_service = HouseholdService(user.group_id, user.household_id, repos)
+    household_service.set_household_recipe(recipe.slug, HouseholdRecipeUpdate(last_made=made_at))
 
 
 class RecipeFeedbackService(BaseService):
@@ -98,7 +112,7 @@ class RecipeFeedbackService(BaseService):
             )
         recipe = self._get_recipe_or_raise(data.recipe_id)
         made_on = data.made_on or today
-        made_at = _local_noon(made_on)
+        made_at = local_noon(made_on)
 
         event = self.repos.recipe_timeline_events.create(
             RecipeTimelineEventCreate(
@@ -121,7 +135,7 @@ class RecipeFeedbackService(BaseService):
         )
 
         self._set_rating(recipe, VERDICT_RATING[data.verdict])
-        self._move_last_made_forward(recipe, made_at)
+        move_last_made_forward(self.repos, self.user, recipe, made_at)
         return row
 
     def delete(self, feedback_id: UUID) -> RecipeFeedbackOut:
@@ -145,15 +159,3 @@ class RecipeFeedbackService(BaseService):
         else:
             existing.rating = rating
             self.repos.user_ratings.update(existing.id, existing)
-
-    def _move_last_made_forward(self, recipe: Recipe, made_at: datetime) -> None:
-        """Set the household's last made to `made_at` only when that is later; an old verdict never moves it back."""
-        current = self.repos.household_recipes.get_by_recipe(recipe.id)
-        if current is not None and current.last_made is not None:
-            last_made = current.last_made
-            if last_made.tzinfo is None:  # stored as naive UTC; only an unrefreshed in-session value can be naive
-                last_made = last_made.replace(tzinfo=UTC)
-            if last_made >= made_at:
-                return
-        household_service = HouseholdService(self.user.group_id, self.user.household_id, self.repos)
-        household_service.set_household_recipe(recipe.slug, HouseholdRecipeUpdate(last_made=made_at))

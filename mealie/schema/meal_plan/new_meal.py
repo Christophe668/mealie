@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
@@ -63,6 +63,7 @@ class SavePlanEntry(CreatePlanEntry):
 class ReadPlanEntry(UpdatePlanEntry):
     household_id: UUID
     recipe: RecipeSummary | None = None
+    cooked_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
 
     @classmethod

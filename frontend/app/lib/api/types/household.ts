@@ -5,13 +5,207 @@
 /* Do not modify it by hand - just update the pydantic models and then re-run the script
 */
 
+export type FeedbackVerdict = "loved" | "ok" | "never_again";
+export type PantryOutcome = "used_up" | "some_left";
+export type PlanEntryType = "breakfast" | "lunch" | "dinner" | "side" | "snack" | "drink" | "dessert";
+export type PantryLocation = "fridge" | "freezer" | "cupboard" | "other";
+export type PantrySource = "shopping" | "manual" | "leftover";
 export type GroupRecipeActionType = "link" | "post";
 export type WebhookType = "mealplan";
 export type Diet = "none" | "vegetarian" | "vegan" | "pescatarian" | "halal" | "kosher" | "other";
-export type PantryLocation = "fridge" | "freezer" | "cupboard" | "other";
-export type PantrySource = "shopping" | "manual" | "leftover";
-export type FeedbackVerdict = "loved" | "ok" | "never_again";
 
+export interface CookedFeedback {
+  verdict: FeedbackVerdict;
+  effort?: number | null;
+}
+export interface CookedLeftovers {
+  portions: number;
+  location?: "fridge" | "freezer";
+  useBy?: string | null;
+}
+export interface CookedMealCreate {
+  recipeId: string;
+  cookedOn: string;
+  mealPlanEntryId?: number | null;
+  scale?: number | null;
+  pantry?: CookedPantryOutcome[];
+  leftovers?: CookedLeftovers | null;
+  feedback?: CookedFeedback | null;
+}
+export interface CookedPantryOutcome {
+  pantryItemId: string;
+  outcome: PantryOutcome;
+}
+export interface CookedMealOut {
+  mealPlanEntry?: ReadPlanEntry | null;
+  removedItemIds?: string[];
+  keptItems?: PantryItemOut[];
+  leftover?: PantryItemOut | null;
+  feedback?: RecipeFeedbackOut | null;
+}
+export interface ReadPlanEntry {
+  date: string;
+  entryType?: PlanEntryType;
+  title?: string;
+  text?: string;
+  recipeId?: string | null;
+  recipeScale?: number;
+  id: number;
+  groupId: string;
+  userId: string;
+  householdId: string;
+  recipe?: RecipeSummary | null;
+  cookedAt?: string | null;
+}
+export interface RecipeSummary {
+  id?: string | null;
+  userId?: string;
+  householdId?: string;
+  groupId?: string;
+  name?: string | null;
+  slug?: string;
+  image?: unknown;
+  recipeServings?: number;
+  recipeYieldQuantity?: number;
+  recipeYield?: string | null;
+  totalTime?: string | null;
+  prepTime?: string | null;
+  cookTime?: string | null;
+  performTime?: string | null;
+  totalTimeSeconds?: number | null;
+  prepTimeSeconds?: number | null;
+  performTimeSeconds?: number | null;
+  description?: string | null;
+  recipeCategory?: RecipeCategory[] | null;
+  tags?: RecipeTag[] | null;
+  tools?: RecipeTool[];
+  rating?: number | null;
+  orgURL?: string | null;
+  dateAdded?: string | null;
+  dateUpdated?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export interface RecipeCategory {
+  id?: string | null;
+  groupId?: string | null;
+  name: string;
+  slug: string;
+  recipeCount?: number;
+}
+export interface RecipeTag {
+  id?: string | null;
+  groupId?: string | null;
+  name: string;
+  slug: string;
+  recipeCount?: number;
+}
+export interface RecipeTool {
+  id: string;
+  groupId?: string | null;
+  name: string;
+  slug: string;
+  recipeCount?: number;
+  householdsWithTool?: string[];
+}
+export interface PantryItemOut {
+  name: string;
+  foodId?: string | null;
+  quantity?: number | null;
+  unitId?: string | null;
+  location?: PantryLocation;
+  boughtOn?: string | null;
+  openedOn?: string | null;
+  useBy?: string | null;
+  source?: PantrySource;
+  note?: string | null;
+  id: string;
+  groupId: string;
+  householdId: string;
+  food?: IngredientFood | null;
+  unit?: IngredientUnit | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export interface IngredientFood {
+  id: string;
+  name: string;
+  pluralName?: string | null;
+  description?: string;
+  extras?: {
+    [k: string]: unknown;
+  } | null;
+  labelId?: string | null;
+  aliases?: IngredientFoodAlias[];
+  substitutions?: IngredientFoodSubstitution[];
+  householdsWithIngredientFood?: string[];
+  label?: MultiPurposeLabelSummary | null;
+  recipeCount?: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export interface IngredientFoodAlias {
+  name: string;
+}
+export interface IngredientFoodSubstitution {
+  substituteFoodId?: string | null;
+  note?: string | null;
+  substituteFood?: IngredientFoodSummary | null;
+}
+export interface IngredientFoodSummary {
+  id: string;
+  name: string;
+  pluralName?: string | null;
+}
+export interface MultiPurposeLabelSummary {
+  name: string;
+  color?: string;
+  groupId: string;
+  id: string;
+}
+export interface IngredientUnit {
+  id: string;
+  name: string;
+  pluralName?: string | null;
+  description?: string;
+  extras?: {
+    [k: string]: unknown;
+  } | null;
+  fraction?: boolean;
+  abbreviation?: string;
+  pluralAbbreviation?: string | null;
+  useAbbreviation?: boolean;
+  aliases?: IngredientUnitAlias[];
+  standardQuantity?: number | null;
+  standardUnit?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export interface IngredientUnitAlias {
+  name: string;
+}
+export interface RecipeFeedbackOut {
+  id: string;
+  groupId: string;
+  householdId: string;
+  recipeId: string;
+  userId?: string | null;
+  verdict: FeedbackVerdict;
+  effort?: number | null;
+  note?: string | null;
+  forWhom?: string | null;
+  madeOn: string;
+  timelineEventId?: string | null;
+  recipe: RecipeFeedbackRecipe;
+  userName?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export interface RecipeFeedbackRecipe {
+  id: string;
+  slug: string;
+  name: string;
+}
 export interface CreateGroupRecipeAction {
   actionType: GroupRecipeActionType;
   title: string;
@@ -333,6 +527,11 @@ export interface MemberProfileUpdate {
   notes?: string | null;
   position?: number | null;
 }
+export interface PantryCheckOut {
+  items: PantryItemOut[];
+  suggestedLeftoverPortions: number;
+  mealPlanEntryId?: number | null;
+}
 export interface PantryItemCreate {
   name: string;
   foodId?: string | null;
@@ -344,82 +543,6 @@ export interface PantryItemCreate {
   useBy?: string | null;
   source?: PantrySource;
   note?: string | null;
-}
-export interface PantryItemOut {
-  name: string;
-  foodId?: string | null;
-  quantity?: number | null;
-  unitId?: string | null;
-  location?: PantryLocation;
-  boughtOn?: string | null;
-  openedOn?: string | null;
-  useBy?: string | null;
-  source?: PantrySource;
-  note?: string | null;
-  id: string;
-  groupId: string;
-  householdId: string;
-  food?: IngredientFood | null;
-  unit?: IngredientUnit | null;
-  createdAt?: string | null;
-  updatedAt?: string | null;
-}
-export interface IngredientFood {
-  id: string;
-  name: string;
-  pluralName?: string | null;
-  description?: string;
-  extras?: {
-    [k: string]: unknown;
-  } | null;
-  labelId?: string | null;
-  aliases?: IngredientFoodAlias[];
-  substitutions?: IngredientFoodSubstitution[];
-  householdsWithIngredientFood?: string[];
-  label?: MultiPurposeLabelSummary | null;
-  recipeCount?: number;
-  createdAt?: string | null;
-  updatedAt?: string | null;
-}
-export interface IngredientFoodAlias {
-  name: string;
-}
-export interface IngredientFoodSubstitution {
-  substituteFoodId?: string | null;
-  note?: string | null;
-  substituteFood?: IngredientFoodSummary | null;
-}
-export interface IngredientFoodSummary {
-  id: string;
-  name: string;
-  pluralName?: string | null;
-}
-export interface MultiPurposeLabelSummary {
-  name: string;
-  color?: string;
-  groupId: string;
-  id: string;
-}
-export interface IngredientUnit {
-  id: string;
-  name: string;
-  pluralName?: string | null;
-  description?: string;
-  extras?: {
-    [k: string]: unknown;
-  } | null;
-  fraction?: boolean;
-  abbreviation?: string;
-  pluralAbbreviation?: string | null;
-  useAbbreviation?: boolean;
-  aliases?: IngredientUnitAlias[];
-  standardQuantity?: number | null;
-  standardUnit?: string | null;
-  createdAt?: string | null;
-  updatedAt?: string | null;
-}
-export interface IngredientUnitAlias {
-  name: string;
 }
 export interface PantryItemUpdate {
   name: string;
@@ -454,28 +577,6 @@ export interface RecipeFeedbackCreate {
   note?: string | null;
   forWhom?: string | null;
   madeOn?: string | null;
-}
-export interface RecipeFeedbackOut {
-  id: string;
-  groupId: string;
-  householdId: string;
-  recipeId: string;
-  userId?: string | null;
-  verdict: FeedbackVerdict;
-  effort?: number | null;
-  note?: string | null;
-  forWhom?: string | null;
-  madeOn: string;
-  timelineEventId?: string | null;
-  recipe: RecipeFeedbackRecipe;
-  userName?: string | null;
-  createdAt?: string | null;
-  updatedAt?: string | null;
-}
-export interface RecipeFeedbackRecipe {
-  id: string;
-  slug: string;
-  name: string;
 }
 export interface RecipeFeedbackSummary {
   lastVerdict: FeedbackVerdict;
@@ -619,28 +720,6 @@ export interface Recipe {
     [k: string]: unknown;
   } | null;
   comments?: RecipeCommentOut[] | null;
-}
-export interface RecipeCategory {
-  id?: string | null;
-  groupId?: string | null;
-  name: string;
-  slug: string;
-  recipeCount?: number;
-}
-export interface RecipeTag {
-  id?: string | null;
-  groupId?: string | null;
-  name: string;
-  slug: string;
-  recipeCount?: number;
-}
-export interface RecipeTool {
-  id: string;
-  groupId?: string | null;
-  name: string;
-  slug: string;
-  recipeCount?: number;
-  householdsWithTool?: string[];
 }
 export interface RecipeStep {
   id?: string | null;
@@ -884,35 +963,6 @@ export interface ShoppingListRecipeRefOut {
   recipeId: string;
   recipeQuantity: number;
   recipe: RecipeSummary;
-}
-export interface RecipeSummary {
-  id?: string | null;
-  userId?: string;
-  householdId?: string;
-  groupId?: string;
-  name?: string | null;
-  slug?: string;
-  image?: unknown;
-  recipeServings?: number;
-  recipeYieldQuantity?: number;
-  recipeYield?: string | null;
-  totalTime?: string | null;
-  prepTime?: string | null;
-  cookTime?: string | null;
-  performTime?: string | null;
-  totalTimeSeconds?: number | null;
-  prepTimeSeconds?: number | null;
-  performTimeSeconds?: number | null;
-  description?: string | null;
-  recipeCategory?: RecipeCategory[] | null;
-  tags?: RecipeTag[] | null;
-  tools?: RecipeTool[];
-  rating?: number | null;
-  orgURL?: string | null;
-  dateAdded?: string | null;
-  dateUpdated?: string | null;
-  createdAt?: string | null;
-  updatedAt?: string | null;
 }
 export interface ShoppingListRemoveRecipeParams {
   recipeDecrementQuantity?: number;

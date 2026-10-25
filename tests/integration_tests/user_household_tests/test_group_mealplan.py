@@ -185,6 +185,32 @@ def test_update_mealplan_recipe_scale(api_client: TestClient, unique_user: TestU
     assert listed["recipeScale"] == 0.5
 
 
+def test_read_entry_has_cooked_at_none(api_client: TestClient, unique_user: TestUser):
+    plan = create_mealplan_with_recipe(api_client, unique_user)
+
+    response = api_client.get(api_routes.households_mealplans_item_id(plan["id"]), headers=unique_user.token)
+    assert response.status_code == 200
+    assert response.json()["cookedAt"] is None
+
+
+def test_update_keeps_cooked_at(api_client: TestClient, unique_user: TestUser):
+    plan = create_mealplan_with_recipe(api_client, unique_user)
+    cooked_at = datetime(2026, 10, 20, 18, 30, tzinfo=UTC)
+    unique_user.repos.meals.patch(plan["id"], {"cooked_at": cooked_at})
+
+    new_date = (datetime.now(UTC).date() + timedelta(days=3)).strftime("%Y-%m-%d")
+    plan["date"] = new_date
+    plan["title"] = random_string()
+    response = api_client.put(api_routes.households_mealplans_item_id(plan["id"]), json=plan, headers=unique_user.token)
+    assert response.status_code == 200
+
+    response = api_client.get(api_routes.households_mealplans_item_id(plan["id"]), headers=unique_user.token)
+    body = response.json()
+    assert body["date"] == new_date
+    assert body["title"] == plan["title"]
+    assert datetime.fromisoformat(body["cookedAt"]).replace(tzinfo=UTC) == cooked_at
+
+
 @pytest.mark.parametrize("recipe_scale", [0, -1])
 def test_mealplan_recipe_scale_must_be_positive(api_client: TestClient, unique_user: TestUser, recipe_scale: float):
     recipe = create_recipe(unique_user)

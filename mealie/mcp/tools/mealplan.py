@@ -44,6 +44,7 @@ def _entry_dict(
         "entry_type": entry.entry_type.value,
         "title": entry.title,
         "text": entry.text,
+        "cooked": entry.cooked_at is not None,
         "recipe": recipe_brief(
             recipe,
             last_made.get(recipe.id) if recipe.id else None,

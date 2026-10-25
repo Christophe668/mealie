@@ -160,3 +160,28 @@ builder, mobile first, Mise en place components.
 Endpoint names and payload shapes, component structure, the done-tick and done-entry styling, error
 wording (plain English, like the existing tools), and test layout, following the patterns of the pantry and
 feedback slices.
+
+## 6. Implemented (2026-10-25)
+
+Branch `feat/cooked-meal`, 10 commits from `2aaab501e` to `bee8178b7`. Changes from the design during the build:
+
+- A first "already recorded" answer (409) is shown to the user. In cook mode it is an info toast, "pantry and leftovers weren't changed", and then the screen leaves. On the planner it is an error, and the entry stays not done. Only a retry of the screen's own failed request treats a 409 as success.
+- The planner tick sends the entry's own date when it is on or before today, and today otherwise.
+- Effort is only recorded together with a verdict.
+
+## 7. Deferred minors
+
+- `single_commit` can't detect a rollback that code inside the block catches and recovers from. Nothing does this today.
+- `CookedMealCreate.scale` is accepted, but only the pantry check uses it.
+- A future `cooked_on` returns 400 on these endpoints, while feedback returns 422.
+- Without any plan entry, a retry after a lost response duplicates the leftover and feedback rows.
+- Code-level leftovers:
+  - About 20 lines of chip CSS are duplicated between CookFinish and CookPantryCheck.
+  - The planner's `catch {}` logs nothing.
+  - There is a `type: ignore` in `_parse_leftovers`.
+- Test gaps:
+  - The test that the response datetime format is right.
+  - An untouched leftover pre-fill sent on Done.
+  - The double-click guard, beyond `:disabled`.
+- Codegen (`task dev:generate`) isn't reproducible on this repo. Generated types were limited to this slice's hunks.
+- Frontend type checking (`vue-tsc`) isn't installed.

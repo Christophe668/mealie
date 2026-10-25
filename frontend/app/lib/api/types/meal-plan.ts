@@ -79,6 +79,7 @@ export interface ReadPlanEntry {
   userId: string;
   householdId: string;
   recipe?: RecipeSummary | null;
+  cookedAt?: string | null;
 }
 export interface RecipeSummary {
   id?: string | null;
