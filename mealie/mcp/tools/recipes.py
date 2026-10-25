@@ -24,6 +24,7 @@ from mealie.mcp.tools._summaries import (
 from mealie.repos.repository_generic import GroupRepositoryGeneric
 from mealie.schema.recipe.recipe import Recipe
 from mealie.schema.response.pagination import OrderByNullPosition, OrderDirection, PaginationQuery
+from mealie.services.claude_context.recipe_writer import timer_minutes
 from mealie.services.query_filter.builder import QueryFilterBuilder
 
 OrderBy = Literal["name", "rating", "random", "last_made", "created_at"]
@@ -187,10 +188,21 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
                 "food": i.food.name if i.food else None,
                 "note": i.note,
                 "display": i.display,
+                # identity and section, for update_recipe to send back
+                "ref": str(i.reference_id),
+                "section": i.title or None,
             }
             for i in recipe.recipe_ingredient
         ],
-        "instructions": [{"title": s.title, "text": s.text} for s in recipe.recipe_instructions or []],
+        "instructions": [
+            {
+                "title": s.title,
+                "text": s.text,
+                "timer_minutes": timer_minutes(s.duration_seconds),
+                "uses": [str(r.reference_id) for r in s.ingredient_references if r.reference_id],
+            }
+            for s in recipe.recipe_instructions or []
+        ],
         "tags": [t.name for t in recipe.tags or []],
         "categories": [c.name for c in recipe.recipe_category or []],
         "tools": [t.name for t in recipe.tools],

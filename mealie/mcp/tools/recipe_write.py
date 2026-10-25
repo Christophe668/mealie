@@ -1,6 +1,7 @@
 """Recipe-writing tools (spec § 3). Thin wrappers over `RecipeWriter`, which maps the input to a Mealie
 recipe; saving goes through `RecipeService`, as in the UI."""
 
+import warnings
 from collections.abc import Callable
 from typing import Annotated, Any, Literal
 from uuid import uuid4
@@ -185,8 +186,7 @@ def _update_refusal(
     """Why this update can't be made, checked before anything is written; None when it can."""
     if not writer.service.can_update([current.slug]):
         return CANT_EDIT
-    # the tool passes every parameter, so "sent" means "not None"
-    if scale_to_servings is None and all(getattr(fields, name) is None for name in RecipeFieldsIn.model_fields):
+    if scale_to_servings is None and not fields.model_fields_set - {"scale_to_servings"}:
         return "Nothing to change: send at least one field, or scale_to_servings."
     if scale_to_servings is not None:
         if fields.ingredients is not None:
@@ -229,10 +229,17 @@ async def update_recipe_impl(
     if refusal := _update_refusal(writer, current, fields, scale_to_servings):
         raise McpToolError(refusal)
 
-    planned = await writer.build(fields, base=current)
     not_scaled: list[str] = []
-    if scale_to_servings is not None:
-        planned.recipe, not_scaled = writer.scale(planned.recipe, scale_to_servings)
+    try:
+        planned = await writer.build(fields, base=current)
+        if scale_to_servings is not None:
+            planned.recipe, not_scaled = writer.scale(planned.recipe, scale_to_servings)
+    except OverflowError as e:
+        # only reachable with stored quantities or servings beyond the input limits
+        raise McpToolError(
+            "The scaled quantities would be too large for Mealie; nothing was changed. "
+            "Check the recipe's servings and quantities with get_recipe."
+        ) from e
 
     warnings: list[str] = []
     try:
@@ -269,6 +276,7 @@ _INGREDIENT = {
                 "food": _STR,
                 "note": _STR,
                 "section": _STR,
+                "ref": {"type": "string", "description": "update_recipe: the line's ref from get_recipe"},
             },
         },
     ]
@@ -278,12 +286,31 @@ _STEP = {
         _STR,
         {
             "type": "object",
-            "properties": {"text": _STR, "title": _STR, "timer_minutes": {"type": "integer"}},
+            "properties": {
+                "text": _STR,
+                "title": _STR,
+                "timer_minutes": {"type": "integer"},
+                "uses": {
+                    "type": "array",
+                    "items": _STR,
+                    "description": "update_recipe: refs of the ingredients this step uses",
+                },
+            },
             "required": ["text"],
         },
     ]
 }
 _NOTE = {"type": "object", "properties": {"title": _STR, "text": _STR}, "required": ["title", "text"]}
+
+# "Not sent" for update_recipe's parameters, so a sent null can mean "clear". It has no JSON form,
+# so pydantic leaves it out of the tool schema (and warns, which `_register_quietly` silences).
+UNSET: Any = type("Unset", (), {"__repr__": lambda self: "UNSET"})()
+
+
+def _register_quietly[F: Callable[..., Any]](register: Callable[[F], F], fn: F) -> F:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Default value UNSET is not JSON serializable")
+        return register(fn)
 
 
 def _schema(schema: dict[str, Any], optional: bool = True) -> WithJsonSchema:
@@ -327,7 +354,8 @@ async def create_recipe(
     servings 0-100; minutes 0-1440; tags (up to 20), categories, tools: names, matched ignoring case
     or created; notes: [{title, text}]; source_url: the http(s) page you adapted the recipe from.
     Lengths: recipe name 200, food/unit/tag/title 100, ingredient line or note 300, step/note text and
-    description 5000 characters. Duplicate names are allowed (Mealie saves "Name (1)").
+    description 5000 characters. Duplicate names are allowed (Mealie saves "Name (1)"). An
+    ingredient's `ref` and a step's `uses` are for update_recipe; they are ignored here.
     Returns the recipe as get_recipe does (with its Mealie `url`), plus `similar_existing`: up to 3
     earlier recipes with the same name, worth mentioning to the user. A `warning` means the recipe was
     saved but something after the save failed: don't create it again."""
@@ -353,58 +381,70 @@ async def create_recipe(
     return await run_in_context(create_recipe_impl, fields)
 
 
-@mcp_server.tool()
-@require_scope("recipes:write")
-async def update_recipe(
+async def _update_recipe(
     slug_or_id: str,
-    name: Str = None,
-    description: Str = None,
-    servings: Number = None,
-    yield_text: Str = None,
-    prep_minutes: Integer = None,
-    cook_minutes: Integer = None,
-    total_minutes: Integer = None,
-    ingredients: Annotated[Any, _schema({"type": "array", "items": _INGREDIENT})] = None,
-    instructions: Annotated[Any, _schema({"type": "array", "items": _STEP})] = None,
-    tags: Names = None,
-    categories: Names = None,
-    tools: Names = None,
-    notes: Annotated[Any, _schema({"type": "array", "items": _NOTE})] = None,
-    source_url: Str = None,
-    scale_to_servings: Number = None,
+    name: Str = UNSET,
+    description: Str = UNSET,
+    servings: Number = UNSET,
+    yield_text: Str = UNSET,
+    prep_minutes: Integer = UNSET,
+    cook_minutes: Integer = UNSET,
+    total_minutes: Integer = UNSET,
+    ingredients: Annotated[Any, _schema({"type": "array", "items": _INGREDIENT})] = UNSET,
+    instructions: Annotated[Any, _schema({"type": "array", "items": _STEP})] = UNSET,
+    tags: Names = UNSET,
+    categories: Names = UNSET,
+    tools: Names = UNSET,
+    notes: Annotated[Any, _schema({"type": "array", "items": _NOTE})] = UNSET,
+    source_url: Str = UNSET,
+    scale_to_servings: Number = UNSET,
 ) -> dict[str, Any]:
-    """Change an existing recipe (by slug or id, as get_recipe and search_recipes return them). Send
-    only what changes: a field left out stays as it is. A list that is sent (ingredients,
-    instructions, tags, categories, tools, notes) replaces the whole list, so to change one
-    ingredient call get_recipe first and send the full new list; the field formats and limits are
-    create_recipe's (prefer structured ingredients; reuse existing food names). An empty
-    description or notes list clears it. Changing servings also scales the yield quantity
-    ("12 cookies"); changing prep or cook minutes recomputes the total when it was their sum.
-    scale_to_servings (0-100) multiplies every ingredient quantity by new/old servings and sets the
-    servings: "make the carbonara for 4". It needs the recipe to have servings, and can't be sent
-    with ingredients or servings. Ingredients without a quantity ("salt to taste") stay as they are
-    and are listed in `not_scaled`. You can edit what the user could edit in Mealie: a recipe that
-    is locked, or belongs to another household that doesn't allow edits, is refused.
+    """Change an existing recipe (by slug or id, as get_recipe and search_recipes return them).
+    Read it with get_recipe first. Send only what changes: a field left out stays as it is; null
+    clears description, yield_text, prep/cook/total minutes or source_url (other fields can't be null).
+    A list that is sent (ingredients, instructions, tags, categories, tools, notes) replaces the
+    whole list, so to change one ingredient or step send the full new list, and for the lines you
+    keep send back what get_recipe gave: each ingredient's `ref` and `section`, each step's
+    `timer_minutes` and `uses` (the refs of its ingredients). That keeps step-to-ingredient links,
+    timers, sections and sub-recipe links. Lines sent back unchanged (a display line as a plain
+    string, a step with the same text) also keep them. Field formats and limits are create_recipe's
+    (prefer structured ingredients; reuse existing food names).
+    Changing servings also scales the yield quantity ("12 cookies"); changing prep or cook minutes
+    recomputes the total when it was their sum.
+    scale_to_servings (0.01-100) multiplies every ingredient quantity by new/old servings and sets
+    the servings: "make the carbonara for 4". It needs the recipe to have servings, and can't be
+    sent with ingredients or servings. Ingredients without a quantity ("salt to taste") stay as
+    they are and are listed in `not_scaled`.
+    You can edit what the user could edit in Mealie: a locked recipe can only be edited by its owner
+    or an admin, as in Mealie, and another household's recipe only when that household allows it.
     Returns the recipe as get_recipe does, plus `not_scaled`. A `warning` means the change was saved
     but something after it failed: don't send the same update again (a repeated scale would scale twice)."""
+    sent = {
+        key: value
+        for key, value in {
+            "name": name,
+            "description": description,
+            "servings": servings,
+            "yield_text": yield_text,
+            "prep_minutes": prep_minutes,
+            "cook_minutes": cook_minutes,
+            "total_minutes": total_minutes,
+            "ingredients": ingredients,
+            "instructions": instructions,
+            "tags": tags,
+            "categories": categories,
+            "tools": tools,
+            "notes": notes,
+            "source_url": source_url,
+            "scale_to_servings": scale_to_servings,
+        }.items()
+        if value is not UNSET
+    }
     try:
-        fields = RecipeUpdateIn(
-            name=name,
-            description=description,
-            servings=servings,
-            yield_text=yield_text,
-            prep_minutes=prep_minutes,
-            cook_minutes=cook_minutes,
-            total_minutes=total_minutes,
-            ingredients=ingredients,
-            instructions=instructions,
-            tags=tags,
-            categories=categories,
-            tools=tools,
-            notes=notes,
-            source_url=source_url,
-            scale_to_servings=scale_to_servings,
-        )
+        fields = RecipeUpdateIn(**sent)
     except ValidationError as e:
         raise to_tool_error(e) from e
     return await run_in_context(update_recipe_impl, slug_or_id, fields, fields.scale_to_servings)
+
+
+update_recipe = _register_quietly(mcp_server.tool(name="update_recipe"), require_scope("recipes:write")(_update_recipe))

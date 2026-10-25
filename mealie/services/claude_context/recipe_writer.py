@@ -9,6 +9,7 @@ slug uniqueness and permissions behave as in the UI.
 so a call refused during validation or building leaves nothing behind.
 """
 
+import math
 import re
 import threading
 from collections.abc import Callable
@@ -40,7 +41,7 @@ from mealie.schema.recipe.recipe_ingredient import (
     RegisteredParser,
 )
 from mealie.schema.recipe.recipe_notes import RecipeNote
-from mealie.schema.recipe.recipe_step import RecipeStep
+from mealie.schema.recipe.recipe_step import IngredientReferences, RecipeStep
 from mealie.schema.user.user import DEFAULT_INTEGRATION_ID, PrivateUser
 from mealie.services.event_bus_service.event_bus_service import EventBusService
 from mealie.services.event_bus_service.event_types import EventOperation, EventRecipeData, EventTypes
@@ -61,6 +62,8 @@ MAX_ORGANIZERS = 20
 MAX_NOTES = 20
 MAX_MINUTES = 1440
 MAX_SERVINGS = 100
+MIN_SERVINGS = 0.01
+MAX_QUANTITY = 100_000
 SIMILAR_LIMIT = 3
 
 MAX_NAME = 100  # food, unit, organizer, step title, ingredient section, note title, yield
@@ -68,6 +71,7 @@ MAX_RECIPE_NAME = 200
 MAX_LINE = 300  # a plain ingredient line, an ingredient note
 MAX_TEXT = 5000  # step text, note text, description
 MAX_URL = 2000
+SMALLEST_QUANTITY = 0.001  # Mealie reads quantities back rounded to 3 decimals
 
 
 # C0 control characters other than tab, newline and carriage return; PostgreSQL refuses NUL in text
@@ -137,11 +141,13 @@ class _In(BaseModel):
 class IngredientIn(_In):
     """One structured ingredient line. `section` is the section title the line starts."""
 
-    quantity: float | None = Field(default=None, ge=0)
+    quantity: float | None = Field(default=None, ge=0, le=MAX_QUANTITY)
     unit: FoodOrUnitName | None = None
     food: FoodOrUnitName | None = None
     note: Line | None = None
     section: ShortText | None = None
+    # `ref` from get_recipe: on an update, the line keeps its identity (step links, sub-recipe link)
+    ref: ShortText | None = None
 
     @model_validator(mode="after")
     def _has_content(self) -> IngredientIn:
@@ -154,6 +160,8 @@ class StepIn(_In):
     text: LongText
     title: ShortText | None = None
     timer_minutes: int | None = Field(default=None, ge=1, le=MAX_MINUTES)
+    # ingredient `ref`s this step uses (get_recipe's `uses`); unknown refs are dropped
+    uses: Annotated[list[ShortText], Field(max_length=MAX_INGREDIENTS)] | None = None
 
 
 class NoteIn(_In):
@@ -171,7 +179,7 @@ class RecipeFieldsIn(_In):
 
     name: RecipeName | None = None
     description: Description | None = None
-    servings: float | None = Field(default=None, gt=0, le=MAX_SERVINGS)
+    servings: float | None = Field(default=None, ge=MIN_SERVINGS, le=MAX_SERVINGS)
     yield_text: YieldText | None = None
     prep_minutes: Minutes | None = None
     cook_minutes: Minutes | None = None
@@ -185,10 +193,27 @@ class RecipeFieldsIn(_In):
     source_url: SourceUrl | None = None
 
 
-class RecipeUpdateIn(RecipeFieldsIn):
-    """An update: any recipe field, plus `scale_to_servings` (multiplies the ingredient quantities)."""
+# On an update, a sent null clears these; any other field can't be null (leave it out to keep it).
+CLEARABLE = frozenset({"description", "yield_text", "prep_minutes", "cook_minutes", "total_minutes", "source_url"})
 
-    scale_to_servings: float | None = Field(default=None, gt=0, le=MAX_SERVINGS)
+
+class RecipeUpdateIn(RecipeFieldsIn):
+    """An update: any recipe field, plus `scale_to_servings` (multiplies the ingredient quantities).
+
+    Only the fields actually sent are set (`model_fields_set`): a field left out stays as it is,
+    and a null clears one of `CLEARABLE`."""
+
+    scale_to_servings: float | None = Field(default=None, ge=MIN_SERVINGS, le=MAX_SERVINGS)
+
+    @model_validator(mode="after")
+    def _no_null_for_required(self) -> RecipeUpdateIn:
+        nulls = sorted(n for n in self.model_fields_set - CLEARABLE if getattr(self, n) is None)
+        if nulls:
+            raise ValueError(
+                f"{', '.join(nulls)} can't be null: leave a field out to keep it "
+                f"(only {', '.join(sorted(CLEARABLE))} can be cleared with null)"
+            )
+        return self
 
 
 class RecipeCreateIn(RecipeFieldsIn):
@@ -258,14 +283,26 @@ class RecipeWriter:
             self._keep_derived_values(fields, base, recipe)
 
         if fields.ingredients is not None:
-            recipe.recipe_ingredient = [await self._ingredient(item) for item in fields.ingredients]
+            ingredients = [await self._ingredient(item) for item in fields.ingredients]
+            if base is not None:
+                ingredients = _carry_ingredients(fields.ingredients, ingredients, base.recipe_ingredient)
+            recipe.recipe_ingredient = ingredients
             self._plan_foods_and_units(planned)
 
         if fields.instructions is not None:
-            recipe.recipe_instructions = [self._step(item) for item in fields.instructions]
+            old_steps = list(base.recipe_instructions or []) if base is not None else []
+            recipe.recipe_instructions = _carry_steps(
+                fields.instructions, [self._step(i) for i in fields.instructions], old_steps
+            )
 
         if fields.notes is not None:
-            recipe.notes = [RecipeNote(title=note.title, text=note.text) for note in fields.notes]
+            recipe.notes = _carry_notes(fields.notes, list(base.notes or []) if base is not None else [])
+
+        # a step may only point at ingredients the recipe has (refs from `uses`, or links whose
+        # ingredient was removed); update_one would drop the rest too, create_one wouldn't
+        refs = {ingredient.reference_id for ingredient in recipe.recipe_ingredient}
+        for step in recipe.recipe_instructions or []:
+            step.ingredient_references = [r for r in step.ingredient_references if r.reference_id in refs]
 
         resolver = OrganizerResolver(self.repos)
         threshold = resolver.fuzzy_match_threshold
@@ -282,23 +319,25 @@ class RecipeWriter:
 
     @staticmethod
     def _map_scalars(fields: RecipeFieldsIn, recipe: Recipe) -> None:
+        sent = fields.model_fields_set
         if fields.name is not None:
             recipe.name = fields.name
-        if fields.description is not None:
-            recipe.description = fields.description
         if fields.servings is not None:
             recipe.recipe_servings = fields.servings
-        if fields.yield_text is not None:
+        # sent (even as null, which clears them on an update)
+        if "description" in sent:
+            recipe.description = fields.description
+        if "yield_text" in sent:
             recipe.recipe_yield = fields.yield_text
-        if fields.source_url is not None:
+        if "source_url" in sent:
             recipe.org_url = fields.source_url
         # Structured times live in the *_seconds columns; the free-text column is cleared, as the scraper does.
-        if fields.prep_minutes is not None:
-            recipe.prep_time_seconds, recipe.prep_time = fields.prep_minutes * 60, None
-        if fields.cook_minutes is not None:
-            recipe.perform_time_seconds, recipe.perform_time = fields.cook_minutes * 60, None
-        if fields.total_minutes is not None:
-            recipe.total_time_seconds, recipe.total_time = fields.total_minutes * 60, None
+        if "prep_minutes" in sent:
+            recipe.prep_time_seconds, recipe.prep_time = _seconds(fields.prep_minutes), None
+        if "cook_minutes" in sent:
+            recipe.perform_time_seconds, recipe.perform_time = _seconds(fields.cook_minutes), None
+        if "total_minutes" in sent:
+            recipe.total_time_seconds, recipe.total_time = _seconds(fields.total_minutes), None
 
     @staticmethod
     def _keep_derived_values(fields: RecipeFieldsIn, base: Recipe, recipe: Recipe) -> None:
@@ -314,8 +353,9 @@ class RecipeWriter:
         if fields.servings is not None:
             _follow_servings(recipe, base.recipe_servings, fields.servings)
 
-        parts_sent = fields.prep_minutes is not None or fields.cook_minutes is not None
-        if fields.total_minutes is None and parts_sent and _total_is_sum_of_parts(base):
+        sent = fields.model_fields_set
+        parts_sent = "prep_minutes" in sent or "cook_minutes" in sent
+        if "total_minutes" not in sent and parts_sent and _total_is_sum_of_parts(base):
             total = (recipe.prep_time_seconds or 0) + (recipe.perform_time_seconds or 0)
             recipe.total_time_seconds, recipe.total_time = total or None, None
 
@@ -349,6 +389,7 @@ class RecipeWriter:
             text=item.text,
             title=item.title or "",
             duration_seconds=item.timer_minutes * 60 if item.timer_minutes else None,
+            ingredient_references=[IngredientReferences(reference_id=ref) for ref in _uuids(item.uses or [])],
         )
 
     async def _ingredient(self, item: IngredientIn | str) -> RecipeIngredient:
@@ -622,20 +663,182 @@ class RecipeWriter:
 
 
 def _follow_servings(recipe: Recipe, old: float, new: float) -> None:
-    """Sets the servings, and scales the yield quantity by the same factor when both were set."""
+    """Sets the servings, and scales the yield quantity by the same factor when both were set.
+    Raises `OverflowError` when the result isn't a finite number (only possible with stored values
+    beyond the input limits)."""
     if old and old > 0 and recipe.recipe_yield_quantity:
-        recipe.recipe_yield_quantity = round(recipe.recipe_yield_quantity * new / old, 3)
+        recipe.recipe_yield_quantity = _scaled_quantity(recipe.recipe_yield_quantity, Fraction(new) / Fraction(old))
     recipe.recipe_servings = new
 
 
 def _scaled_quantity(quantity: float, factor: Fraction) -> float:
     """`quantity x factor`, rounded to Mealie's 3 decimals. Quantities are stored rounded (2/3 is
     0.667), so one within that rounding of a kitchen fraction (denominator up to 16) is taken as the
-    fraction first: 0.667 x 3/2 gives 1.0, not 1.001."""
+    fraction first: 0.667 x 3/2 gives 1.0, not 1.001.
+
+    A non-zero quantity never becomes 0 (which reads as "no quantity"): below 0.01 it keeps 3
+    significant figures, and it is never less than 0.001, the smallest amount Mealie keeps (it
+    reads every quantity back rounded to 3 decimals). Raises `OverflowError` when the result isn't
+    a finite float."""
     exact = Fraction(quantity)
     kitchen = exact.limit_denominator(16)
     base = kitchen if abs(kitchen - exact) <= Fraction(1, 2000) else exact
-    return round(float(base * factor), 3)
+    result = float(base * factor)  # OverflowError past the float range
+    if not math.isfinite(result):
+        raise OverflowError("scaled quantity is not a finite number")
+    if result == 0:
+        return 0.0
+    if abs(result) >= 0.01:
+        return round(result, 3)
+    return max(float(f"{result:.3g}"), SMALLEST_QUANTITY)
+
+
+def _seconds(minutes: int | None) -> int | None:
+    return minutes * 60 if minutes is not None else None
+
+
+def _uuids(values: list[str]) -> list[UUID]:
+    """The values that are UUIDs (ingredient refs); anything else is dropped."""
+    result: list[UUID] = []
+    for value in values:
+        try:
+            result.append(UUID(value))
+        except ValueError:
+            continue
+    return result
+
+
+def _text_key(text: str | None) -> str:
+    return " ".join((text or "").split()).casefold()
+
+
+def _food_key(food: Any) -> tuple[str, Any] | None:
+    if food is None:
+        return None
+    food_id = getattr(food, "id", None)
+    return ("id", food_id) if food_id else ("name", IngredientFoodModel.normalize(food.name or ""))
+
+
+def _unit_key(unit: Any) -> tuple[str, Any] | None:
+    if unit is None:
+        return None
+    unit_id = getattr(unit, "id", None)
+    return ("id", unit_id) if unit_id else ("name", IngredientUnitModel.normalize(unit.name or ""))
+
+
+def _same_amount(old: RecipeIngredient, new: RecipeIngredient) -> bool:
+    """Same quantity (0 and None are both "none"), unit and food."""
+    return (
+        abs((old.quantity or 0) - (new.quantity or 0)) < 1e-9
+        and _unit_key(old.unit) == _unit_key(new.unit)
+        and _food_key(old.food) == _food_key(new.food)
+    )
+
+
+def _same_line(old: RecipeIngredient, new: RecipeIngredient) -> bool:
+    """The conservative match for a line sent without `ref`: same amount, and for a line with no
+    food (a note-only line) the same note as well."""
+    if not _same_amount(old, new):
+        return False
+    return old.food is not None or _text_key(old.note) == _text_key(new.note)
+
+
+def _keep_identity(new: RecipeIngredient, old: RecipeIngredient, item: IngredientIn | str) -> RecipeIngredient:
+    """`new` takes over `old`'s identity: its `reference_id` (so step links survive), its sub-recipe
+    link, its original text when the amount didn't change, and its section unless one was sent."""
+    new.reference_id = old.reference_id
+    if new.referenced_recipe is None:
+        new.referenced_recipe = old.referenced_recipe
+    if _same_amount(old, new) and isinstance(item, IngredientIn):
+        new.original_text = old.original_text
+    if isinstance(item, str) or "section" not in item.model_fields_set:
+        new.title = old.title
+    return new
+
+
+def _carry_ingredients(
+    items: list[IngredientIn | str], new: list[RecipeIngredient], old: list[RecipeIngredient]
+) -> list[RecipeIngredient]:
+    """Keeps the identity of the lines an update keeps, so step links, sections and sub-recipe
+    links aren't lost when Claude resends the list.
+
+    1. A line with a `ref` (from get_recipe) that names one of the recipe's lines takes that line's
+       identity (`_keep_identity`). Each old line is claimed once.
+    2. A plain string equal to an old line's original text or display text (e.g. get_recipe's
+       `display` sent back) *is* that line: it is kept as it was.
+    3. Otherwise a line matching exactly one unclaimed old line (`_same_line`) takes its identity.
+    Anything else is a new line, as before."""
+    result = list(new)
+    by_ref = {str(line.reference_id): line for line in old}
+    claimed: set[UUID] = set()
+    pending: list[int] = []
+    for index, item in enumerate(items):
+        line = by_ref.get(item.ref.lower()) if isinstance(item, IngredientIn) and item.ref else None
+        if line is not None and line.reference_id not in claimed:
+            claimed.add(line.reference_id)
+            result[index] = _keep_identity(new[index], line, item)
+        else:
+            pending.append(index)
+
+    for index in pending:
+        item = items[index]
+        candidates = [line for line in old if line.reference_id not in claimed]
+        if isinstance(item, str):
+            text = _text_key(item)
+            same_text = [
+                line for line in candidates if text in (_text_key(line.original_text), _text_key(line.display))
+            ]
+            if len(same_text) == 1:
+                claimed.add(same_text[0].reference_id)
+                result[index] = same_text[0].model_copy(deep=True)
+                continue
+        matches = [line for line in candidates if _same_line(line, new[index])]
+        if len(matches) == 1:
+            claimed.add(matches[0].reference_id)
+            result[index] = _keep_identity(new[index], matches[0], item)
+    return result
+
+
+def _carry_steps(items: list[StepIn | str], new: list[RecipeStep], old: list[RecipeStep]) -> list[RecipeStep]:
+    """A step whose text equals an old step's text keeps that step's timer and links unless they
+    were sent: its timer (also when the `timer_minutes` sent is get_recipe's rounding of it), its
+    ingredient links (unless `uses` was sent) and its note links."""
+    used: set[int] = set()
+    for item, step in zip(items, new, strict=True):
+        text = _text_key(step.text)
+        match = next((i for i, o in enumerate(old) if i not in used and _text_key(o.text) == text), None)
+        if match is None:
+            continue
+        used.add(match)
+        previous = old[match]
+        timer = None if isinstance(item, str) else item.timer_minutes
+        if timer is None or timer == timer_minutes(previous.duration_seconds):
+            step.duration_seconds = previous.duration_seconds
+        if isinstance(item, str) or item.uses is None:
+            step.ingredient_references = [r.model_copy() for r in previous.ingredient_references]
+        step.note_references = [r.model_copy() for r in previous.note_references]
+    return new
+
+
+def _carry_notes(items: list[NoteIn], old: list[RecipeNote]) -> list[RecipeNote]:
+    """A note whose title matches an old note's title keeps its `reference_id`, so the steps that
+    point at it keep pointing at it."""
+    used: set[int] = set()
+    notes: list[RecipeNote] = []
+    for item in items:
+        note = RecipeNote(title=item.title, text=item.text)
+        title = _text_key(item.title)
+        match = next((i for i, o in enumerate(old) if i not in used and _text_key(o.title) == title), None)
+        if match is not None:
+            used.add(match)
+            note.reference_id = old[match].reference_id
+        notes.append(note)
+    return notes
+
+
+def timer_minutes(seconds: int | None) -> int | None:
+    """A step timer in whole minutes, as get_recipe shows it (never 0 for a set timer)."""
+    return max(1, round(seconds / 60)) if seconds else None
 
 
 def _total_is_sum_of_parts(recipe: Recipe) -> bool:
