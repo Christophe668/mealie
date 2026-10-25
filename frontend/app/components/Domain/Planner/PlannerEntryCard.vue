@@ -71,6 +71,7 @@ import DsIcon from "~/components/Design/DsIcon.vue";
 import AppShellMenu from "~/components/Layout/AppShellMenu.vue";
 import { useStaticRoutes, useUserApi } from "~/composables/api";
 import { alert } from "~/composables/use-toast";
+import { apiErrorInfo } from "~/lib/api/error-info";
 import type { PlanEntryType, ReadPlanEntry } from "~/lib/api/types/meal-plan";
 import type { AppShellMenuItem } from "~/types/application-types";
 
@@ -155,12 +156,15 @@ async function toggleCooked() {
       cookedAt.value = null;
     }
     else {
-      const { data, error, response } = await api.markCooked(props.entry.id, format(new Date(), "yyyy-MM-dd"));
-      // 409: already recorded as cooked, so the card is right to show it done
-      if (error && response?.status !== 409) {
-        throw error;
+      // The entry's own day, but never a day still to come.
+      const today = format(new Date(), "yyyy-MM-dd");
+      const result = await api.markCooked(props.entry.id, props.entry.date <= today ? props.entry.date : today);
+      if (result.error) {
+        // 409: this meal (or a cooking of the recipe that day) is recorded already; the card stays as it is
+        alert.error(apiErrorInfo(result).message ?? i18n.t("planner.cooked-failed"));
+        return;
       }
-      cookedAt.value = data?.mealPlanEntry?.cookedAt ?? new Date().toISOString();
+      cookedAt.value = result.data?.mealPlanEntry?.cookedAt ?? new Date().toISOString();
     }
   }
   catch {

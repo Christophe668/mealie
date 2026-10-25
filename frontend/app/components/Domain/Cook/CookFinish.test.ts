@@ -12,6 +12,12 @@ vi.mock("~/composables/api", () => ({
   useUserApi: () => ({ householdCooking: { pantryCheck, record } }),
 }));
 
+const conflict = (message = "already recorded as cooked on 2026-10-24"): ApiResult<object> => ({
+  data: null,
+  error: { response: { status: 409, data: { detail: { message } } } },
+  response: null,
+});
+
 const replace = vi.fn();
 const stubs = { "v-icon": { template: "<i class=\"v-icon\" aria-hidden=\"true\" />" } };
 
@@ -160,17 +166,57 @@ describe("CookFinish", () => {
     expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
   });
 
-  test("already recorded (409) counts as saved", async () => {
+  test("a first-attempt 409 says nothing was changed, then leaves", async () => {
     const error = vi.spyOn(alert, "error").mockImplementation(() => {});
-    record.mockResolvedValue({ data: null, error: new Error("conflict"), response: { status: 409 } });
+    const info = vi.spyOn(alert, "info").mockImplementation(() => {});
+    record.mockResolvedValue(conflict());
     const wrapper = await render();
 
     await button(wrapper, "Done").trigger("click");
     await flushPromises();
 
+    expect(info).toHaveBeenCalledWith("already recorded as cooked on 2026-10-24 Pantry and leftovers weren’t changed.");
     expect(error).not.toHaveBeenCalled();
     expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
     error.mockRestore();
+    info.mockRestore();
+  });
+
+  test("a 409 on the retry of our own failed request leaves silently", async () => {
+    const error = vi.spyOn(alert, "error").mockImplementation(() => {});
+    const info = vi.spyOn(alert, "info").mockImplementation(() => {});
+    record.mockResolvedValueOnce({ data: null, error: new Error("boom"), response: { status: 500 } });
+    record.mockResolvedValueOnce(conflict());
+    const wrapper = await render();
+
+    await button(wrapper, "Done").trigger("click");
+    await flushPromises();
+    expect(replace).not.toHaveBeenCalled();
+    await button(wrapper, "Done").trigger("click");
+    await flushPromises();
+
+    expect(info).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
+    error.mockRestore();
+    info.mockRestore();
+  });
+
+  test("effort chips wait for a verdict, and effort alone is never sent", async () => {
+    const wrapper = await render();
+    const quick = () => wrapper.findAll(".cook-finish__chip")[0]!;
+
+    expect(quick().attributes("aria-disabled")).toBe("true");
+    await quick().trigger("click");
+    expect(quick().attributes("aria-pressed")).toBe("false");
+    await button(wrapper, "Done").trigger("click");
+    await flushPromises();
+    expect(record).toHaveBeenCalledWith({ recipeId: "r-1", cookedOn: "2026-10-24", scale: 1 });
+
+    record.mockClear();
+    await button(wrapper, "Loved it").trigger("click");
+    expect(quick().attributes("aria-disabled")).toBeUndefined();
+    await quick().trigger("click");
+    expect(quick().attributes("aria-pressed")).toBe("true");
   });
 
   test("a failed save says so, stays and can be retried", async () => {

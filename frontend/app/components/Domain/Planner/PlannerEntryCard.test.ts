@@ -63,13 +63,33 @@ describe("PlannerEntryCard cooked toggle", () => {
 
   test("clicking marks the entry cooked today and shows it done", async () => {
     markCooked.mockResolvedValue({ data: { mealPlanEntry: { cookedAt: "2026-10-25T12:00:00" } }, error: null, response: { status: 200 } });
-    const wrapper = render(makeEntry());
+    const wrapper = render(makeEntry({ date: today() }));
 
     await wrapper.find(".planner-card__cooked").trigger("click");
     await flushPromises();
 
     expect(markCooked).toHaveBeenCalledWith(7, today());
     expect(wrapper.find(".planner-card__cooked").attributes("aria-pressed")).toBe("true");
+  });
+
+  test("a past entry is marked on its own date", async () => {
+    markCooked.mockResolvedValue({ data: {}, error: null, response: { status: 200 } });
+    const wrapper = render(makeEntry({ date: "2000-01-02" }));
+
+    await wrapper.find(".planner-card__cooked").trigger("click");
+    await flushPromises();
+
+    expect(markCooked).toHaveBeenCalledWith(7, "2000-01-02");
+  });
+
+  test("a future entry is marked today", async () => {
+    markCooked.mockResolvedValue({ data: {}, error: null, response: { status: 200 } });
+    const wrapper = render(makeEntry({ date: "2999-01-02" }));
+
+    await wrapper.find(".planner-card__cooked").trigger("click");
+    await flushPromises();
+
+    expect(markCooked).toHaveBeenCalledWith(7, today());
   });
 
   test("clicking a done entry unmarks it", async () => {
@@ -83,15 +103,19 @@ describe("PlannerEntryCard cooked toggle", () => {
     expect(wrapper.find(".planner-card__cooked").attributes("aria-pressed")).toBe("false");
   });
 
-  test("a 409 counts as done", async () => {
-    markCooked.mockResolvedValue({ data: null, error: new Error("conflict"), response: { status: 409 } });
+  test("a 409 shows the server message and the card stays not done", async () => {
+    markCooked.mockResolvedValue({
+      data: null,
+      error: { response: { status: 409, data: { detail: { message: "already recorded as cooked on 2026-10-24" } } } },
+      response: null,
+    });
     const wrapper = render(makeEntry());
 
     await wrapper.find(".planner-card__cooked").trigger("click");
     await flushPromises();
 
-    expect(wrapper.find(".planner-card__cooked").attributes("aria-pressed")).toBe("true");
-    expect(alertError).not.toHaveBeenCalled();
+    expect(wrapper.find(".planner-card__cooked").attributes("aria-pressed")).toBe("false");
+    expect(alertError).toHaveBeenCalledWith("already recorded as cooked on 2026-10-24");
   });
 
   test("an API error shows the error toast and reverts", async () => {

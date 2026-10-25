@@ -13,7 +13,7 @@
             type="button"
             class="cook-finish__chip ds-focus"
             :aria-pressed="effort === level ? 'true' : 'false'"
-            :aria-disabled="busy ? 'true' : undefined"
+            :aria-disabled="busy || !chosenVerdict ? 'true' : undefined"
             @click="toggleEffort(level)"
           >
             {{ $t(effortLabelKey(level)) }}
@@ -70,6 +70,7 @@ import type { PantryChoices } from "./CookPantryCheck.vue";
 import DsButton from "~/components/Design/DsButton.vue";
 import { useUserApi } from "~/composables/api";
 import { alert } from "~/composables/use-toast";
+import { apiErrorInfo } from "~/lib/api/error-info";
 import type { CookedMealCreate, FeedbackVerdict, PantryCheckOut } from "~/lib/api/types/household";
 import { FEEDBACK_EFFORTS, FEEDBACK_VERDICTS, effortLabelKey, verdictLabelKey } from "~/lib/recipe/recipe-feedback";
 import type { FeedbackEffort } from "~/lib/recipe/recipe-feedback";
@@ -92,6 +93,8 @@ const i18n = useI18n();
 const chosenVerdict = ref<FeedbackVerdict | null>(null);
 const effort = ref<FeedbackEffort | null>(null);
 const busy = ref(false);
+/** An earlier attempt of this screen failed without a verdict from the server, so it may have gone through. */
+let retrying = false;
 
 /** Null until the pantry check answers; a failed check just leaves the pantry part out. */
 const check = ref<PantryCheckOut | null>(null);
@@ -116,9 +119,10 @@ onMounted(async () => {
   }
 });
 
-/** Single choice; pressing the chosen chip again clears it. */
+/** Single choice, once a verdict is picked; pressing the chosen chip again clears it. */
 function toggleEffort(level: FeedbackEffort) {
-  if (busy.value) {
+  // effort is only ever sent with a verdict, so it waits for one
+  if (busy.value || !chosenVerdict.value) {
     return;
   }
   effort.value = effort.value === level ? null : level;
@@ -166,15 +170,28 @@ async function save(withFeedback: boolean) {
   busy.value = true;
   let saved = false;
   try {
-    const { error, response } = await useUserApi().householdCooking.record(cookedMeal(withFeedback));
-    // 409: this cooking is already recorded, which is all we wanted.
-    saved = !error || response?.status === 409;
+    const result = await useUserApi().householdCooking.record(cookedMeal(withFeedback));
+    if (!result.error) {
+      saved = true;
+    }
+    else {
+      const { status, message } = apiErrorInfo(result);
+      if (status === 409) {
+        // Our own earlier attempt got through: that is all we wanted. Otherwise it was recorded before, and
+        // nothing of what was chosen here was applied.
+        if (!retrying) {
+          alert.info(`${message ?? i18n.t("cook.already-recorded")} ${i18n.t("cook.pantry-unchanged")}`);
+        }
+        saved = true;
+      }
+    }
   }
   catch {
     saved = false;
   }
   busy.value = false;
   if (!saved) {
+    retrying = true;
     alert.error(i18n.t("cook.save-failed"));
     return;
   }

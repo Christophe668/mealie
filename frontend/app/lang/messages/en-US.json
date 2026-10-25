@@ -1588,6 +1588,8 @@
     "done": "Done",
     "last-step": "That’s the last step.",
     "save-failed": "Couldn’t record that you made it.",
+    "already-recorded": "Already recorded as cooked.",
+    "pantry-unchanged": "Pantry and leftovers weren’t changed.",
     "no-steps": "This recipe has no steps yet.",
     "for-this-step": "For this step",
     "from-your-pantry": "From your pantry",
