@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -24,6 +25,7 @@ from mealie.mcp.tools._summaries import (
 from mealie.repos.repository_generic import GroupRepositoryGeneric
 from mealie.schema.recipe.recipe import Recipe
 from mealie.schema.response.pagination import OrderByNullPosition, OrderDirection, PaginationQuery
+from mealie.services.claude_context.cooked_meal_service import CookedMealService
 from mealie.services.claude_context.recipe_writer import timer_minutes
 from mealie.services.query_filter.builder import QueryFilterBuilder
 
@@ -172,6 +174,8 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
     # link rows have no stored order (PostgreSQL returns them in any order):
     # list them as the recipe lists its ingredients
     position = {str(i.reference_id): n for n, i in enumerate(recipe.recipe_ingredient)}
+    today = datetime.now().astimezone().date()
+    check = CookedMealService(ctx.repos, ctx.user, ctx.household).pantry_check(recipe.id, today)
     return {
         "id": str(recipe.id),
         "name": recipe.name,
@@ -217,6 +221,20 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
         "url": recipe_url(ctx.user.group_slug, recipe.slug),
         "feedback": [feedback_dict(row) for row in feedback],
         "feedback_summary": summary_dict(summary),
+        # pantry items matching this recipe's foods, for record_meal_cooked
+        "in_pantry": [
+            {
+                "id": str(item.id),
+                "name": item.name,
+                "quantity": item.quantity,
+                "unit": item.unit.name if item.unit else None,
+                "location": item.location.value,
+                "opened_on": item.opened_on.isoformat() if item.opened_on else None,
+                "use_by": item.use_by.isoformat() if item.use_by else None,
+            }
+            for item in check.items
+        ],
+        "suggested_leftover_portions": check.suggested_leftover_portions,
     }
 
 

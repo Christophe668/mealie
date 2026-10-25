@@ -1,6 +1,7 @@
+import re
 from collections import Counter
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -11,15 +12,33 @@ from mealie.mcp.context import McpContext
 from mealie.mcp.errors import McpToolError, not_found
 from mealie.mcp.server import mcp_server
 from mealie.mcp.tools import run_in_context
+from mealie.mcp.tools.recipes import _find_recipe
+from mealie.schema.household.cooked_meal import (
+    CookedLeftovers,
+    CookedMealCreate,
+    CookedPantryOutcome,
+    PantryOutcome,
+)
 from mealie.schema.household.pantry import PantryItemCreate, PantryItemOut, PantryItemUpdate, PantryLocation
 from mealie.schema.recipe.recipe_ingredient import IngredientUnit
+from mealie.services.claude_context.cooked_meal_service import (
+    LEFTOVER_PORTIONS_MAX,
+    LEFTOVER_PORTIONS_MIN,
+    AlreadyCookedError,
+    CookedMealService,
+    PantryItemNotInRecipeError,
+)
 from mealie.services.claude_context.pantry_service import PantryItemsNotChecked, PantryService
+from mealie.services.claude_context.recipe_feedback_service import FutureMadeOnError
 
 _ITEM_FIELDS = frozenset(PantryItemCreate.model_fields)
 # `unit` is accepted as a unit name (or abbreviation) and resolved to `unit_id`.
 _ADD_KEYS = _ITEM_FIELDS | {"unit"}
 _UPDATE_KEYS = _ADD_KEYS | {"id"}
 _SHELF_LIFE_KEYS = ("shelf_life_days_opened", "shelf_life_days_unopened")
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_OUTCOMES = ", ".join(o.value for o in PantryOutcome)
+_PANTRY_OUTCOME_KEYS = frozenset({"id", "outcome"})
 
 
 def _today() -> date:
@@ -267,6 +286,108 @@ def put_away_impl(ctx: McpContext, list_id: str, item_ids: list[str] | None = No
     }
 
 
+def _parse_iso_date(name: str, value: str | None) -> date | None:
+    if value is None:
+        return None
+    try:
+        # date.fromisoformat also takes 20261020 and week dates; only YYYY-MM-DD is promised
+        if not _ISO_DATE.fullmatch(value):
+            raise ValueError(value)
+        return date.fromisoformat(value)
+    except ValueError as e:
+        raise McpToolError(f"{name} must be an ISO date (YYYY-MM-DD), got {value!r}") from e
+
+
+def _parse_outcomes(pantry: list[dict[str, Any]] | None) -> list[CookedPantryOutcome]:
+    outcomes: list[CookedPantryOutcome] = []
+    for n, entry in enumerate(pantry or []):
+        where = f"pantry[{n}]"
+        fields = _check_keys(entry, _PANTRY_OUTCOME_KEYS, where)
+        if "id" not in fields or "outcome" not in fields:
+            raise McpToolError(f"{where}: needs id and outcome ({_OUTCOMES})")
+        try:
+            outcome = PantryOutcome(fields["outcome"])
+        except ValueError as e:
+            raise McpToolError(f"{where}: outcome must be one of {_OUTCOMES}, got {fields['outcome']!r}") from e
+        outcomes.append(CookedPantryOutcome(pantry_item_id=_parse_id("pantry_item", fields["id"]), outcome=outcome))
+    return outcomes
+
+
+def _parse_leftovers(portions: int | None, location: str | None, use_by: str | None) -> CookedLeftovers | None:
+    use_by_date = _parse_iso_date("leftover_use_by", use_by)
+    if portions is None:
+        if location is not None or use_by_date is not None:
+            raise McpToolError("leftover_location and leftover_use_by need leftover_portions")
+        return None
+    if isinstance(portions, bool) or not isinstance(portions, int):
+        raise McpToolError(f"leftover_portions must be a whole number, got {portions!r}")
+    if not LEFTOVER_PORTIONS_MIN <= portions <= LEFTOVER_PORTIONS_MAX:
+        raise McpToolError(f"leftover_portions must be {LEFTOVER_PORTIONS_MIN}-{LEFTOVER_PORTIONS_MAX}, got {portions}")
+    if location is not None and location not in ("fridge", "freezer"):
+        raise McpToolError(f"leftover_location must be fridge or freezer, got {location!r}")
+    return CookedLeftovers(portions=portions, location=location or "fridge", use_by=use_by_date)  # type: ignore[arg-type]
+
+
+def record_meal_cooked_impl(
+    ctx: McpContext,
+    recipe: str,
+    cooked_on: str | None = None,
+    meal_plan_entry_id: int | None = None,
+    pantry: list[dict[str, Any]] | None = None,
+    leftover_portions: int | None = None,
+    leftover_location: str | None = None,
+    leftover_use_by: str | None = None,
+) -> dict[str, Any]:
+    # validate every argument before the first write
+    day = _parse_iso_date("cooked_on", cooked_on) or _today()
+    outcomes = _parse_outcomes(pantry)
+    leftovers = _parse_leftovers(leftover_portions, leftover_location, leftover_use_by)
+    found = _find_recipe(ctx, recipe)
+    if found is None:
+        raise not_found("recipe", recipe)
+    names = {item.id: item.name for item in ctx.repos.pantry_items.ordered()}
+
+    service = CookedMealService(ctx.repos, ctx.user, ctx.household)
+    try:
+        result = service.record(
+            CookedMealCreate(
+                recipe_id=found.id,
+                cooked_on=day,
+                meal_plan_entry_id=meal_plan_entry_id,
+                pantry=outcomes,
+                leftovers=leftovers,
+            ),
+            today=_today(),
+        )
+    except FutureMadeOnError as e:
+        raise McpToolError(f"cooked_on is in the future: {e}") from e
+    except (AlreadyCookedError, PantryItemNotInRecipeError, NoEntryFound) as e:
+        raise McpToolError(str(e)) from e
+
+    entry = result.meal_plan_entry
+    leftover = result.leftover
+    return {
+        "meal_plan_entry": {
+            "id": entry.id,
+            "date": entry.date.isoformat(),
+            "title": entry.title or (entry.recipe.name if entry.recipe else ""),
+        }
+        if entry
+        else None,
+        "removed": [names[item_id] for item_id in result.removed_item_ids if item_id in names],
+        "kept": [item.name for item in result.kept_items],
+        "leftover": {
+            "id": str(leftover.id),
+            "name": leftover.name,
+            "portions": leftover.quantity,
+            "location": leftover.location.value,
+            "use_by": leftover.use_by.isoformat() if leftover.use_by else None,
+        }
+        if leftover
+        else None,
+    }
+
+
 # ---------------------------------------------------------------------- tools
 
 
@@ -314,3 +435,42 @@ async def put_away_shopping_items(list_id: str, item_ids: list[str] | None = Non
     it. Returns {created, merged, removed_item_ids}, pantry items shaped as in get_pantry (dates ISO
     YYYY-MM-DD)."""
     return await run_in_context(put_away_impl, list_id, item_ids)
+
+
+@mcp_server.tool()
+@require_scope("pantry:write")
+async def record_meal_cooked(
+    recipe: str,
+    cooked_on: str | None = None,
+    meal_plan_entry_id: int | None = None,
+    pantry: list[dict[str, Any]] | None = None,
+    leftover_portions: int | None = None,
+    leftover_location: Literal["fridge", "freezer"] | None = None,
+    leftover_use_by: str | None = None,
+) -> dict[str, Any]:
+    """Record that a meal was cooked. Call it when the user says a meal was cooked ("we had the carbonara
+    tonight"); check get_recent_meals first so a meal is not recorded twice (a second recording for the same
+    recipe and day is refused). `recipe` is a slug or id; `cooked_on` is an ISO date YYYY-MM-DD (default
+    today, at most tomorrow). It marks the matching meal plan entry done (the household's not-yet-done entry
+    for this recipe on that day or the day before, or `meal_plan_entry_id`) and moves the recipe's last made
+    date forward. Ask the user about the `in_pantry` items that get_recipe lists and about leftovers, unless
+    their own instructions say otherwise; nothing in the pantry changes without an explicit answer.
+    pantry: [{id, outcome: "used_up"|"some_left"}] for items listed in get_recipe's in_pantry: used_up removes
+    the item, some_left keeps it (and sets opened_on to the cooking date if it was not opened). Leave an item
+    out to leave it alone. leftover_portions (1-50, get_recipe's suggested_leftover_portions is a starting
+    point) adds a "Leftover <recipe>" pantry item in leftover_location (fridge, default, or freezer) with
+    leftover_use_by (ISO date; default 3 days after cooking for the fridge, 90 for the freezer). Call
+    record_recipe_feedback only if the user said how it went. Returns {meal_plan_entry: {id, date, title} or
+    null, removed: [names], kept: [names], leftover: {id, name, portions, location, use_by} or null};
+    meal_plan_entry null means no plan entry was found, which is not an error. Nothing is written when an
+    argument is refused."""
+    return await run_in_context(
+        record_meal_cooked_impl,
+        recipe,
+        cooked_on,
+        meal_plan_entry_id,
+        pantry,
+        leftover_portions,
+        leftover_location,
+        leftover_use_by,
+    )

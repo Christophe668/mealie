@@ -12,7 +12,7 @@ from mealie.mcp import auth, context
 from mealie.mcp.errors import McpToolError
 from mealie.mcp.scopes import ALL_SCOPES
 from mealie.mcp.tools import pantry as pantry_tools
-from mealie.mcp.tools.pantry import get_pantry, put_away_shopping_items, update_pantry
+from mealie.mcp.tools.pantry import get_pantry, put_away_shopping_items, record_meal_cooked, update_pantry
 from mealie.schema.household.group_shopping_list import ShoppingListItemCreate, ShoppingListSave
 from mealie.schema.household.pantry import PantryItemCreate, PantryLocation
 from mealie.schema.recipe.recipe_ingredient import SaveIngredientFood, SaveIngredientUnit
@@ -389,3 +389,149 @@ async def test_update_pantry_race_reports_the_item_id(
 
     with pytest.raises(McpToolError, match=f"^pantry_item not found: {item_id}$"):
         await update_pantry(update=[{"id": item_id, "note": "x"}])
+
+
+# ---------------------------------------------------------------------- record_meal_cooked
+
+
+def _cookable(user: TestUser, servings: float = 0):
+    from mealie.schema.recipe.recipe import Recipe
+    from mealie.schema.recipe.recipe_ingredient import RecipeIngredient
+
+    food = user.repos.ingredient_foods.create(SaveIngredientFood(name=random_string(10), group_id=user.group_id))
+    recipe = user.repos.recipes.create(
+        Recipe(
+            name=random_string(10),
+            user_id=user.user_id,
+            group_id=user.group_id,
+            household_id=user.household_id,
+            recipe_servings=servings,
+            recipe_ingredient=[RecipeIngredient(note="", food=food, quantity=1)],
+        )
+    )
+    item = PantryService(user.repos).add_item(PantryItemCreate(name=food.name, food_id=food.id))[0]
+    return recipe, food, item
+
+
+@pytest.mark.asyncio
+async def test_record_meal_cooked_happy_path(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    from mealie.mcp.tools.recipes import get_recipe
+    from mealie.schema.meal_plan.new_meal import SavePlanEntry
+
+    user = unique_user_fn_scoped
+    recipe, food, item = _cookable(user, servings=6)
+    entry = user.repos.meals.create(
+        SavePlanEntry(date=TODAY, recipe_id=recipe.id, group_id=user.group_id, user_id=user.user_id)
+    )
+    _as_user(monkeypatch, session, user, scopes=[*SCOPES, "recipes:read"])
+
+    shown = await get_recipe(recipe.slug)
+    assert [i["id"] for i in shown["in_pantry"]] == [str(item.id)]
+    assert set(shown["in_pantry"][0]) == {"id", "name", "quantity", "unit", "location", "opened_on", "use_by"}
+    assert isinstance(shown["suggested_leftover_portions"], int)
+
+    result = await record_meal_cooked(
+        recipe.slug,
+        pantry=[{"id": str(item.id), "outcome": "used_up"}],
+        leftover_portions=2,
+        leftover_location="freezer",
+    )
+
+    assert result["meal_plan_entry"] == {"id": entry.id, "date": TODAY.isoformat(), "title": recipe.name}
+    assert result["removed"] == [food.name]
+    assert result["kept"] == []
+    assert result["leftover"]["name"] == f"Leftover {recipe.name}"
+    assert result["leftover"]["portions"] == 2
+    assert result["leftover"]["location"] == "freezer"
+    assert result["leftover"]["use_by"] == (TODAY + timedelta(days=90)).isoformat()
+    assert not any(i["id"] == str(item.id) for i in (await get_pantry())["items"])
+
+
+@pytest.mark.asyncio
+async def test_record_meal_cooked_without_entry_and_twice(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe, _, _ = _cookable(user)
+    _as_user(monkeypatch, session, user)
+
+    result = await record_meal_cooked(recipe.slug)
+    assert result["meal_plan_entry"] is None
+    assert result["leftover"] is None
+
+    # a second recording is caught through the plan entry marked cooked
+    from mealie.schema.meal_plan.new_meal import SavePlanEntry
+
+    user.repos.meals.create(
+        SavePlanEntry(date=TODAY, recipe_id=recipe.id, group_id=user.group_id, user_id=user.user_id)
+    )
+    await record_meal_cooked(recipe.slug)
+    with pytest.raises(McpToolError, match="already recorded as cooked on"):
+        await record_meal_cooked(recipe.slug)
+
+
+@pytest.mark.asyncio
+async def test_record_meal_cooked_requires_scope(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    _as_user(monkeypatch, session, unique_user_fn_scoped, scopes=["recipes:read"])
+    with pytest.raises(McpToolError, match="missing required scope: pantry:write"):
+        await record_meal_cooked("anything")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"pantry": [{"id": str(uuid4()), "outcome": "gone"}]}, "outcome must be one of used_up, some_left"),
+        ({"pantry": [{"id": str(uuid4())}]}, "needs id and outcome"),
+        ({"cooked_on": "yesterday"}, "cooked_on must be an ISO date"),
+        ({"leftover_portions": 0}, "leftover_portions must be 1-50"),
+        ({"leftover_use_by": "2026-11-01"}, "need leftover_portions"),
+        ({"leftover_portions": 1, "leftover_use_by": "soon"}, "leftover_use_by must be an ISO date"),
+    ],
+)
+async def test_record_meal_cooked_refuses_bad_arguments_before_writing(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser, kwargs: dict, message: str
+):
+    user = unique_user_fn_scoped
+    recipe, _, _ = _cookable(user)
+    _as_user(monkeypatch, session, user)
+
+    with pytest.raises(McpToolError, match=message):
+        await record_meal_cooked(recipe.slug, **kwargs)
+    # nothing was written: the meal can still be recorded
+    assert (await record_meal_cooked(recipe.slug))["meal_plan_entry"] is None
+
+
+@pytest.mark.asyncio
+async def test_record_meal_cooked_item_not_in_recipe(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe, _, _ = _cookable(user)
+    other = _add(user, name=random_string(12))
+    _as_user(monkeypatch, session, user)
+
+    with pytest.raises(McpToolError, match="pantry items not in this recipe"):
+        await record_meal_cooked(recipe.slug, pantry=[{"id": other, "outcome": "used_up"}])
+
+
+@pytest.mark.asyncio
+async def test_record_meal_cooked_schema():
+    from mealie.mcp.server import mcp_server
+
+    tools = {tool.name: tool for tool in await mcp_server.list_tools()}
+    schema = tools["record_meal_cooked"].input_schema
+    assert set(schema["properties"]) == {
+        "recipe",
+        "cooked_on",
+        "meal_plan_entry_id",
+        "pantry",
+        "leftover_portions",
+        "leftover_location",
+        "leftover_use_by",
+    }
+    assert schema["required"] == ["recipe"]

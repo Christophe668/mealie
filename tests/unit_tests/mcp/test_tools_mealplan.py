@@ -206,3 +206,26 @@ async def test_recent_meals_and_mealplan_carry_last_verdict(
         rated: "loved",
         plain: None,
     }
+
+
+@pytest.mark.asyncio
+async def test_entries_show_cooked(
+    monkeypatch: pytest.MonkeyPatch, session: Session, api_client: TestClient, unique_user_fn_scoped: TestUser
+):
+    from mealie.services.claude_context.cooked_meal_service import CookedMealService
+
+    user = unique_user_fn_scoped
+    slug = _create_recipe(api_client, user)
+    _as_user(monkeypatch, session, user)
+    today = _today()
+    created = await add_mealplan_entries([MealplanEntryIn(date=today, recipe_slug=slug)])
+    entry_id = created["created"][0]["id"]
+    assert (await get_mealplan(today, today))["entries"][0]["cooked"] is False
+
+    private_user = user.repos.users.get_one(user.user_id)
+    household = user.repos.households.get_one(user.household_id)
+    assert private_user is not None and household is not None
+    CookedMealService(user.repos, private_user, household).mark_entry(entry_id, today)
+
+    assert (await get_mealplan(today, today))["entries"][0]["cooked"] is True
+    assert (await get_recent_meals(days=1))["entries"][0]["cooked"] is True
