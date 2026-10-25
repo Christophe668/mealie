@@ -138,7 +138,7 @@ class CookedMealService(BaseService):
         The scale is the given one, else the matching entry's `recipe_scale`, else 1.
         """
         recipe = self._get_recipe_or_raise(recipe_id)
-        entry = self.find_entry(recipe.id, cooked_on)
+        entry = self.find_entry(recipe_id, cooked_on)
         if scale is None:
             scale = entry.recipe_scale if entry else 1.0
         return PantryCheckOut(
@@ -164,8 +164,8 @@ class CookedMealService(BaseService):
                 f"cooked_on cannot be later than {latest.isoformat()}, got {data.cooked_on.isoformat()}."
             )
         recipe = self._get_recipe_or_raise(data.recipe_id)
-        self._refuse_if_already_cooked(recipe.id, data.cooked_on)
-        entry = self._entry_to_mark(recipe.id, data)
+        self._refuse_if_already_cooked(data.recipe_id, data.cooked_on)
+        entry = self._entry_to_mark(data.recipe_id, data)
         outcomes = self._checked_outcomes(recipe, data)
         if data.leftovers is not None:
             self._check_leftovers(data.leftovers)

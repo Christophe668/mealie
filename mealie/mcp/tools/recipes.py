@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -10,7 +9,7 @@ from mealie.mcp.auth import require_scope
 from mealie.mcp.context import McpContext, cross_household_repos
 from mealie.mcp.errors import McpToolError, not_found
 from mealie.mcp.server import mcp_server
-from mealie.mcp.tools import run_in_context
+from mealie.mcp.tools import _clock, run_in_context
 from mealie.mcp.tools._summaries import (
     feedback_dict,
     feedback_service,
@@ -165,8 +164,9 @@ def _find_recipe(ctx: McpContext, slug_or_id: str) -> Recipe | None:
 
 def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
     recipe = _find_recipe(ctx, slug_or_id)
-    if recipe is None:
+    if recipe is None or recipe.id is None:
         raise not_found("recipe", slug_or_id)
+    recipe_id = recipe.id
 
     service = feedback_service(ctx)
     feedback = service.list(recipe.id, page=1, per_page=RECIPE_FEEDBACK_LIMIT).items
@@ -174,8 +174,7 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
     # link rows have no stored order (PostgreSQL returns them in any order):
     # list them as the recipe lists its ingredients
     position = {str(i.reference_id): n for n, i in enumerate(recipe.recipe_ingredient)}
-    today = datetime.now().astimezone().date()
-    check = CookedMealService(ctx.repos, ctx.user, ctx.household).pantry_check(recipe.id, today)
+    check = CookedMealService(ctx.repos, ctx.user, ctx.household).pantry_check(recipe_id, _clock.today())
     return {
         "id": str(recipe.id),
         "name": recipe.name,
@@ -281,6 +280,8 @@ async def get_recipe(slug_or_id: str) -> dict[str, Any]:
     """Fetch one recipe in full by slug or id (as returned by search_recipes): servings, times,
     ingredients, instructions, tags, categories, tools, notes, source URL and the Mealie page URL,
     plus this household's `feedback` (latest 5, newest first) and `feedback_summary` (last verdict,
-    last made on, counts per verdict; null when there is none). Use it before planning or shopping
+    last made on, counts per verdict; null when there is none). Also `in_pantry` (the household's pantry
+    items matching the recipe's foods: id, name, quantity, unit, location, opened_on, use_by) and
+    `suggested_leftover_portions`; these feed record_meal_cooked. Use it before planning or shopping
     for a recipe."""
     return await run_in_context(get_recipe_impl, slug_or_id)

@@ -1,6 +1,6 @@
 import re
 from collections import Counter
-from datetime import date, datetime
+from datetime import date
 from typing import Any, Literal
 from uuid import UUID
 
@@ -11,7 +11,7 @@ from mealie.mcp.auth import require_scope
 from mealie.mcp.context import McpContext
 from mealie.mcp.errors import McpToolError, not_found
 from mealie.mcp.server import mcp_server
-from mealie.mcp.tools import run_in_context
+from mealie.mcp.tools import _clock, run_in_context
 from mealie.mcp.tools.recipes import _find_recipe
 from mealie.schema.household.cooked_meal import (
     CookedLeftovers,
@@ -39,11 +39,6 @@ _SHELF_LIFE_KEYS = ("shelf_life_days_opened", "shelf_life_days_unopened")
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _OUTCOMES = ", ".join(o.value for o in PantryOutcome)
 _PANTRY_OUTCOME_KEYS = frozenset({"id", "outcome"})
-
-
-def _today() -> date:
-    """Today in server-local time; a function so tests can freeze it."""
-    return datetime.now().astimezone().date()
 
 
 def _parse_id(kind: str, value: str) -> UUID:
@@ -107,7 +102,7 @@ def _parse_location(location: str | None) -> PantryLocation | None:
 
 
 def _pantry_items(ctx: McpContext, location: PantryLocation | None = None) -> list[dict[str, Any]]:
-    today = _today()
+    today = _clock.today()
     return [_item_dict(item, today) for item in PantryService(ctx.repos).list_items(location)]
 
 
@@ -269,7 +264,7 @@ def put_away_impl(ctx: McpContext, list_id: str, item_ids: list[str] | None = No
     if ctx.repos.group_shopping_lists.get_one(list_uuid) is None:
         raise not_found("shopping_list", list_id)
     ids = None if item_ids is None else [_parse_id("shopping_list_item", item_id) for item_id in item_ids]
-    today = _today()
+    today = _clock.today()
     try:
         result = PantryService(ctx.repos).put_away(list_uuid, ids, today=today)
     except PantryItemsNotChecked as e:
@@ -339,7 +334,7 @@ def record_meal_cooked_impl(
     leftover_use_by: str | None = None,
 ) -> dict[str, Any]:
     # validate every argument before the first write
-    day = _parse_iso_date("cooked_on", cooked_on) or _today()
+    day = _parse_iso_date("cooked_on", cooked_on) or _clock.today()
     outcomes = _parse_outcomes(pantry)
     leftovers = _parse_leftovers(leftover_portions, leftover_location, leftover_use_by)
     found = _find_recipe(ctx, recipe)
@@ -357,11 +352,15 @@ def record_meal_cooked_impl(
                 pantry=outcomes,
                 leftovers=leftovers,
             ),
-            today=_today(),
+            today=_clock.today(),
         )
     except FutureMadeOnError as e:
         raise McpToolError(f"cooked_on is in the future: {e}") from e
-    except (AlreadyCookedError, PantryItemNotInRecipeError, NoEntryFound) as e:
+    except AlreadyCookedError as e:
+        raise McpToolError(
+            f"{e}. If the user wants to change the pantry or add leftovers anyway, use update_pantry."
+        ) from e
+    except (PantryItemNotInRecipeError, NoEntryFound) as e:
         raise McpToolError(str(e)) from e
 
     entry = result.meal_plan_entry

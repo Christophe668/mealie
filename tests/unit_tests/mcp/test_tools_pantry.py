@@ -11,7 +11,7 @@ from mealie.core.exceptions import NoEntryFound
 from mealie.mcp import auth, context
 from mealie.mcp.errors import McpToolError
 from mealie.mcp.scopes import ALL_SCOPES
-from mealie.mcp.tools import pantry as pantry_tools
+from mealie.mcp.tools import _clock
 from mealie.mcp.tools.pantry import get_pantry, put_away_shopping_items, record_meal_cooked, update_pantry
 from mealie.schema.household.group_shopping_list import ShoppingListItemCreate, ShoppingListSave
 from mealie.schema.household.pantry import PantryItemCreate, PantryLocation
@@ -32,7 +32,7 @@ def _as_user(
     monkeypatch.setattr(context, "get_access_token", lambda: token)
     monkeypatch.setattr(auth, "get_access_token", lambda: token)
     monkeypatch.setattr(context, "session_factory", lambda: contextlib.nullcontext(session))
-    monkeypatch.setattr(pantry_tools, "_today", lambda: TODAY)
+    monkeypatch.setattr(_clock, "today", lambda: TODAY)
 
 
 def _add(user: TestUser, **fields) -> str:
@@ -450,6 +450,22 @@ async def test_record_meal_cooked_happy_path(
 
 
 @pytest.mark.asyncio
+async def test_get_recipe_in_pantry_comes_from_callers_household(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user: TestUser, h2_user: TestUser
+):
+    from mealie.mcp.tools.recipes import get_recipe
+
+    # a recipe made in another household of the same group; the caller's own pantry holds the food
+    recipe, food, _ = _cookable(h2_user)
+    mine = PantryService(unique_user.repos).add_item(PantryItemCreate(name=food.name, food_id=food.id))[0]
+    _as_user(monkeypatch, session, unique_user, scopes=[*SCOPES, "recipes:read"])
+
+    shown = await get_recipe(recipe.slug)
+
+    assert [i["id"] for i in shown["in_pantry"]] == [str(mine.id)]
+
+
+@pytest.mark.asyncio
 async def test_record_meal_cooked_without_entry_and_twice(
     monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
 ):
@@ -468,7 +484,7 @@ async def test_record_meal_cooked_without_entry_and_twice(
         SavePlanEntry(date=TODAY, recipe_id=recipe.id, group_id=user.group_id, user_id=user.user_id)
     )
     await record_meal_cooked(recipe.slug)
-    with pytest.raises(McpToolError, match="already recorded as cooked on"):
+    with pytest.raises(McpToolError, match=r"already recorded as cooked on.*use update_pantry"):
         await record_meal_cooked(recipe.slug)
 
 

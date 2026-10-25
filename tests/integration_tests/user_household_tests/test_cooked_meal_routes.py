@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -64,6 +65,15 @@ def test_pantry_check(api_client: TestClient, unique_user_fn_scoped: TestUser):
         headers=user.token,
     )
     assert response.status_code == 200
+
+
+def test_pantry_check_recipe_outside_group_is_404(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    response = api_client.get(
+        api_routes.households_cooking_recipe_id_pantry_check(str(uuid4())),
+        params={"cooked_on": TODAY.isoformat()},
+        headers=unique_user_fn_scoped.token,
+    )
+    assert response.status_code == 404
 
 
 def test_record_and_conflict(api_client: TestClient, unique_user_fn_scoped: TestUser):
