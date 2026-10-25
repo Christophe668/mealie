@@ -57,7 +57,7 @@ cloudflared tunnel run --url http://localhost:9925 <tunnel-name>
 
 The connector offers these tools, each behind the permission in brackets:
 
-- Recipes: `search_recipes`, `get_recipe` (`recipes:read`); `create_recipe`, `update_recipe`, `import_recipe_from_url` (`recipes:write`).
+- Recipes: `search_recipes`, `get_recipe` (`recipes:read`); `create_recipe`, `update_recipe`, `import_recipe_from_url`, `set_recipe_image` (`recipes:write`).
 - Meal plan: `get_mealplan`, `get_recent_meals` (`recipes:read`); `add_mealplan_entries`, `remove_mealplan_entry` (`mealplan:write`).
 - Shopping: `get_shopping_list` (`recipes:read`); `create_shopping_list_from_mealplan`, `add_shopping_items`, `check_shopping_items` (`shopping:write`).
 - Pantry: `get_pantry` (`recipes:read`); `update_pantry`, `put_away_shopping_items` (`pantry:write`).
@@ -87,8 +87,9 @@ Claude can put recipes into Mealie itself, owned by you and in your household, a
 - `create_recipe` saves a recipe Claude wrote: name, servings, times, ingredients, steps (with section titles and timers), tags, categories, tools and notes. Ingredients are stored as quantity, unit and food, so the shopping list, the pantry and scaling work on them. Claude can send them already structured or as plain lines like "200 g spaghetti", which Mealie's own ingredient parser splits; a line it can't split, like "salt to taste", is kept as a note. Unknown foods, units, tags, categories and tools are created; a food also matches its simple singular or plural ("egg" and "eggs" are one food). If recipes with the same name exist, the answer lists them so Claude can mention them.
 - `import_recipe_from_url` imports a web page with Mealie's own importer (the same one as importing a URL in Mealie), downloads its image and parses its ingredients straight away. A page already imported into your group is not imported twice: Claude gets the existing recipe back. A recipe Claude adapted from that page counts as imported from it.
 - `update_recipe` changes an existing recipe: only the fields sent change, and a list that is sent (ingredients, steps, tags...) replaces the old one. It keeps the step timers, sections and step-to-ingredient links that the new lists still match. `scale_to_servings` scales every quantity ("make the carbonara for 4"); lines without a quantity are left as they are and listed. Claude can edit what you could edit in Mealie: a locked recipe only if it is yours (or you are an admin), and another household's recipe only when that household allows it.
+- `set_recipe_image` gives a recipe a photo found online, replacing the current one. Claude passes a direct link to the picture (from an image search or the page's image); Mealie downloads it, checks it is a real picture and makes its sizes, the same way as setting an image from a URL in Mealie. Only public links are fetched (never an address on your home network), up to 15 MB. If the download fails, the recipe keeps its current photo and Claude can try another picture.
 
-A typical evening: you say what you feel like, Claude writes the recipe, saves it with `create_recipe` and adds it to tonight with `add_mealplan_entries`. No reconnect is needed: these tools use `recipes:write`, which existing connections already have.
+A typical evening: you say what you feel like, Claude writes the recipe, saves it with `create_recipe`, gives it a photo with `set_recipe_image` and adds it to tonight with `add_mealplan_entries`. No reconnect is needed: these tools use `recipes:write`, which existing connections already have.
 
 **Confirming.** Claude follows your own instructions about confirming changes, for every write tool. If you haven't said anything, it shows what it will write and asks first. That way your own claude.ai skills and instructions decide: one that says "save recipes without asking" makes recipe writing a single step, and one that says "always show me first" keeps the check. Mealie doesn't force an extra yes on top.
 

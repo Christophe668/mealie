@@ -2466,3 +2466,152 @@ async def test_singular_food_matches_a_plural_food_an_import_created(
     old = [i.food.id for i in _stored(user, imported["slug"]).recipe_ingredient if i.food]
     new = [i.food.id for i in _stored(user, written["slug"]).recipe_ingredient if i.food]
     assert new == old and len(new) == 2
+
+
+# ---------------------------------------------------------------------- set_recipe_image
+
+
+def _serve_image(monkeypatch: pytest.MonkeyPatch, content: bytes, content_type: str) -> list[str]:
+    """Mealie's image fetch returns `content` with `content_type` for any URL (no network); returns
+    the URLs fetched."""
+    fetched: list[str] = []
+
+    async def fake_fetch(url: str, **_: Any) -> FetchResult:
+        fetched.append(url)
+        return FetchResult(content, 200, url, httpx.Headers({"content-type": content_type}), None)
+
+    monkeypatch.setattr(safehttp, "resilient_fetch", fake_fetch)
+    return fetched
+
+
+def _image_state(user: TestUser, recipe: Recipe) -> tuple[Any, bytes | None]:
+    """The recipe's image key and its stored original, which a refused call must leave alone."""
+    user.repos.session.expire_all()
+    stored = cross_group_recipes(user).get_one(recipe.id, "id")
+    assert stored is not None
+    original = RecipeDataService(recipe.id).dir_image / "original.webp"
+    return stored.image, original.read_bytes() if original.exists() else None
+
+
+@pytest.mark.asyncio
+async def test_set_recipe_image(monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(monkeypatch, session, user)
+    assert _image_state(user, recipe) == (None, None)
+    url = "https://images.example.com/carbonara.jpg?w=1200"
+    fetched = _serve_image(monkeypatch, test_data.images_test_image_1.read_bytes(), "image/jpeg")
+
+    result = await recipe_write.set_recipe_image(slug_or_id=str(recipe.id), image_url=url)
+
+    assert fetched == [url]
+    assert result["slug"] == recipe.slug and result["image_set"] is True
+    assert result["url"].endswith(f"/r/{recipe.slug}")
+    key, original = _image_state(user, recipe)
+    assert key and original
+    for variant in ("original.webp", "min-original.webp", "tiny-original.webp"):
+        assert (RecipeDataService(recipe.id).dir_image / variant).exists()
+
+    # a second image replaces the first
+    _serve_image(monkeypatch, test_data.images_test_image_2.read_bytes(), "image/png")
+    await recipe_write.set_recipe_image(slug_or_id=recipe.slug, image_url="https://images.example.com/other.png")
+    new_key, new_original = _image_state(user, recipe)
+    assert new_key and new_key != key and new_original != original
+
+
+@pytest.mark.asyncio
+async def test_set_recipe_image_failures_leave_the_image(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(monkeypatch, session, user)
+    _serve_image(monkeypatch, test_data.images_test_image_1.read_bytes(), "image/jpeg")
+    await recipe_write.set_recipe_image(slug_or_id=recipe.slug, image_url="https://images.example.com/a.jpg")
+    before = _image_state(user, recipe)
+    url = "https://images.example.com/b.jpg"
+
+    async def call() -> None:
+        await recipe_write.set_recipe_image(slug_or_id=recipe.slug, image_url=url)
+
+    # a web page, not a picture
+    _serve_image(monkeypatch, b"<html><body>A photo</body></html>", "text/html; charset=utf-8")
+    with pytest.raises(McpToolError, match="That link is not an image"):
+        await call()
+    # an image type Mealie doesn't use
+    _serve_image(monkeypatch, b"<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml")
+    with pytest.raises(McpToolError, match="can't use svg"):
+        await call()
+    # labelled as an image, but isn't one
+    _serve_image(monkeypatch, b"not really a jpeg", "image/jpeg")
+    with pytest.raises(McpToolError, match="isn't a picture Mealie can read"):
+        await call()
+
+    # the site refused, or the picture is too large
+    async def refused(url: str, **_: Any) -> None:
+        return None
+
+    monkeypatch.setattr(safehttp, "resilient_fetch", refused)
+    with pytest.raises(McpToolError, match="Couldn't download the image from images.example.com"):
+        await call()
+
+    async def too_large(url: str, **_: Any) -> None:
+        raise safehttp.ResponseTooLargeError()
+
+    monkeypatch.setattr(safehttp, "resilient_fetch", too_large)
+    with pytest.raises(McpToolError, match="larger than 15 MB"):
+        await call()
+
+    # refused before anything is fetched
+    for bad in ("ftp://example.com/a.jpg", "images.example.com/a.jpg", "", "https://exa mple.com/a.jpg", 42):
+        with pytest.raises(McpToolError, match="image_url must be a web link"):
+            await recipe_write.set_recipe_image(slug_or_id=recipe.slug, image_url=bad)
+    with pytest.raises(McpToolError, match="slug_or_id must be"):
+        await recipe_write.set_recipe_image(slug_or_id="  ", image_url=url)
+    with pytest.raises(McpToolError, match="recipe not found"):
+        await recipe_write.set_recipe_image(slug_or_id=f"no-such-{random_string(8)}", image_url=url)
+
+    assert _image_state(user, recipe) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", ["http://127.0.0.1/photo.jpg", "http://192.168.1.51:9925/photo.jpg"])
+async def test_set_recipe_image_blocked_address(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser, url: str
+):
+    """The real fetch (not patched): Mealie's SSRF guard refuses a local address before connecting."""
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(monkeypatch, session, user)
+
+    with pytest.raises(McpToolError, match="won't fetch that link"):
+        await recipe_write.set_recipe_image(slug_or_id=recipe.slug, image_url=url)
+
+    assert _image_state(user, recipe) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_set_recipe_image_permissions(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user: TestUser, h2_user: TestUser
+):
+    """A recipe from another household that locks edits can't get a new photo; nothing is fetched."""
+    recipe = await _new_recipe(monkeypatch, session, h2_user)
+    _as_user(monkeypatch, session, unique_user)
+    fetched = _serve_image(monkeypatch, test_data.images_test_image_1.read_bytes(), "image/jpeg")
+
+    with pytest.raises(McpToolError) as caught:
+        await recipe_write.set_recipe_image(slug_or_id=recipe.slug, image_url="https://images.example.com/a.jpg")
+
+    assert str(caught.value) == CANT_EDIT
+    assert fetched == []
+    assert _image_state(unique_user, recipe) == (None, None)
+
+    # and without recipes:write, the tool refuses
+    _as_user(monkeypatch, session, h2_user, scopes=["recipes:read"])
+    with pytest.raises(McpToolError, match="recipes:write"):
+        await recipe_write.set_recipe_image(slug_or_id=recipe.slug, image_url="https://images.example.com/a.jpg")
+
+
+@pytest.mark.asyncio
+async def test_set_recipe_image_is_registered():
+    tools = {tool.name: tool for tool in await mcp_server.list_tools()}
+
+    assert set(tools["set_recipe_image"].input_schema["properties"]) == {"slug_or_id", "image_url"}
+    assert set(tools["set_recipe_image"].input_schema["required"]) == {"slug_or_id", "image_url"}

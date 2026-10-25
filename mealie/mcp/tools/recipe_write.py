@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException
+from PIL import UnidentifiedImageError
 from pydantic import ValidationError, WithJsonSchema
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -21,7 +22,7 @@ from mealie.mcp.server import mcp_server
 from mealie.mcp.tools import run_in_context
 from mealie.mcp.tools._summaries import recipe_url
 from mealie.mcp.tools.recipes import _find_recipe, get_recipe_impl
-from mealie.pkgs import safehttp
+from mealie.pkgs import img, safehttp
 from mealie.schema.recipe.recipe import Recipe, create_recipe_slug
 from mealie.services.claude_context.recipe_writer import (
     IngredientIn,
@@ -33,7 +34,8 @@ from mealie.services.claude_context.recipe_writer import (
     StepIn,
 )
 from mealie.services.recipe.import_workflow.exceptions import NoRecipeDataError
-from mealie.services.recipe.recipe_data_service import RecipeDataService
+from mealie.services.recipe.recipe_data_service import InvalidDomainError, NotAnImageError, RecipeDataService
+from mealie.services.recipe.recipe_service import RecipeService
 from mealie.services.recipe.recipe_web_import import find_imported_recipe, import_from_web
 from mealie.services.scraper.scraped_extras import ScrapedExtras
 
@@ -273,11 +275,11 @@ async def update_recipe_impl(
 _URL_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
-def _import_url(url: Any) -> str:
+def _import_url(url: Any, field: str = "url") -> str:
     """The link to import, checked before anything is fetched: an http(s) URL with a host and a
     valid port, without spaces or control characters. The scheme is returned lower-cased (the
     scraper only recognises "http://" and "https://")."""
-    refusal = McpToolError("url must be a web link starting with http:// or https://")
+    refusal = McpToolError(f"{field} must be a web link starting with http:// or https://")
     text = url.strip() if isinstance(url, str) else ""
     if not text or any(c.isspace() for c in text) or _URL_CONTROL_CHARS.search(text):
         raise refusal
@@ -421,6 +423,61 @@ _STEP = {
     ]
 }
 _NOTE = {"type": "object", "properties": {"title": _STR, "text": _STR}, "required": ["title", "text"]}
+
+# A photo is re-encoded to webp, but the download itself needs a ceiling.
+IMAGE_MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024
+
+
+async def set_recipe_image_impl(ctx: McpContext, slug_or_id: str, image_url: str) -> dict[str, Any]:
+    """Find (group-wide) → check the user may edit it → download (Mealie's SSRF-guarded fetch, size
+    capped) → `update_recipe_image`, which validates and re-encodes the picture in a staging folder
+    before replacing the current one. Every failure leaves the recipe and its current image as they were."""
+    current = _find_recipe(ctx, slug_or_id)
+    if current is None:
+        raise not_found("recipe", slug_or_id)
+    service = RecipeService(ctx.repos, ctx.user, ctx.household, ctx.translator)
+    if not service.can_update([current.slug]):
+        raise McpToolError(CANT_EDIT)
+
+    host = urlsplit(image_url).hostname or image_url
+    unchanged = "The recipe's image was not changed."
+    try:
+        downloaded = await RecipeDataService(current.id).fetch_image(image_url, max_bytes=IMAGE_MAX_DOWNLOAD_BYTES)
+    except InvalidDomainError as e:
+        if str(e).startswith("could not resolve host"):
+            raise McpToolError(f"Couldn't reach {host}: the site doesn't exist or is down. {unchanged}") from e
+        raise McpToolError(
+            f"Mealie won't fetch that link: it points to a private or local address, or to a site the server "
+            f"blocks. {unchanged}"
+        ) from e
+    except NotAnImageError as e:
+        raise McpToolError(
+            "That link is not an image: it returned a web page or another kind of file. Send a link that "
+            f"opens the picture itself (usually ending in .jpg, .png or .webp). {unchanged}"
+        ) from e
+    except safehttp.ResponseTooLargeError as e:
+        raise McpToolError(f"That image is larger than 15 MB; pick a smaller one. {unchanged}") from e
+    if downloaded is None:
+        raise McpToolError(
+            f"Couldn't download the image from {host}: the site didn't answer or refused it. "
+            f"Try another image. {unchanged}"
+        )
+
+    content, extension = downloaded
+    if f".{extension}" not in img.IMAGE_EXTENSIONS:
+        raise McpToolError(f"Mealie can't use {extension} images; pick a JPEG, PNG or WebP. {unchanged}")
+    try:
+        service.update_recipe_image(current.slug, content, extension)
+    except UnidentifiedImageError as e:
+        raise McpToolError(f"That file isn't a picture Mealie can read. {unchanged}") from e
+    except Exception as e:
+        logger.exception(f"set_recipe_image: saving the image of {current.slug} failed")
+        ctx.session.rollback()
+        raise McpToolError(f"Mealie couldn't save the image: {_failure_reason(e)}. You can try again.") from e
+
+    url = recipe_url(ctx.user.group_slug, current.slug)
+    return {"name": current.name, "slug": current.slug, "url": url, "image_set": True}
+
 
 # "Not sent" for update_recipe's parameters, so a sent null can mean "clear". It has no JSON form,
 # so pydantic leaves it out of the tool schema (and warns, which `_register_quietly` silences).
@@ -601,3 +658,26 @@ async def import_recipe_from_url(
     if not isinstance(include_tags, bool):
         raise McpToolError("include_tags must be true or false")
     return await run_in_context(import_recipe_from_url_impl, checked, include_tags)
+
+
+@mcp_server.tool()
+@require_scope("recipes:write")
+async def set_recipe_image(
+    slug_or_id: Annotated[Any, _schema({"type": "string", "description": "the recipe's slug or id"}, optional=False)],
+    image_url: Annotated[
+        Any, _schema({"type": "string", "description": "a direct link to the image file, http(s)"}, optional=False)
+    ],
+) -> dict[str, Any]:
+    """Set a recipe's photo from an image on the web; it replaces the current photo. Mealie downloads
+    the picture and makes its sizes. Use it after create_recipe (or for any recipe without a good
+    photo), with a picture of that dish.
+    image_url must open the image itself (a .jpg, .png or .webp file, or an image CDN link), not the
+    web page that shows it: take it from image search results or from the page's image. Only public
+    http(s) links work, up to 15 MB.
+    Errors say what went wrong (not an image, too large, unreachable, a link Mealie won't fetch); the
+    recipe and its current photo are then unchanged, so you can try another image.
+    Returns the recipe's name, slug and Mealie `url`."""
+    if not isinstance(slug_or_id, str) or not slug_or_id.strip():
+        raise McpToolError("slug_or_id must be the recipe's slug or id (as search_recipes or create_recipe return it)")
+    checked = _import_url(image_url, field="image_url")
+    return await run_in_context(set_recipe_image_impl, slug_or_id.strip(), checked)
