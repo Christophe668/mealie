@@ -72,6 +72,57 @@ describe("ProfileChipInput", () => {
     expect(chips(wrapper)).toEqual(["milk", "soy"]);
   });
 
+  test("a full list keeps what did not fit in the field and says why", async () => {
+    const full = Array.from({ length: 29 }, (_, i) => `item ${i}`);
+    const wrapper = render(full);
+    const input = wrapper.find("input");
+
+    await input.setValue("last one, one too many");
+    await input.trigger("keydown", { key: "Enter" });
+
+    expect(chips(wrapper)).toHaveLength(30);
+    expect(chips(wrapper).at(-1)).toBe("last one");
+    expect((input.element as HTMLInputElement).value).toBe("one too many");
+    expect(wrapper.find(".profile-chips__hint").text()).toBe("This list is full (30 at most). Remove one to add another.");
+    expect(input.attributes("aria-describedby")).toBe(wrapper.find(".profile-chips__hint").attributes("id"));
+
+    // typing again clears the hint
+    await input.setValue("one too many!");
+    expect(wrapper.find(".profile-chips__hint").text()).toBe("");
+  });
+
+  test("an entry over 60 characters is shortened, and the field says so", async () => {
+    const wrapper = render();
+    const input = wrapper.find("input");
+
+    await input.setValue(`${"a".repeat(59)} bcd`);
+    await input.trigger("keydown", { key: "Enter" });
+
+    expect(chips(wrapper)).toEqual(["a".repeat(59)]);
+    expect(wrapper.find(".profile-chips__hint").text()).toBe("Shortened to 60 characters.");
+  });
+
+  test("Enter that confirms an input method's composition adds nothing", async () => {
+    const wrapper = render();
+    const input = wrapper.find("input");
+
+    await input.setValue("にんじん");
+    await input.trigger("keydown", { key: "Enter", isComposing: true });
+    expect(chips(wrapper)).toEqual([]);
+
+    await input.trigger("keydown", { key: "Enter" });
+    expect(chips(wrapper)).toEqual(["にんじん"]);
+  });
+
+  test("duplicates are found the way the server finds them: NFC, case and ß", async () => {
+    const wrapper = render(["Straße", "Zo\u00e9"]);
+    const input = wrapper.find("input");
+
+    await input.setValue("STRASSE, ZOE\u0301,");
+
+    expect(chips(wrapper)).toEqual(["Straße", "Zo\u00e9"]);
+  });
+
   test("the accent tone is only used when asked for", () => {
     expect(render(["peanuts"], "accent").find(".ds-chip--accent").exists()).toBe(true);
     expect(render(["olives"]).find(".ds-chip--accent").exists()).toBe(false);

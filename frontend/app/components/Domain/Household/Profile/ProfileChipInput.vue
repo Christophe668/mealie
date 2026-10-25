@@ -27,11 +27,14 @@
         :maxlength="MAX_CHIP_LENGTH * MAX_CHIPS"
         autocomplete="off"
         enterkeyhint="done"
-        @keydown.enter.prevent="commit"
-        @keydown.backspace="removeLastIfEmpty"
+        :aria-describedby="hint ? hintId : undefined"
+        @keydown.enter="onEnter"
         @blur="commit"
       >
     </div>
+    <p :id="hintId" class="profile-chips__hint" aria-live="polite">
+      {{ hint }}
+    </p>
   </div>
 </template>
 
@@ -52,9 +55,13 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ (e: "update:modelValue", value: string[]): void }>();
 
+const i18n = useI18n();
 const inputId = useId();
+const hintId = useId();
 const input = useTemplateRef<HTMLInputElement>("input");
 const text = ref("");
+/** Says why something typed was not (fully) added; cleared by the next keystroke. */
+const hint = ref("");
 
 function focus() {
   input.value?.focus();
@@ -66,28 +73,43 @@ function commit() {
     text.value = "";
     return;
   }
-  const next = addChips(props.modelValue, text.value);
-  text.value = "";
-  if (next.length !== props.modelValue.length) {
-    emit("update:modelValue", next);
+  const { chips, rest, cut } = addChips(props.modelValue, text.value);
+  // What did not fit stays in the field, so nothing typed is lost.
+  text.value = rest.join(", ");
+  hint.value = rest.length
+    ? i18n.t("household-profile.chips-full", { count: MAX_CHIPS })
+    : cut
+      ? i18n.t("household-profile.chip-cut", { count: MAX_CHIP_LENGTH })
+      : "";
+  if (chips.length !== props.modelValue.length) {
+    emit("update:modelValue", chips);
   }
 }
 
-watch(text, (value) => {
-  if (value.includes(",")) {
+/** Enter confirms an input method's composition (Japanese, Chinese…) first: only a plain Enter adds. */
+function onEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) {
+    return;
+  }
+  event.preventDefault();
+  commit();
+}
+
+const commas = (value: string) => value.split(",").length - 1;
+
+// A comma typed (or pasted) adds what is before it. Text put back by `commit` has no new comma, and shrinks.
+watch(text, (value, before) => {
+  if (commas(value) > commas(before)) {
     commit();
+  }
+  else if (value.length > before.length) {
+    hint.value = "";
   }
 });
 
 function remove(chip: string) {
   emit("update:modelValue", props.modelValue.filter(value => value !== chip));
   focus();
-}
-
-function removeLastIfEmpty() {
-  if (!text.value && props.modelValue.length) {
-    emit("update:modelValue", props.modelValue.slice(0, -1));
-  }
 }
 
 defineExpose({ focus });
@@ -166,6 +188,17 @@ defineExpose({ focus });
   font: inherit;
   font-size: var(--ds-t-2);
   outline: none;
+}
+
+.profile-chips__hint {
+  min-height: 0;
+  margin: 0;
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-1);
+}
+
+.profile-chips__hint:empty {
+  display: none;
 }
 
 .profile-chips__input::placeholder {

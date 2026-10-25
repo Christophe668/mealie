@@ -16,6 +16,15 @@ describe("alertUnreportedError", () => {
     expect(toastAlert.open).toBe(false);
   });
 
+  test("stays quiet on a validation error (422), which the interceptor already reported", () => {
+    alertUnreportedError(
+      { response: { data: { detail: [{ loc: ["body", "name"], msg: "String should have at most 60 characters" }] } } },
+      "fallback",
+    );
+
+    expect(toastAlert.open).toBe(false);
+  });
+
   test("reports a failure that carries no Mealie error body", () => {
     // e.g. a 413 raised by the web server in front of Mealie
     alertUnreportedError({ response: { data: undefined } }, "fallback");

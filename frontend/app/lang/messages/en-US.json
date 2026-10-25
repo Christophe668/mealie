@@ -1714,6 +1714,11 @@
     "favourite-cuisines": "Favorite cuisines",
     "settings-title": "Who eats here",
     "settings-text": "Diets, allergies and cooking habits Claude follows when it plans your meals.",
-    "settings-link": "Edit the household"
+    "settings-link": "Edit the household",
+    "chips-full": "This list is full ({count} at most). Remove one to add another.",
+    "chip-cut": "Shortened to {count} characters.",
+    "save-member": "Save {name}",
+    "remove-member": "Remove {name}",
+    "save-habits": "Save how we cook"
   }
 }

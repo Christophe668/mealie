@@ -16,22 +16,45 @@ export const MAX_NOTES_LENGTH = 500;
 export const MAX_MINUTES_CHOICES = [15, 20, 30, 45, 60, 90];
 
 /**
- * Adds what was typed (one entry, or several separated by commas) to `chips`: trimmed, empty entries dropped,
- * case-insensitive duplicates dropped keeping the first spelling, each entry cut to 60 characters, 30 at most.
+ * The form two entries are compared in, close to the server's `casefold()` for the common cases: NFC, lower
+ * case, and "ß" as "ss" ("Straße" and "STRASSE" are the same entry).
  */
-export function addChips(chips: string[], text: string): string[] {
+export function chipKey(value: string): string {
+  return value.normalize("NFC").toLocaleLowerCase().replace(/ß/g, "ss");
+}
+
+export interface AddChipsResult {
+  chips: string[];
+  /** Entries left out because the list is full; the field keeps them so nothing typed is lost. */
+  rest: string[];
+  /** An entry was cut to 60 characters. */
+  cut: boolean;
+}
+
+/**
+ * Adds what was typed (one entry, or several separated by commas) to `chips`: trimmed, empty entries dropped,
+ * duplicates dropped keeping the first spelling, each entry cut to 60 characters, 30 entries at most.
+ */
+export function addChips(chips: string[], text: string): AddChipsResult {
   const result = [...chips];
-  const seen = new Set(result.map(chip => chip.toLocaleLowerCase()));
+  const rest: string[] = [];
+  let cut = false;
+  const seen = new Set(result.map(chipKey));
   for (const part of text.split(",")) {
-    const value = part.trim().slice(0, MAX_CHIP_LENGTH);
-    const key = value.toLocaleLowerCase();
-    if (!value || seen.has(key) || result.length >= MAX_CHIPS) {
+    const trimmed = part.trim();
+    const value = trimmed.slice(0, MAX_CHIP_LENGTH).trim();
+    if (!value || seen.has(chipKey(value))) {
       continue;
     }
-    seen.add(key);
+    if (result.length >= MAX_CHIPS) {
+      rest.push(trimmed);
+      continue;
+    }
+    cut ||= value.length < trimmed.length;
+    seen.add(chipKey(value));
     result.push(value);
   }
-  return result;
+  return { chips: result, rest, cut };
 }
 
 /** What a member card edits. */
@@ -66,17 +89,6 @@ export function memberPayload(draft: MemberDraft) {
   return { ...draft, name: draft.name.trim(), notes: draft.notes.trim() || null };
 }
 
-/** Only the fields that differ from `baseline`, so a save never overwrites what Claude changed meanwhile. */
-export function changedFields<T extends object>(baseline: T, draft: T): Partial<T> {
-  const changes: Partial<T> = {};
-  for (const key of Object.keys(draft) as (keyof T)[]) {
-    if (JSON.stringify(draft[key]) !== JSON.stringify(baseline[key])) {
-      changes[key] = draft[key];
-    }
-  }
-  return changes;
-}
-
 /** What the habits card edits. */
 export interface HabitsDraft {
   defaultServings: number | null;
@@ -98,8 +110,9 @@ export function habitsDraft(preferences: MealPreferencesOut | null | undefined):
   };
 }
 
-export function habitsPayload(draft: Partial<HabitsDraft>): MealPreferencesUpdate {
-  return "notes" in draft ? { ...draft, notes: draft.notes?.trim() || null } : { ...draft };
+/** The habits as the API expects them: empty notes as null. */
+export function habitsPayload(draft: HabitsDraft) {
+  return { ...draft, notes: draft.notes.trim() || null } satisfies MealPreferencesUpdate;
 }
 
 /**

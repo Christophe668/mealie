@@ -76,8 +76,12 @@ export const alert = {
  * a rejection from the web server sitting in front of Mealie, a dropped connection, a timeout -
  * arrives without one, and would otherwise leave the user with no feedback at all.
  */
-export function alertUnreportedError(error: { response?: { data?: { detail?: { message?: string } } } } | null, fallbackText: string) {
-  if (error?.response?.data?.detail?.message) {
+export function alertUnreportedError(error: { response?: { data?: { detail?: unknown } } } | null, fallbackText: string) {
+  const detail = error?.response?.data?.detail;
+  const hasMessage = !!detail && typeof detail === "object" && "message" in detail && !!detail.message;
+  // FastAPI's validation errors (422): a list of `{ loc, msg }` the interceptor already turned into a toast.
+  const hasValidationErrors = Array.isArray(detail) && detail.some(item => typeof item?.msg === "string");
+  if (hasMessage || hasValidationErrors) {
     return;
   }
 

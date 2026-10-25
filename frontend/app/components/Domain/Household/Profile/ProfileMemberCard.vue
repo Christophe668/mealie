@@ -53,10 +53,20 @@
       </label>
 
       <div class="profile-member__actions">
-        <DsButton variant="line" :disabled="saving" @click="emit('remove')">
+        <DsButton
+          variant="line"
+          :disabled="saving"
+          :aria-label="$t('household-profile.remove-member', { name: cardLabel })"
+          @click="emit('remove')"
+        >
           {{ $t("household-profile.remove") }}
         </DsButton>
-        <DsButton variant="dark" type="submit" :disabled="!canSave">
+        <DsButton
+          variant="dark"
+          type="submit"
+          :disabled="!canSave"
+          :aria-label="$t('household-profile.save-member', { name: cardLabel })"
+        >
           {{ $t("household-profile.save") }}
         </DsButton>
       </div>
@@ -70,17 +80,18 @@ import ProfileChipInput from "./ProfileChipInput.vue";
 import DsButton from "~/components/Design/DsButton.vue";
 import DsCard from "~/components/Design/DsCard.vue";
 import DsChip from "~/components/Design/DsChip.vue";
+import { useTrackedDraft } from "~/composables/use-tracked-draft";
 import type { MemberProfileOut } from "~/lib/api/types/household";
 import {
-  changedFields,
   DIETS,
   MAX_NAME_LENGTH,
   MAX_NOTES_LENGTH,
   MEMBER_LISTS,
   memberDraft,
   memberPayload,
-  type MemberDraft,
 } from "~/lib/household-profile/profile";
+
+type MemberPayload = ReturnType<typeof memberPayload>;
 
 const props = defineProps<{
   /** A saved member, or the starting values of a new one (no `id`). */
@@ -88,10 +99,10 @@ const props = defineProps<{
   /** Linked to the signed-in user: shows the "You" badge. */
   isYou?: boolean;
   /**
-   * Saves the card. A saved member gets only the changed fields, a new one gets everything. Resolves true on
-   * success; it reports its own failure, the card only keeps what was typed.
+   * Saves the card. A saved member gets only the fields edited here, a new one gets everything. Resolves true
+   * on success; it reports its own failure, the card only keeps what was typed.
    */
-  saveMember: (data: Partial<ReturnType<typeof memberPayload>>) => Promise<boolean>;
+  saveMember: (data: Partial<MemberPayload>) => Promise<boolean>;
 }>();
 
 const emit = defineEmits<{ (e: "remove"): void }>();
@@ -100,19 +111,10 @@ const i18n = useI18n();
 const uid = useId();
 
 const isNew = computed(() => !props.member.id);
-const baseline = computed(() => memberDraft(props.member));
-const draft = ref<MemberDraft>(memberDraft(props.member));
+// A reload or Claude's edits flow into the fields not edited here; edited fields keep what was typed.
+const { draft, changes, commit } = useTrackedDraft(() => memberDraft(props.member), memberPayload);
 
-// A reload (or a save elsewhere) brings a new member object: take it unless something was typed here.
-watch(() => props.member, (_now, before) => {
-  if (JSON.stringify(draft.value) === JSON.stringify(memberDraft(before))) {
-    draft.value = memberDraft(props.member);
-  }
-});
-
-const changes = computed(() => changedFields(memberPayload(baseline.value), memberPayload(draft.value)));
 const dirty = computed(() => isNew.value || Object.keys(changes.value).length > 0);
-
 const saving = ref(false);
 const canSave = computed(() => dirty.value && !saving.value && !!draft.value.name.trim());
 
@@ -124,10 +126,11 @@ async function save() {
   }
   saving.value = true;
   try {
-    const ok = await props.saveMember(isNew.value ? memberPayload(draft.value) : changes.value);
-    if (ok) {
+    const sent = isNew.value ? memberPayload(draft.value) : { ...changes.value };
+    if (await props.saveMember(sent)) {
+      // The member prop now holds the saved record; anything typed during the save is kept.
       await nextTick();
-      draft.value = memberDraft(props.member);
+      commit(sent);
     }
   }
   finally {

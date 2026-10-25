@@ -8,7 +8,7 @@
             type="button"
             class="profile-habits__step ds-focus"
             :aria-label="$t('household-profile.fewer-servings')"
-            :disabled="draft.defaultServings === null"
+            :aria-disabled="draft.defaultServings === null ? 'true' : undefined"
             @click="stepServings(-1)"
           >
             <DsIcon name="minus" :size="18" />
@@ -20,7 +20,7 @@
             type="button"
             class="profile-habits__step ds-focus"
             :aria-label="$t('household-profile.more-servings')"
-            :disabled="(draft.defaultServings ?? 0) >= MAX_SERVINGS"
+            :aria-disabled="(draft.defaultServings ?? 0) >= MAX_SERVINGS ? 'true' : undefined"
             @click="stepServings(1)"
           >
             <DsIcon name="createAlt" :size="18" />
@@ -62,7 +62,7 @@
       </label>
 
       <div class="profile-habits__actions">
-        <DsButton variant="dark" type="submit" :disabled="!canSave">
+        <DsButton variant="dark" type="submit" :disabled="!canSave" :aria-label="$t('household-profile.save-habits')">
           {{ $t("household-profile.save") }}
         </DsButton>
       </div>
@@ -77,15 +77,9 @@ import ProfileWeekdayToggles from "./ProfileWeekdayToggles.vue";
 import DsButton from "~/components/Design/DsButton.vue";
 import DsCard from "~/components/Design/DsCard.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
+import { useTrackedDraft } from "~/composables/use-tracked-draft";
 import type { MealPreferencesOut, MealPreferencesUpdate } from "~/lib/api/types/household";
-import {
-  changedFields,
-  habitsDraft,
-  habitsPayload,
-  MAX_MINUTES_CHOICES,
-  MAX_NOTES_LENGTH,
-  type HabitsDraft,
-} from "~/lib/household-profile/profile";
+import { habitsDraft, habitsPayload, MAX_MINUTES_CHOICES, MAX_NOTES_LENGTH } from "~/lib/household-profile/profile";
 
 const MAX_SERVINGS = 20;
 const TIME_FIELDS = {
@@ -97,25 +91,15 @@ const props = defineProps<{
   preferences: MealPreferencesOut | null;
   /** 0 = Sunday … 6 = Saturday, as Mealie stores it. */
   firstDayOfWeek: number;
-  /** Saves only the changed fields; resolves true on success. It reports its own failure. */
+  /** Saves only the fields edited here; resolves true on success. It reports its own failure. */
   savePreferences: (changes: MealPreferencesUpdate) => Promise<boolean>;
 }>();
 
 const uid = useId();
 
-const baseline = computed(() => habitsDraft(props.preferences));
-const draft = ref<HabitsDraft>(habitsDraft(props.preferences));
+// A reload or Claude's edits flow into the fields not edited here; edited fields keep what was typed.
+const { draft, changes, commit } = useTrackedDraft(() => habitsDraft(props.preferences), habitsPayload);
 
-watch(() => props.preferences, (_now, before) => {
-  if (JSON.stringify(draft.value) === JSON.stringify(habitsDraft(before))) {
-    draft.value = habitsDraft(props.preferences);
-  }
-});
-
-const changes = computed(() => {
-  const trimmed = (d: HabitsDraft) => ({ ...d, notes: d.notes.trim() });
-  return changedFields(trimmed(baseline.value), trimmed(draft.value));
-});
 const saving = ref(false);
 const canSave = computed(() => Object.keys(changes.value).length > 0 && !saving.value);
 
@@ -126,9 +110,16 @@ function minuteChoices(current: number | null) {
     : [...MAX_MINUTES_CHOICES, current].sort((a, b) => a - b);
 }
 
-/** Below 1 is "Not set"; from "Not set", + starts at 1. */
+/**
+ * Below 1 is "Not set"; from "Not set", + starts at 1. The buttons use aria-disabled, so the focused one
+ * stays focused when it reaches the end; a press there does nothing.
+ */
 function stepServings(step: number) {
-  const next = (draft.value.defaultServings ?? 0) + step;
+  const current = draft.value.defaultServings;
+  if ((step < 0 && current === null) || (step > 0 && (current ?? 0) >= MAX_SERVINGS)) {
+    return;
+  }
+  const next = (current ?? 0) + step;
   draft.value.defaultServings = next < 1 ? null : Math.min(next, MAX_SERVINGS);
 }
 
@@ -138,9 +129,10 @@ async function save() {
   }
   saving.value = true;
   try {
-    if (await props.savePreferences(habitsPayload(changes.value))) {
+    const sent = { ...changes.value };
+    if (await props.savePreferences(sent)) {
       await nextTick();
-      draft.value = habitsDraft(props.preferences);
+      commit(sent);
     }
   }
   finally {
@@ -198,7 +190,7 @@ async function save() {
   cursor: pointer;
 }
 
-.profile-habits__step:disabled {
+.profile-habits__step[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.35;
 }

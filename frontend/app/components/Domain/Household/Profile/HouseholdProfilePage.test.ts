@@ -22,7 +22,7 @@ const stubs = {
   "BaseDialog": {
     props: ["modelValue", "title"],
     emits: ["confirm", "update:modelValue"],
-    template: "<div v-if=\"modelValue\" class=\"confirm-stub\"><p>{{ title }}</p><slot /><button class=\"confirm\" @click=\"$emit('confirm'); $emit('update:modelValue', false)\">Confirm</button></div>",
+    template: "<div v-if=\"modelValue\" class=\"confirm-stub\"><p>{{ title }}</p><slot /><button class=\"confirm\" @click=\"$emit('confirm'); $emit('update:modelValue', false)\">Confirm</button><button class=\"cancel\" @click=\"$emit('update:modelValue', false)\">Cancel</button></div>",
   },
 };
 
@@ -97,6 +97,41 @@ describe("household page", () => {
     await wrapper.find(".confirm").trigger("click");
     await flushPromises();
     expect(profile.current.removeMember).toHaveBeenCalledExactlyOnceWith("sam");
+  });
+
+  test("after the confirmation, focus goes back to Remove, or to Add a person once the member is gone", async () => {
+    // a second member keeps the list (and "Add a person") on screen once Sam is gone
+    profile.current = fakeProfile([sam, { ...sam, id: "kim", name: "Kim" }]);
+    profile.current.removeMember = vi.fn(async (id: string) => {
+      profile.current.members.value = profile.current.members.value.filter((m: MemberProfileOut) => m.id !== id);
+      return true;
+    });
+    const wrapper = await render();
+    const removeSam = () => wrapper.find("button[aria-label='Remove Sam']");
+
+    (removeSam().element as HTMLElement).focus();
+    await removeSam().trigger("click");
+    await wrapper.find(".cancel").trigger("click");
+    await flushPromises();
+    expect(document.activeElement).toBe(removeSam().element);
+
+    await removeSam().trigger("click");
+    await wrapper.find(".confirm").trigger("click");
+    await flushPromises();
+    expect(removeSam().exists()).toBe(false);
+    expect(document.activeElement?.textContent?.trim()).toBe("Add a person");
+  });
+
+  test("Add yourself cuts a long name to 60 characters", async () => {
+    profile.current = fakeProfile();
+    const auth = await import("~/composables/use-mealie-auth");
+    const { ref } = await import("vue");
+    const spy = vi.spyOn(auth, "useMealieAuth").mockReturnValue({ user: ref({ id: "u1", fullName: `${"n".repeat(58)} Long Surname` }) } as any);
+    const wrapper = await render();
+
+    await button(wrapper, "Add yourself")!.trigger("click");
+    expect(wrapper.find<HTMLInputElement>(".profile-member input[type=text]").element.value).toBe(`${"n".repeat(58)} L`);
+    spy.mockRestore();
   });
 
   test("a new person goes after the others and an unsaved card is dropped without asking", async () => {

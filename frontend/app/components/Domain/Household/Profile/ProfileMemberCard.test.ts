@@ -89,6 +89,51 @@ describe("ProfileMemberCard", () => {
     expect((wrapper.find("input[type=text]").element as HTMLInputElement).value).toBe("Sammy");
   });
 
+  test("a reload while editing keeps Claude's changes: Save sends only what was edited here", async () => {
+    const save = vi.fn().mockImplementation(async (data) => {
+      await wrapper.setProps({ member: { ...wrapper.props("member"), ...data } });
+      return true;
+    });
+    const wrapper = render(save);
+
+    await wrapper.find("input[type=text]").setValue("Sammy");
+    // Meanwhile Claude added mushrooms to Sam's dislikes, and the page reloaded.
+    await wrapper.setProps({ member: { ...sam, dislikes: ["olives", "mushrooms"] } });
+    expect(wrapper.findAll("li").map(li => li.text())).toContain("mushrooms");
+
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+
+    expect(save).toHaveBeenCalledExactlyOnceWith({ name: "Sammy" });
+    expect(wrapper.findAll("li").map(li => li.text())).toEqual(["peanuts", "olives", "mushrooms"]);
+    expect(saveButton(wrapper).attributes("aria-disabled")).toBe("true");
+  });
+
+  test("text typed while the save runs is kept, and still counts as a change", async () => {
+    let finish!: (ok: boolean) => void;
+    const save = vi.fn(() => new Promise<boolean>(resolve => (finish = resolve)));
+    const wrapper = render(save);
+
+    await wrapper.find("input[type=text]").setValue("Sammy");
+    await wrapper.find("form").trigger("submit");
+    await wrapper.find("textarea").setValue("Eats early");
+
+    await wrapper.setProps({ member: { ...sam, name: "Sammy" } });
+    finish(true);
+    await flushPromises();
+
+    expect((wrapper.find("textarea").element as HTMLTextAreaElement).value).toBe("Eats early");
+    expect((wrapper.find("input[type=text]").element as HTMLInputElement).value).toBe("Sammy");
+    await wrapper.find("form").trigger("submit");
+    expect(save).toHaveBeenLastCalledWith({ notes: "Eats early" });
+  });
+
+  test("Save and Remove are named after the member", () => {
+    const wrapper = render(vi.fn());
+    expect(saveButton(wrapper).attributes("aria-label")).toBe("Save Sam");
+    expect(wrapper.findAll("button").find(b => b.text() === "Remove")!.attributes("aria-label")).toBe("Remove Sam");
+  });
+
   test("allergies are the only saffron chips; the You badge shows for the signed-in user", () => {
     const wrapper = render(vi.fn(), sam, true);
 

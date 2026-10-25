@@ -54,7 +54,7 @@
               />
             </li>
           </ul>
-          <div class="household-profile__actions">
+          <div ref="listActions" class="household-profile__actions">
             <DsButton variant="line" icon="createAlt" @click="addPerson">
               {{ $t("household-profile.add-a-person") }}
             </DsButton>
@@ -91,15 +91,18 @@
 </template>
 
 <script setup lang="ts">
+import { useTemplateRef } from "vue";
 import DsButton from "~/components/Design/DsButton.vue";
 import DsSectionTitle from "~/components/Design/DsSectionTitle.vue";
 import ProfileHabitsCard from "~/components/Domain/Household/Profile/ProfileHabitsCard.vue";
 import ProfileMemberCard from "~/components/Domain/Household/Profile/ProfileMemberCard.vue";
 import { useAppShellTitle } from "~/composables/use-app-shell-title";
+import { useFocusReturn } from "~/composables/use-focus-return";
 import { useHouseholdProfile } from "~/composables/use-household-profile";
 import { useHouseholdSelf } from "~/composables/use-households";
 import { useMealieAuth } from "~/composables/use-mealie-auth";
 import type { MemberProfileCreate, MemberProfileOut, MemberProfileUpdate } from "~/lib/api/types/household";
+import { MAX_NAME_LENGTH } from "~/lib/household-profile/profile";
 
 definePageMeta({
   middleware: ["auth"],
@@ -143,7 +146,8 @@ function addYourself() {
   if (!user) {
     return;
   }
-  newCards.value.push({ key: nextKey++, member: { name: user.fullName || user.username || "", userId: user.id } });
+  const name = (user.fullName || user.username || "").trim().slice(0, MAX_NAME_LENGTH).trim();
+  newCards.value.push({ key: nextKey++, member: { name, userId: user.id } });
 }
 
 function dropNew(key: number) {
@@ -178,11 +182,20 @@ const confirmOpen = computed({
   },
 });
 
+// The dialog opens without an activator: give focus back to the Remove button pressed (cancel), or to
+// "Add a person" when that member was removed.
+const listActions = useTemplateRef<HTMLElement>("listActions");
+useFocusReturn(confirmOpen, () => listActions.value?.querySelector("button"));
+
 async function confirmRemove() {
   const member = pending.value;
   pending.value = null;
-  if (member) {
-    await removeMember(member.id);
+  if (member && (await removeMember(member.id))) {
+    // Focus went back to that member's Remove button, which is gone now.
+    await nextTick();
+    if (!document.activeElement || document.activeElement === document.body) {
+      listActions.value?.querySelector("button")?.focus();
+    }
   }
 }
 </script>
