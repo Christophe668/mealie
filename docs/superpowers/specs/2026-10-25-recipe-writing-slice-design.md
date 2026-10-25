@@ -161,3 +161,78 @@ Behaviour:
 
 - add the three tools to the tool list;
 - add a short "Claude writes recipes" paragraph, including that the confirmation policy follows the user's own instructions.
+
+## 7. Implemented
+
+Shipped on `feat/recipe-writing` (2026-10-25) in:
+
+- `957797f16` and `767dc4a3a`: writer service;
+- `0dff04e53`, `6d386131b` and `3e967da6e`: `create_recipe` and the confirmation policy;
+- `b4d20208e`, `5e4d4704f` and `f19ca520a`: `update_recipe`;
+- `623a72f52` and `ce2db1c1f`: `import_recipe_from_url` and the shared web import;
+- `99a49aca2`: log name and PostgreSQL link order;
+- the docs commit.
+
+No schema or database change was needed. Where the code differs from the sections above, or settles something they left open:
+
+1. **Confirmation.** The MCP server provides the ability. Whether Claude asks before writing is up to the user's own claude.ai skills and instructions; the server default is to confirm when the user hasn't said (Christophe's decision). The server instructions and every write tool's docstring use the § 2 wording. The truth guards (never infer allergies, never invent verdicts) stay.
+2. **Input rules.**
+   - `RecipeCreateIn` requires name, ingredients and instructions. Strings must not be blank.
+   - A structured ingredient needs a food or a note. A list that is sent must not be empty.
+   - Categories, tools and notes are capped at 20. Infinite and NaN numbers are refused.
+   - Free-text caps: ingredient line 300, step 5000, description and notes 5000, food, unit and organizer names 100.
+   - NUL and the other control characters are refused, except tab and newline. CRLF is normalised to LF.
+   - An organizer name with an empty slug ("!!!") is refused.
+   - Times are stored in `*_time_seconds`, and the text fields are cleared. `get_recipe` and the search results fall back to the seconds when the text is empty.
+   - The parameters are loosely typed with an explicit JSON schema, so a wrong type gets a readable message rather than a raw validation dump.
+3. **Plain lines** go through `nlp` with `brute` as the fallback. A line the parser can't give a food is kept as a note. Quantity 0 means no quantity.
+4. **Organizers.** Near-duplicate new organizers ("Dinner", "dinners") collapse at plan time. This avoids a duplicate tag on the recipe and an `IntegrityError` after a stray tag was committed.
+5. **Nothing written on a refusal.**
+   - Mealie's repositories commit on every write. So `build()` is read-only, and `apply()` runs only after validation, just before the save.
+   - If the save fails, a fresh lookup decides. If the recipe isn't there, the rows this call created are removed and the error says nothing was saved. If it is there, the rows are kept and the answer carries a `warning`: "don't send/import it again".
+   - The recipe id is set before the save, so that lookup is exact.
+   - `update_recipe` instead compares `date_updated` to tell whether the update landed.
+6. **`similar_existing`** lists only "Name" and "Name (n)" (the slug de-duplication pattern), up to 3.
+7. **Events** are published off the request path: `BackgroundTasks` run in a daemon thread. A notification in flight is lost on a hard stop, as with REST.
+8. **`update_recipe`.**
+   - `get_recipe` now exposes each ingredient's `ref` and `section`, and each step's `timer_minutes` and `uses`, so a replaced list can carry them back.
+   - Lines sent back unchanged keep their links, timers, sections and sub-recipe links: a display string, or a step with the same text. Identical display lines are claimed in order.
+   - `timer_minutes: null` removes a timer.
+   - `null` clears description, yield, the three times and `source_url`. It is refused, with a clear message, for the other fields.
+   - Extra refusals: `scale_to_servings` together with `servings`, and a rename whose slug collides.
+   - Changing servings also scales the yield quantity. The total is recomputed only when it was exactly prep plus cook.
+   - The single refusal message names "locked" and "another household". The docstring states the Mealie rule: a locked recipe can be edited by its owner or an admin.
+9. **Scaling.**
+   - Kitchen fractions are snapped before scaling.
+   - A scaled quantity never rounds to 0: the floor is 0.001, Mealie's stored precision.
+   - Overflow is refused with a readable error.
+10. **Import.**
+    - The create-from-web logic is a shared `import_from_web` used by `POST /api/recipes/create/url` and the tool. A `prepare` hook parses the ingredients before the save.
+    - `servings_from_yield` turns "4 servings", "4 people" or a bare "4" into servings, for the tool only. Mealie's cleaner is untouched.
+    - `clean_scraped_text` removes NUL and control characters from the scraped name, description, yield, steps, sections and notes.
+    - Lines that are over-long, in scientific notation, or with an absurd quantity stay note-only.
+    - A stored `org_url` that can't be parsed is skipped by the duplicate check, rather than breaking every import in the group.
+    - An uppercase scheme is lower-cased before the fetch. A malformed URL (bad IPv6 host, bad port, control characters) gets the "must be a web link" message.
+    - A refused tool import removes the image folder it downloaded, but only when the recipe wasn't saved.
+    - Scraped categories are never applied (`include_categories` is false). The spec only names `include_tags`.
+11. **Tests and checks.**
+    - The import tests serve recorded pages. One test drives the real HTTP client against a loopback server ("no network" means no external network).
+    - The access log names the public tool (`tool=update_recipe`, not `_update_recipe`).
+12. **PostgreSQL** (17, checked on a throwaway container with the two recipe-write test files: 145 passed).
+    - Step-to-ingredient link rows have no stored order, and PostgreSQL returned them shuffled. `get_recipe` now lists a step's `uses` in the recipe's ingredient order, and the tests compare links independently of row order.
+    - The NUL cleaning holds.
+    - The reviewers' index-size worry doesn't apply: Mealie cuts the btree-indexed `*_normalized` columns to 255 characters. A probe stored a 20,000-character description and an 8,000-character scraped ingredient line without error.
+
+Deferred:
+
+- **Note links (task 3 m3).** A step's note links aren't exposed in `get_recipe`. A changed step loses them; an unchanged one keeps them.
+- **Null in the schema (task 3 m4).** The JSON schema offers `null` for fields that can't be cleared, such as `name` and `servings`. A client that fills unused optionals with null gets a clear "can't be null" error on the first call. The fix is a null-free schema for those fields.
+- **Long note-only lines (task 4 m5).** Over-long scraped note-only lines are stored whole, with no cap. This is harmless for the indexes (see 12), but unbounded.
+- **Bare number as servings (task 4 m7).** `servings_from_yield` treats a bare number as servings, so "12" meaning 12 cookies becomes 12 servings. This follows schema.org, and scaling stays proportional.
+- **Smaller import notes (task 4 m8).**
+  - Duplicate import race: the duplicate check is check-then-create, so two identical imports at the same moment can both create a recipe. The impact is low on a single-user server.
+  - The error mapping tells "host doesn't resolve" apart from "private address". This is the same small DNS oracle as on REST.
+  - Scraped categories aren't applied.
+- **Orphaned image on the REST path.** A failed `POST /create/url` still leaves the downloaded image folder on disk. Only the tool path cleans up.
+- **Blunt scientific-notation rule.** Any scraped line with a digit-e-digit sequence anywhere ("1e3") skips the parser and stays note-only, even when the number isn't the quantity.
+- **Discard window.** A row this call created and committed could be matched by another request before a failed save discards it. Deleting it would then clear that request's link. This is a tiny window on a single-user server.

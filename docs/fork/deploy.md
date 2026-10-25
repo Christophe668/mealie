@@ -57,7 +57,7 @@ cloudflared tunnel run --url http://localhost:9925 <tunnel-name>
 
 The connector offers these tools, each behind the permission in brackets:
 
-- Recipes: `search_recipes`, `get_recipe` (`recipes:read`).
+- Recipes: `search_recipes`, `get_recipe` (`recipes:read`); `create_recipe`, `update_recipe`, `import_recipe_from_url` (`recipes:write`).
 - Meal plan: `get_mealplan`, `get_recent_meals` (`recipes:read`); `add_mealplan_entries`, `remove_mealplan_entry` (`mealplan:write`).
 - Shopping: `get_shopping_list` (`recipes:read`); `create_shopping_list_from_mealplan`, `add_shopping_items`, `check_shopping_items` (`shopping:write`).
 - Pantry: `get_pantry` (`recipes:read`); `update_pantry`, `put_away_shopping_items` (`pantry:write`).
@@ -78,7 +78,19 @@ After cooking, say how it went: **Loved it**, **It was fine** or **Not again**, 
 
 ## Household profiles
 
-The **Household** page (user menu, **Household**; also linked from Settings) records who eats here and how you cook. Each person gets a card: a name (linked to a Mealie user or just a name, for example a child), a diet, allergies, foods never to serve, dislikes, likes and a note. **How we cook** holds the default servings, the quick weekdays, the longest cooking time on weeknights and at the weekend, favourite cuisines and a note. Any member of the household can edit it. Claude reads all of it in `get_household_context`: allergies and "never serve" foods are hard constraints, dislikes are avoided unless you ask, and likes and cuisines are hints. When you tell Claude something new ("Sam doesn't eat mushrooms"), it asks before recording it with `update_household_profile`. That tool can add, edit and remove people and change the cooking habits; its `add_to` mode, the one Claude uses for a single new fact, appends to a list without replacing it. Claude never guesses allergies. No reconnect is needed: reading uses `recipes:read` and writing uses `household:write` ("Edit household settings"), which existing connections already have.
+The **Household** page (user menu, **Household**; also linked from Settings) records who eats here and how you cook. Each person gets a card: a name (linked to a Mealie user or just a name, for example a child), a diet, allergies, foods never to serve, dislikes, likes and a note. **How we cook** holds the default servings, the quick weekdays, the longest cooking time on weeknights and at the weekend, favourite cuisines and a note. Any member of the household can edit it. Claude reads all of it in `get_household_context`: allergies and "never serve" foods are hard constraints, dislikes are avoided unless you ask, and likes and cuisines are hints. When you tell Claude something new ("Sam doesn't eat mushrooms"), it records it with `update_household_profile`, asking first unless your own instructions say otherwise (see [Claude writes recipes](#claude-writes-recipes)). That tool can add, edit and remove people and change the cooking habits; its `add_to` mode, the one Claude uses for a single new fact, appends to a list without replacing it. Claude never guesses allergies. No reconnect is needed: reading uses `recipes:read` and writing uses `household:write` ("Edit household settings"), which existing connections already have.
+
+## Claude writes recipes
+
+Claude can put recipes into Mealie itself, owned by you and in your household, as if you had made them in Mealie:
+
+- `create_recipe` saves a recipe Claude wrote: name, servings, times, ingredients, steps (with section titles and timers), tags, categories, tools and notes. Ingredients are stored as quantity, unit and food, so the shopping list, the pantry and scaling work on them. Claude can send them already structured or as plain lines like "200 g spaghetti", which Mealie's own ingredient parser splits; a line it can't split, like "salt to taste", is kept as a note. Unknown foods, units, tags, categories and tools are created. If recipes with the same name exist, the answer lists them so Claude can mention them.
+- `import_recipe_from_url` imports a web page with Mealie's own importer (the same one as importing a URL in Mealie), downloads its image and parses its ingredients straight away. A page already imported into your group is not imported twice: Claude gets the existing recipe back.
+- `update_recipe` changes an existing recipe: only the fields sent change, and a list that is sent (ingredients, steps, tags...) replaces the old one. It keeps the step timers, sections and step-to-ingredient links that the new lists still match. `scale_to_servings` scales every quantity ("make the carbonara for 4"); lines without a quantity are left as they are and listed. Claude can edit what you could edit in Mealie: a locked recipe only if it is yours (or you are an admin), and another household's recipe only when that household allows it.
+
+A typical evening: you say what you feel like, Claude writes the recipe, saves it with `create_recipe` and adds it to tonight with `add_mealplan_entries`. No reconnect is needed: these tools use `recipes:write`, which existing connections already have.
+
+**Confirming.** Claude follows your own instructions about confirming changes, for every write tool. If you haven't said anything, it shows what it will write and asks first. That way your own claude.ai skills and instructions decide: one that says "save recipes without asking" makes recipe writing a single step, and one that says "always show me first" keeps the check. Mealie doesn't force an extra yes on top.
 
 ## Verify
 
