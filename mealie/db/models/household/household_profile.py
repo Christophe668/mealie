@@ -1,12 +1,14 @@
 from typing import TYPE_CHECKING
 
 from pydantic import ConfigDict
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, UniqueConstraint, orm
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, UniqueConstraint, event, orm, update
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .._model_base import BaseMixins, SqlAlchemyBase
 from .._model_utils.auto_init import auto_init
 from .._model_utils.guid import GUID
+from ..users.users import User
 
 if TYPE_CHECKING:
     from .household import Household
@@ -58,6 +60,22 @@ class HouseholdMemberProfile(SqlAlchemyBase, BaseMixins):
     def _null_list_is_empty(self, _key: str, value: list[str] | None) -> list[str]:
         """A full `MemberProfileUpdate.model_dump()` carries `None` for unsent lists; store them as `[]`."""
         return [] if value is None else value
+
+
+@event.listens_for(User, "before_delete")
+def _unlink_member_profiles(_mapper: orm.Mapper, connection: Connection, target: User) -> None:
+    """Clears `user_id` on profiles linked to a user being deleted.
+
+    The FK says `ondelete="SET NULL"`, but Mealie's SQLite runs without `PRAGMA foreign_keys`, so there the profile
+    would keep a dangling id, and a backup restore drops rows with dangling FKs, allergies included. Doing it here
+    works on every database and needs no back-reference on `User`. It covers every ORM delete of a user (the
+    repository's `delete` and `delete_many`); a bulk `DELETE` statement on `users` bypasses it.
+    """
+    connection.execute(
+        update(HouseholdMemberProfile.__table__)
+        .where(HouseholdMemberProfile.__table__.c.user_id == target.id)
+        .values(user_id=None)
+    )
 
 
 class HouseholdMealPreferences(SqlAlchemyBase, BaseMixins):

@@ -134,6 +134,18 @@ describe("household page", () => {
     spy.mockRestore();
   });
 
+  test("Add yourself never splits an emoji at the 60-character cut", async () => {
+    profile.current = fakeProfile();
+    const auth = await import("~/composables/use-mealie-auth");
+    const { ref } = await import("vue");
+    const spy = vi.spyOn(auth, "useMealieAuth").mockReturnValue({ user: ref({ id: "u1", fullName: `${"n".repeat(59)}\u{1F95C}\u{1F95C}` }) } as any);
+    const wrapper = await render();
+
+    await button(wrapper, "Add yourself")!.trigger("click");
+    expect(wrapper.find<HTMLInputElement>(".profile-member input[type=text]").element.value).toBe(`${"n".repeat(59)}\u{1F95C}`);
+    spy.mockRestore();
+  });
+
   test("a new person goes after the others and an unsaved card is dropped without asking", async () => {
     profile.current = fakeProfile([sam]);
     const wrapper = await render();

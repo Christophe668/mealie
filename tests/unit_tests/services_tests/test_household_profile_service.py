@@ -70,20 +70,32 @@ def test_get_returns_ordered_members_and_preferences(unique_user_fn_scoped: Test
     assert out.preferences.default_servings == 4
 
 
-def test_get_survives_a_stale_user_id(unique_user_fn_scoped: TestUser):
-    """A linked user deleted on SQLite leaves its id behind (no FK enforcement); reads must not break."""
+def test_deleting_a_linked_user_unlinks_the_profile(unique_user_fn_scoped: TestUser):
+    """On every database, not only where the FK's SET NULL is enforced (Mealie's SQLite runs without it)."""
     user = unique_user_fn_scoped
     extra = _extra_user(user)
     service = _service(user)
-    created = service.create_member(MemberProfileCreate(name="Leaving", user_id=extra))
+    created = service.create_member(MemberProfileCreate(name="Leaving", user_id=extra, allergies=["sesame"]))
 
     user.repos.users.delete(extra)
     user.repos.session.expire_all()
 
     members = service.get().members
-    assert [m.id for m in members] == [created.id]
-    if get_app_settings().DB_ENGINE == "postgres":
-        assert members[0].user_id is None
+    assert [(m.id, m.user_id, m.allergies) for m in members] == [(created.id, None, ["sesame"])]
+
+
+@pytest.mark.skipif(get_app_settings().DB_ENGINE == "postgres", reason="PostgreSQL refuses a dangling user_id")
+def test_get_survives_a_stale_user_id(unique_user_fn_scoped: TestUser):
+    """A dangling `user_id` from before user deletion cleared it (SQLite, no FK enforcement); reads must not break."""
+    user = unique_user_fn_scoped
+    service = _service(user)
+    created = service.create_member(MemberProfileCreate(name="Stale"))
+    user.repos.session.execute(
+        update(HouseholdMemberProfile).where(HouseholdMemberProfile.id == created.id).values(user_id=uuid4())
+    )
+    user.repos.session.commit()
+
+    assert [m.id for m in service.get().members] == [created.id]
     # still editable without clearing the stale link (only a changed user_id is checked)
     assert service.update_member(created.id, MemberProfileUpdate(likes=["soup"])).likes == ["soup"]
 
@@ -100,6 +112,31 @@ def test_normalise_list_reuses_the_schema_rules():
         HouseholdProfileService.normalise_list(["x" * 61])
     with pytest.raises(ValueError):
         HouseholdProfileService.normalise_list([f"item {i}" for i in range(31)])
+
+
+CREME_NFC = "cr\u00e8me"
+CREME_NFD = "cre\u0300me"
+
+
+def test_normalise_list_nfc_and_nfd_spellings_are_one_entry(unique_user_fn_scoped: TestUser):
+    assert HouseholdProfileService.normalise_list([CREME_NFD, CREME_NFC.upper()]) == [CREME_NFC]
+
+    # add_to with a decomposed spelling joins a stored precomposed one
+    service = _service(unique_user_fn_scoped)
+    service.create_member(MemberProfileCreate(name="Sam", dislikes=["Cr\u00e8me"]))
+    assert service.add_to_member("Sam", "dislikes", [CREME_NFD]).dislikes == ["Cr\u00e8me"]
+
+
+def test_lengths_count_code_points_and_lone_surrogates_are_refused():
+    peanut = "\U0001f95c"  # one code point, two UTF-16 units: the frontend cuts by code points too
+    assert HouseholdProfileService.normalise_list(["a" * 59 + peanut]) == ["a" * 59 + peanut]
+    assert MemberProfileCreate(name="n" * 59 + peanut).name == "n" * 59 + peanut
+    with pytest.raises(ValueError, match="at most 60"):
+        HouseholdProfileService.normalise_list(["a" * 60 + peanut])
+    with pytest.raises(ValueError, match="incomplete character"):
+        HouseholdProfileService.normalise_list(["a" * 59 + "\ud83e"])
+    with pytest.raises(ValueError, match="incomplete character"):
+        MemberProfileCreate(name="Sam\ud83e")
 
 
 def test_create_member_stores_normalised_lists(unique_user_fn_scoped: TestUser):

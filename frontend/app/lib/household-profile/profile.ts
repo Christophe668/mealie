@@ -23,6 +23,15 @@ export function chipKey(value: string): string {
   return value.normalize("NFC").toLocaleLowerCase().replace(/ß/g, "ss");
 }
 
+/**
+ * The first `max` characters of `value`, counted in code points as the server's `len` counts them, so an emoji at the
+ * boundary is kept or dropped whole, never split into half a surrogate pair the server cannot store.
+ */
+export function cutToLength(value: string, max: number): string {
+  const chars = Array.from(value);
+  return chars.length > max ? chars.slice(0, max).join("") : value;
+}
+
 export interface AddChipsResult {
   chips: string[];
   /** Entries left out because the list is full; the field keeps them so nothing typed is lost. */
@@ -42,7 +51,7 @@ export function addChips(chips: string[], text: string): AddChipsResult {
   const seen = new Set(result.map(chipKey));
   for (const part of text.split(",")) {
     const trimmed = part.trim();
-    const value = trimmed.slice(0, MAX_CHIP_LENGTH).trim();
+    const value = cutToLength(trimmed, MAX_CHIP_LENGTH).trim();
     if (!value || seen.has(chipKey(value))) {
       continue;
     }

@@ -29,15 +29,24 @@ class Diet(StrEnum):
     other = "other"
 
 
-def normalise_list(values: list[str]) -> list[str]:
-    """Trim, drop empty entries and de-duplicate case-insensitively, keeping the first spelling.
+def _refuse_lone_surrogates(value: str) -> str:
+    """A lone UTF-16 surrogate (half an emoji, from a cut made in UTF-16 units) cannot be stored as UTF-8."""
+    if any("\ud800" <= char <= "\udfff" for char in value):
+        raise ValueError("text contains an incomplete character")
+    return value
 
-    Raises `ValueError` when an entry is longer than 60 characters or more than 30 distinct entries remain.
+
+def normalise_list(values: list[str]) -> list[str]:
+    """NFC-normalise, trim, drop empty entries and de-duplicate case-insensitively, keeping the first spelling.
+
+    NFC first, as for names, so "crème" typed precomposed or with a combining accent is one entry. Lengths count code
+    points (Python `len`), as the frontend's cut does. Raises `ValueError` when an entry is longer than 60 characters,
+    holds a lone surrogate, or more than 30 distinct entries remain.
     """
     seen: set[str] = set()
     result: list[str] = []
     for value in values:
-        value = value.strip()
+        value = _refuse_lone_surrogates(unicodedata.normalize("NFC", value)).strip()
         if not value:
             continue
         if len(value) > MAX_ITEM_LENGTH:
@@ -78,7 +87,7 @@ def name_key(name: str) -> str:
 
 
 def _clean_name(value: str) -> str:
-    value = unicodedata.normalize("NFC", value).strip()
+    value = _refuse_lone_surrogates(unicodedata.normalize("NFC", value)).strip()
     if not value:
         raise ValueError("name must not be empty")
     if len(value) > MAX_NAME_LENGTH:

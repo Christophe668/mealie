@@ -102,6 +102,21 @@ describe("ProfileChipInput", () => {
     expect(wrapper.find(".profile-chips__hint").text()).toBe("Shortened to 60 characters.");
   });
 
+  test("an emoji at the 60-character boundary is kept whole or dropped whole, never split", async () => {
+    const wrapper = render();
+    const input = wrapper.find("input");
+
+    // 59 letters and a peanut: 60 code points (61 UTF-16 units), so it fits as is.
+    await input.setValue(`${"a".repeat(59)}\u{1F95C}`);
+    await input.trigger("keydown", { key: "Enter" });
+    // 60 letters and a peanut: the peanut goes, with no half surrogate left behind.
+    await input.setValue(`${"b".repeat(60)}\u{1F95C}`);
+    await input.trigger("keydown", { key: "Enter" });
+
+    expect(chips(wrapper)).toEqual([`${"a".repeat(59)}\u{1F95C}`, "b".repeat(60)]);
+    expect(chips(wrapper).join("")).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
   test("Enter that confirms an input method's composition adds nothing", async () => {
     const wrapper = render();
     const input = wrapper.find("input");

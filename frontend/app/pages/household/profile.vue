@@ -102,7 +102,7 @@ import { useHouseholdProfile } from "~/composables/use-household-profile";
 import { useHouseholdSelf } from "~/composables/use-households";
 import { useMealieAuth } from "~/composables/use-mealie-auth";
 import type { MemberProfileCreate, MemberProfileOut, MemberProfileUpdate } from "~/lib/api/types/household";
-import { MAX_NAME_LENGTH } from "~/lib/household-profile/profile";
+import { cutToLength, MAX_NAME_LENGTH } from "~/lib/household-profile/profile";
 
 definePageMeta({
   middleware: ["auth"],
@@ -146,7 +146,7 @@ function addYourself() {
   if (!user) {
     return;
   }
-  const name = (user.fullName || user.username || "").trim().slice(0, MAX_NAME_LENGTH).trim();
+  const name = cutToLength((user.fullName || user.username || "").trim(), MAX_NAME_LENGTH).trim();
   newCards.value.push({ key: nextKey++, member: { name, userId: user.id } });
 }
 
