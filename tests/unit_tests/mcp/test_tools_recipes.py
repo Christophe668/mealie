@@ -69,7 +69,7 @@ async def test_get_household_context_shape(monkeypatch: pytest.MonkeyPatch, sess
     assert result["locale"]
     assert result["today"] == datetime.now().astimezone().date().isoformat()
     assert result["scopes_granted"] == SCOPES
-    assert result["preferences"] == {}
+    assert result["preferences"] == {"members": [], "household": None}
 
 
 @pytest.mark.asyncio
