@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import cached_property
 from uuid import UUID
 
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -8,14 +9,19 @@ from mcp.server.auth.provider import AccessToken
 from sqlalchemy.orm import Session
 
 from mealie.db.db_setup import session_context
+from mealie.lang.providers import Translator, get_locale_provider
 from mealie.repos.all_repositories import get_repositories
 from mealie.repos.repository_factory import AllRepositories
+from mealie.schema.household.household import HouseholdInDB
 from mealie.schema.user.user import PrivateUser
 
 from .errors import McpToolError
 
 # Indirection so tests can swap the session source.
 session_factory = session_context
+
+# Mealie keeps the UI language in the browser only, so there is no user locale to read yet.
+DEFAULT_LOCALE = "en-US"
 
 
 @dataclass
@@ -24,6 +30,19 @@ class McpContext:
     repos: AllRepositories
     session: Session
     access: AccessToken
+
+    @cached_property
+    def household(self) -> HouseholdInDB:
+        """The user's household, loaded on first use (the recipe services need it)."""
+        household = self.repos.households.get_one(self.user.household_id)
+        if household is None:
+            raise McpToolError("unknown household")
+        return household
+
+    @cached_property
+    def translator(self) -> Translator:
+        """The translator the routes get from `get_locale_provider`, for the default locale."""
+        return get_locale_provider(DEFAULT_LOCALE)
 
 
 @contextmanager
