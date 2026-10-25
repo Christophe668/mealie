@@ -78,6 +78,17 @@ def feedback_dict(row: RecipeFeedbackOut) -> dict[str, Any]:
     }
 
 
+def time_text(text: str | None, seconds: int | None) -> str | None:
+    """A recipe time as text: the free-text value when set (scraped recipes), else the structured seconds
+    (recipes Claude writes) as "25 minutes"."""
+    if text:
+        return text
+    if not seconds:
+        return None
+    minutes = round(seconds / 60)
+    return f"{minutes} minute" if minutes == 1 else f"{minutes} minutes"
+
+
 def recipe_brief(
     r: RecipeSummary, last_made: date | None, group_slug: str, last_verdict: str | None = None
 ) -> dict[str, Any]:
@@ -88,8 +99,8 @@ def recipe_brief(
         "slug": r.slug,
         "name": r.name,
         "description": _truncate(r.description),
-        "total_time": r.total_time,
-        "prep_time": r.prep_time,
+        "total_time": time_text(r.total_time, r.total_time_seconds),
+        "prep_time": time_text(r.prep_time, r.prep_time_seconds),
         "servings": r.recipe_servings or None,
         "rating": r.rating,
         "tags": [t.name for t in r.tags or []],

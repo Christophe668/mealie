@@ -19,6 +19,7 @@ from mealie.mcp.tools._summaries import (
     recipe_brief,
     recipe_url,
     summary_dict,
+    time_text,
 )
 from mealie.repos.repository_generic import GroupRepositoryGeneric
 from mealie.schema.recipe.recipe import Recipe
@@ -174,7 +175,11 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
         "description": recipe.description,
         "servings": recipe.recipe_servings or None,
         "yield": recipe.recipe_yield,
-        "times": {"total": recipe.total_time, "prep": recipe.prep_time, "cook": recipe.perform_time},
+        "times": {
+            "total": time_text(recipe.total_time, recipe.total_time_seconds),
+            "prep": time_text(recipe.prep_time, recipe.prep_time_seconds),
+            "cook": time_text(recipe.perform_time, recipe.perform_time_seconds),
+        },
         "ingredients": [
             {
                 "quantity": i.quantity,

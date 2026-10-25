@@ -10,7 +10,7 @@ from mealie.mcp.scopes import ALL_SCOPES
 INSTRUCTIONS = (
     "This server gives access to the user's Mealie recipes, meal plans and shopping lists. "
     "Call get_household_context first to learn the household, its members and its preferences. "
-    "Always confirm with the user before any write (creating or changing recipes, meal plans or shopping lists)."
+    "Follow the user's own instructions about confirming changes. When they haven't said, confirm before writing."
 )
 
 

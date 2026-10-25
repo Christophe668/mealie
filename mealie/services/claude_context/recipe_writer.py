@@ -70,7 +70,6 @@ MAX_URL = 2000
 
 # Strings that must not be blank, with a length cap; surrounding whitespace is dropped.
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_NAME)]
-RecipeName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_RECIPE_NAME)]
 Line = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_LINE)]
 LongText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_TEXT)]
 Minutes = Annotated[int, Field(ge=0, le=MAX_MINUTES)]
@@ -83,6 +82,13 @@ def _sluggable(name: str) -> str:
     return name
 
 
+def _recipe_name(name: str) -> str:
+    # the recipe's slug (its URL) comes from the name; Mealie refuses a name with no slug
+    if not slugify(name):
+        raise ValueError("a recipe name needs at least one letter or digit")
+    return name
+
+
 def _web_url(url: str) -> str:
     parts = urlsplit(url)
     if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
@@ -90,6 +96,11 @@ def _web_url(url: str) -> str:
     return url
 
 
+RecipeName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_RECIPE_NAME),
+    AfterValidator(_recipe_name),
+]
 OrganizerName = Annotated[ShortText, AfterValidator(_sluggable)]
 SourceUrl = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_URL), AfterValidator(_web_url)
