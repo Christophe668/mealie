@@ -160,6 +160,7 @@ class StepIn(_In):
     text: LongText
     title: ShortText | None = None
     timer_minutes: int | None = Field(default=None, ge=1, le=MAX_MINUTES)
+    # null (sent) removes the timer of a step kept with the same text; left out, the timer stays
     # ingredient `ref`s this step uses (get_recipe's `uses`); unknown refs are dropped
     uses: Annotated[list[ShortText], Field(max_length=MAX_INGREDIENTS)] | None = None
 
@@ -765,7 +766,8 @@ def _carry_ingredients(
     1. A line with a `ref` (from get_recipe) that names one of the recipe's lines takes that line's
        identity (`_keep_identity`). Each old line is claimed once.
     2. A plain string equal to an old line's original text or display text (e.g. get_recipe's
-       `display` sent back) *is* that line: it is kept as it was.
+       `display` sent back) *is* that line: it is kept as it was. When several unclaimed old lines
+       read the same (two "1 egg"), they are claimed in order, so each keeps its own identity.
     3. Otherwise a line matching exactly one unclaimed old line (`_same_line`) takes its identity.
     Anything else is a new line, as before."""
     result = list(new)
@@ -788,7 +790,8 @@ def _carry_ingredients(
             same_text = [
                 line for line in candidates if text in (_text_key(line.original_text), _text_key(line.display))
             ]
-            if len(same_text) == 1:
+            if same_text:
+                # identical lines are interchangeable, so the first unclaimed one (in order) is this one
                 claimed.add(same_text[0].reference_id)
                 result[index] = same_text[0].model_copy(deep=True)
                 continue
@@ -801,8 +804,9 @@ def _carry_ingredients(
 
 def _carry_steps(items: list[StepIn | str], new: list[RecipeStep], old: list[RecipeStep]) -> list[RecipeStep]:
     """A step whose text equals an old step's text keeps that step's timer and links unless they
-    were sent: its timer (also when the `timer_minutes` sent is get_recipe's rounding of it), its
-    ingredient links (unless `uses` was sent) and its note links."""
+    were sent: its timer (also when the `timer_minutes` sent is get_recipe's rounding of it; an
+    explicit `timer_minutes: null` removes it), its ingredient links (unless `uses` was sent) and
+    its note links."""
     used: set[int] = set()
     for item, step in zip(items, new, strict=True):
         text = _text_key(step.text)
@@ -812,7 +816,8 @@ def _carry_steps(items: list[StepIn | str], new: list[RecipeStep], old: list[Rec
         used.add(match)
         previous = old[match]
         timer = None if isinstance(item, str) else item.timer_minutes
-        if timer is None or timer == timer_minutes(previous.duration_seconds):
+        timer_removed = isinstance(item, StepIn) and "timer_minutes" in item.model_fields_set and timer is None
+        if not timer_removed and (timer is None or timer == timer_minutes(previous.duration_seconds)):
             step.duration_seconds = previous.duration_seconds
         if isinstance(item, str) or item.uses is None:
             step.ingredient_references = [r.model_copy() for r in previous.ingredient_references]

@@ -289,7 +289,10 @@ _STEP = {
             "properties": {
                 "text": _STR,
                 "title": _STR,
-                "timer_minutes": {"type": "integer"},
+                "timer_minutes": {
+                    "type": ["integer", "null"],
+                    "description": "update_recipe: null removes the step's timer; left out, it stays",
+                },
                 "uses": {
                     "type": "array",
                     "items": _STR,
@@ -407,7 +410,8 @@ async def _update_recipe(
     keep send back what get_recipe gave: each ingredient's `ref` and `section`, each step's
     `timer_minutes` and `uses` (the refs of its ingredients). That keeps step-to-ingredient links,
     timers, sections and sub-recipe links. Lines sent back unchanged (a display line as a plain
-    string, a step with the same text) also keep them. Field formats and limits are create_recipe's
+    string, a step with the same text) also keep them; a step keeps its timer unless you send
+    `"timer_minutes": null`, which removes it. Field formats and limits are create_recipe's
     (prefer structured ingredients; reuse existing food names).
     Changing servings also scales the yield quantity ("12 cookies"); changing prep or cook minutes
     recomputes the total when it was their sum.

@@ -1472,6 +1472,161 @@ async def test_unmatched_lines_start_fresh_and_unknown_refs_are_dropped(
     assert _links(user, view["slug"]) == [("Cook the rice.", None, [], 0)]
 
 
+@pytest.mark.asyncio
+async def test_reordered_steps_keep_their_timers_and_links(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    view = await _linked_recipe(monkeypatch, session, user)
+
+    await update_recipe(slug_or_id=view["slug"], instructions=[s["text"] for s in reversed(view["instructions"])])
+
+    assert _links(user, view["slug"]) == list(reversed(LINKED))
+
+
+@pytest.mark.asyncio
+async def test_identical_display_lines_are_claimed_in_order(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe = await _new_recipe(
+        monkeypatch,
+        session,
+        user,
+        ingredients=[{"quantity": 1, "food": "egg"}, {"quantity": 1, "food": "egg"}, "100 g flour"],
+        instructions=["Beat one egg.", "Fold in the other egg."],
+    )
+    stored = _stored(user, recipe.slug)
+    first_egg, second_egg, _flour = (i.reference_id for i in stored.recipe_ingredient)
+    steps = stored.recipe_instructions or []
+    steps[0].ingredient_references = [IngredientReferences(reference_id=first_egg)]
+    steps[1].ingredient_references = [IngredientReferences(reference_id=second_egg)]
+    user.repos.recipes.update(stored.slug, stored)
+    with context.mcp_context() as ctx:
+        view = get_recipe_impl(ctx, recipe.slug)
+    lines = [i["display"] for i in view["ingredients"]]
+    assert lines[0] == lines[1]
+
+    await update_recipe(slug_or_id=recipe.slug, ingredients=[*lines, "1 pinch salt"])
+
+    stored = _stored(user, recipe.slug)
+    assert [i.reference_id for i in stored.recipe_ingredient[:2]] == [first_egg, second_egg]
+    assert [[r.reference_id for r in s.ingredient_references] for s in stored.recipe_instructions or []] == [
+        [first_egg],
+        [second_egg],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_ref_or_uses_from_another_recipe_does_not_link(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    view = await _linked_recipe(monkeypatch, session, user)
+    other = await _new_recipe(monkeypatch, session, user)
+    foreign = view["ingredients"][0]["ref"]
+    snapshot = _snapshot(user, view["id"])
+
+    await update_recipe(
+        slug_or_id=other.slug,
+        ingredients=[{"ref": foreign, "quantity": 100, "unit": "g", "food": "spaghetti"}],
+        instructions=[{"text": "Boil.", "uses": [foreign]}],
+    )
+
+    stored = _stored(user, other.slug)
+    assert str(stored.recipe_ingredient[0].reference_id) != foreign
+    assert _links(user, other.slug) == [("Boil.", None, [], 0)]
+    assert _snapshot(user, view["id"]) == snapshot
+
+
+@pytest.mark.asyncio
+async def test_the_same_ref_sent_twice_keeps_one_identity(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    view = await _linked_recipe(monkeypatch, session, user)
+    ref = view["ingredients"][0]["ref"]
+
+    await update_recipe(
+        slug_or_id=view["slug"],
+        ingredients=[
+            {"ref": ref, "quantity": 200, "unit": "g", "food": "spaghetti"},
+            {"ref": ref, "quantity": 100, "unit": "g", "food": "linguine"},
+        ],
+    )
+
+    first, second = _stored(user, view["slug"]).recipe_ingredient
+    assert str(first.reference_id) == ref
+    assert second.reference_id != first.reference_id
+    assert [step[2] for step in _links(user, view["slug"])] == [["spaghetti"], [], ["spaghetti"]]
+
+
+@pytest.mark.asyncio
+async def test_a_slightly_changed_step_loses_its_links_unless_uses_is_sent(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    view = await _linked_recipe(monkeypatch, session, user)
+    texts = [s["text"] for s in view["instructions"]]
+
+    await update_recipe(slug_or_id=view["slug"], instructions=["Boil the spaghetti!", *texts[1:]])
+    assert _links(user, view["slug"])[0] == ("Boil the spaghetti!", None, [], 0)
+
+    first = view["instructions"][0]
+    await update_recipe(
+        slug_or_id=view["slug"],
+        instructions=[{"text": "Boil the spaghetti well.", "timer_minutes": 9, "uses": first["uses"]}, *texts[1:]],
+    )
+    assert _links(user, view["slug"]) == [("Boil the spaghetti well.", 540, ["spaghetti"], 0), *LINKED[1:]]
+
+
+@pytest.mark.asyncio
+async def test_null_timer_removes_it_and_an_omitted_timer_stays(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    view = await _linked_recipe(monkeypatch, session, user)
+    texts = [s["text"] for s in view["instructions"]]
+
+    await update_recipe(
+        slug_or_id=view["slug"],
+        instructions=[{"text": texts[0], "timer_minutes": None}, {"text": texts[1]}, texts[2]],
+    )
+    assert [step[1] for step in _links(user, view["slug"])] == [None, 120, 60]
+    assert [step[2] for step in _links(user, view["slug"])] == [s[2] for s in LINKED]  # links kept
+
+    # through the SDK, as Claude sends it
+    await mcp_server.call_tool(
+        "update_recipe",
+        {"slug_or_id": view["slug"], "instructions": [texts[0], {"text": texts[1], "timer_minutes": None}, texts[2]]},
+    )
+    assert [step[1] for step in _links(user, view["slug"])] == [None, None, 60]
+
+
+@pytest.mark.asyncio
+async def test_create_ignores_ref_and_uses(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    view = await _linked_recipe(monkeypatch, session, user)
+    foreign = view["ingredients"][0]["ref"]
+
+    recipe = await _new_recipe(
+        monkeypatch,
+        session,
+        user,
+        ingredients=[
+            {"ref": foreign, "quantity": 1, "food": "rice"},
+            {"ref": str(uuid4()), "quantity": 2, "food": "egg"},
+        ],
+        instructions=[{"text": "Cook.", "uses": [foreign]}],
+    )
+
+    stored = _stored(user, recipe.slug)
+    assert str(stored.recipe_ingredient[0].reference_id) != foreign
+    assert _links(user, recipe.slug) == [("Cook.", None, [], 0)]
+
+
 # ---------------------------------------------------------------------- scaling limits
 
 
