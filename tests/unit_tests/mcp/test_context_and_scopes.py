@@ -153,6 +153,24 @@ async def test_require_scope_logging(monkeypatch: pytest.MonkeyPatch, caplog: py
     assert all(secret not in m for m in msgs)
 
 
+@pytest.mark.asyncio
+async def test_require_scope_logs_the_given_tool_name(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    monkeypatch.setattr(auth, "get_access_token", lambda: _token("user-42", ["recipes:write"]))
+
+    async def _inner() -> int:
+        return 1
+
+    tool = auth.require_scope("recipes:write", name="update_recipe")(_inner)
+    with caplog.at_level(logging.INFO, logger="mcp"):
+        await tool()
+
+    msgs = [r.getMessage() for r in caplog.records if r.name == "mcp"]
+    assert len(msgs) == 1
+    assert re.fullmatch(r"tool=update_recipe user=user-42 ms=\d+ ok=True", msgs[0])
+
+
 def test_require_scope_sync_deny_and_no_token(monkeypatch: pytest.MonkeyPatch):
     @auth.require_scope("mealplan:write")
     def tool() -> int:

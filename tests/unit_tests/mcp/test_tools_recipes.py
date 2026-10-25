@@ -1,5 +1,6 @@
 import contextlib
 from datetime import UTC, date, datetime
+from uuid import UUID
 
 import pytest
 from mcp.server.auth.provider import AccessToken
@@ -227,8 +228,10 @@ async def test_get_recipe_by_slug_and_unknown_raises_not_found(
     assert recipe["description"] == "A test dish"
     assert recipe["tags"] == [tag["name"]]
     assert recipe["ingredients"][0]["display"] == "2 eggs"
-    assert set(recipe["ingredients"][0]) == {"quantity", "unit", "food", "note", "display"}
-    assert recipe["instructions"] == [{"title": "", "text": "Whisk the eggs."}]
+    assert set(recipe["ingredients"][0]) == {"quantity", "unit", "food", "note", "display", "ref", "section"}
+    assert recipe["ingredients"][0]["section"] is None
+    assert UUID(recipe["ingredients"][0]["ref"])
+    assert recipe["instructions"] == [{"title": "", "text": "Whisk the eggs.", "timer_minutes": None, "uses": []}]
     assert recipe["notes"] == [{"title": "Tip", "text": "Use fresh eggs."}]
     assert recipe["url"].endswith(f"/r/{slug}")
     assert set(recipe["times"]) == {"total", "prep", "cook"}

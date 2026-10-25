@@ -28,10 +28,13 @@ def _log(name: str, user: str, started: float, ok: bool) -> None:
     logger.info("tool=%s user=%s ms=%d ok=%s", name, user, int((time.monotonic() - started) * 1000), ok)
 
 
-def require_scope(scope: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Reject the call unless the access token carries `scope`; also logs one line per call (no arguments/results)."""
+def require_scope(scope: str, name: str | None = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Reject the call unless the access token carries `scope`; also logs one line per call (no arguments/results).
+
+    The log line names the tool `name`, defaulting to the function's own name."""
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        tool_name = name or fn.__name__
         if inspect.iscoroutinefunction(fn):
 
             @functools.wraps(fn)
@@ -43,7 +46,7 @@ def require_scope(scope: str) -> Callable[[Callable[..., Any]], Callable[..., An
                     ok = True
                     return result
                 finally:
-                    _log(fn.__name__, user, started, ok)
+                    _log(tool_name, user, started, ok)
 
             return async_wrapper
 
@@ -56,7 +59,7 @@ def require_scope(scope: str) -> Callable[[Callable[..., Any]], Callable[..., An
                 ok = True
                 return result
             finally:
-                _log(fn.__name__, user, started, ok)
+                _log(tool_name, user, started, ok)
 
         return wrapper
 

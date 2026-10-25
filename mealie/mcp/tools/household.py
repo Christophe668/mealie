@@ -360,8 +360,8 @@ async def update_household_profile(
     household: dict[str, Any] | None = None,
     add_to: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Record who eats here and how the household cooks. Always confirm with the user before calling
-    it, and never infer allergies: record an allergy only when the user states it.
+    """Record who eats here and how the household cooks. Never infer allergies: record an allergy only
+    when the user states it.
     members: [{id?, name?, user_id?, is_child?, diet?, allergies?, exclusions?, dislikes?, likes?,
     notes?}]; an entry with `id` (from get_household_context) updates only the fields given (a list
     given replaces that list), one without `id` creates a member (`name` required, at most 60

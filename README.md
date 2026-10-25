@@ -7,6 +7,7 @@
 > Pantry: track what you have and put the shopping away; Claude reads it and estimates freshness. See [docs/superpowers/specs/2026-10-24-pantry-slice-design.md](docs/superpowers/specs/2026-10-24-pantry-slice-design.md)
 > Recipe feedback: say how a meal went (Loved it / It was fine / Not again) in cook mode or to Claude; Claude avoids "Not again" recipes. See [docs/superpowers/specs/2026-10-24-feedback-slice-design.md](docs/superpowers/specs/2026-10-24-feedback-slice-design.md)
 > Household profiles: record who eats here (diets, allergies, dislikes, likes) and how you cook on the Household page; Claude treats allergies as hard constraints and asks before recording what it learns. See [docs/superpowers/specs/2026-10-25-profiles-slice-design.md](docs/superpowers/specs/2026-10-25-profiles-slice-design.md)
+> Claude writes recipes: create a recipe Claude wrote, import one from a web link, or change one ("make it for 4") from claude.ai, with structured ingredients ready for shopping and scaling; Claude follows your own instructions about confirming. See [docs/superpowers/specs/2026-10-25-recipe-writing-slice-design.md](docs/superpowers/specs/2026-10-25-recipe-writing-slice-design.md)
 > Upstream: [mealie-recipes/mealie](https://github.com/mealie-recipes/mealie), merged from `upstream/mealie-next`.
 
 [![Latest Release][latest-release-shield]][latest-release-url]

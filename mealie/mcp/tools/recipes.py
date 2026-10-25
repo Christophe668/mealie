@@ -19,10 +19,12 @@ from mealie.mcp.tools._summaries import (
     recipe_brief,
     recipe_url,
     summary_dict,
+    time_text,
 )
 from mealie.repos.repository_generic import GroupRepositoryGeneric
 from mealie.schema.recipe.recipe import Recipe
 from mealie.schema.response.pagination import OrderByNullPosition, OrderDirection, PaginationQuery
+from mealie.services.claude_context.recipe_writer import timer_minutes
 from mealie.services.query_filter.builder import QueryFilterBuilder
 
 OrderBy = Literal["name", "rating", "random", "last_made", "created_at"]
@@ -167,6 +169,9 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
     service = feedback_service(ctx)
     feedback = service.list(recipe.id, page=1, per_page=RECIPE_FEEDBACK_LIMIT).items
     summary = service.summaries([recipe.id]).get(recipe.id) if recipe.id else None
+    # link rows have no stored order (PostgreSQL returns them in any order):
+    # list them as the recipe lists its ingredients
+    position = {str(i.reference_id): n for n, i in enumerate(recipe.recipe_ingredient)}
     return {
         "id": str(recipe.id),
         "name": recipe.name,
@@ -174,7 +179,11 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
         "description": recipe.description,
         "servings": recipe.recipe_servings or None,
         "yield": recipe.recipe_yield,
-        "times": {"total": recipe.total_time, "prep": recipe.prep_time, "cook": recipe.perform_time},
+        "times": {
+            "total": time_text(recipe.total_time, recipe.total_time_seconds),
+            "prep": time_text(recipe.prep_time, recipe.prep_time_seconds),
+            "cook": time_text(recipe.perform_time, recipe.perform_time_seconds),
+        },
         "ingredients": [
             {
                 "quantity": i.quantity,
@@ -182,10 +191,24 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
                 "food": i.food.name if i.food else None,
                 "note": i.note,
                 "display": i.display,
+                # identity and section, for update_recipe to send back
+                "ref": str(i.reference_id),
+                "section": i.title or None,
             }
             for i in recipe.recipe_ingredient
         ],
-        "instructions": [{"title": s.title, "text": s.text} for s in recipe.recipe_instructions or []],
+        "instructions": [
+            {
+                "title": s.title,
+                "text": s.text,
+                "timer_minutes": timer_minutes(s.duration_seconds),
+                "uses": sorted(
+                    (str(r.reference_id) for r in s.ingredient_references if r.reference_id),
+                    key=lambda ref: position.get(ref, len(position)),
+                ),
+            }
+            for s in recipe.recipe_instructions or []
+        ],
         "tags": [t.name for t in recipe.tags or []],
         "categories": [c.name for c in recipe.recipe_category or []],
         "tools": [t.name for t in recipe.tools],

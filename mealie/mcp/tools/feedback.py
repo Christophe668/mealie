@@ -118,7 +118,8 @@ async def record_recipe_feedback(
     made_on: str | None = None,
 ) -> dict[str, Any]:
     """Record how a meal went, for this household. Call it whenever the user says how a meal went
-    ("the kids loved the lasagne", "never again", "too much work").
+    ("the kids loved the lasagne", "never again", "too much work"). Record only what the user
+    actually said; don't invent a verdict.
     `recipe` is a slug or id (from search_recipes, get_recipe or get_recent_meals).
     `verdict` is "loved", "ok" or "never_again"; `never_again` means do not propose the recipe again
     unless the user asks for it, and `loved` recipes are the ones to prefer when the user wants

@@ -79,8 +79,8 @@ from mealie.services.recipe.recipe_data_service import (
     NotAnImageError,
     RecipeDataService,
 )
+from mealie.services.recipe.recipe_web_import import import_from_web
 from mealie.services.scraper.recipe_bulk_scraper import RecipeBulkScraperService
-from mealie.services.scraper.scraped_extras import ScraperContext
 from mealie.services.scraper.scraper import create_from_html
 from mealie.services.scraper.scraper_strategies import (
     ForceTimeoutException,
@@ -364,16 +364,18 @@ class RecipeController(BaseRecipeController):
             url = req.url
 
         async def create(on_progress: Callable[[str], Awaitable[None]]) -> str:
-            recipe, extras = await create_from_html(
-                url,
+            new_recipe = await import_from_web(
                 self.repos,
+                self.service,
                 self.translator,
+                url,
                 html,
-                on_progress=on_progress,
                 include_tags=req.include_tags,
                 include_categories=req.include_categories,
+                on_progress=on_progress,
+                scrape=create_from_html,  # looked up here, so it can be patched on this module
             )
-            return self._finish_recipe_from_web(req, recipe, extras)
+            return self._finish_recipe_from_web(new_recipe)
 
         return self._stream_recipe_creation(create)
 
@@ -402,16 +404,8 @@ class RecipeController(BaseRecipeController):
 
         return self._stream_recipe_creation(create)
 
-    def _finish_recipe_from_web(self, req: ScrapeRecipe | ScrapeRecipeData, recipe: Recipe, extras: object) -> str:
-        if req.include_tags:
-            ctx = ScraperContext(self.repos)
-            recipe.tags = extras.use_tags(ctx)  # type: ignore
-
-        if req.include_categories:
-            ctx = ScraperContext(self.repos)
-            recipe.recipe_category = extras.use_categories(ctx)  # type: ignore
-
-        new_recipe = self.service.create_one(recipe)
+    def _finish_recipe_from_web(self, new_recipe: Recipe) -> str:
+        """The recipe `import_from_web` saved: publish it (the shared import doesn't) and return its slug."""
         self._publish_recipe_created(new_recipe)
         return new_recipe.slug
 
