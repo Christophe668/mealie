@@ -22,6 +22,8 @@ if TYPE_CHECKING:
         GroupInviteToken,
         GroupRecipeAction,
         GroupWebhooksModel,
+        HouseholdMealPreferences,
+        HouseholdMemberProfile,
         HouseholdPreferencesModel,
         PantryItem,
         RecipeFeedback,
@@ -70,10 +72,17 @@ class Household(SqlAlchemyBase, BaseMixins):
 
     # Households, members and recipes are listed group-wide, and the query filter builder walks any relationship
     # it is not told to skip: without `filterable: False`, `pantry_items.name = "..."` on `/api/groups/households`
-    # (or `user.household.recipe_feedback.*` on recipes) would be an oracle on another household's data.
+    # (or `user.household.recipe_feedback.*` on recipes) would be an oracle on another household's data. The same
+    # holds for `member_profiles` and `meal_preferences` (`household.member_profiles.name` on members).
     pantry_items: Mapped[list[PantryItem]] = orm.relationship("PantryItem", **COMMON_ARGS, info={"filterable": False})
     recipe_feedback: Mapped[list[RecipeFeedback]] = orm.relationship(
         "RecipeFeedback", **COMMON_ARGS, info={"filterable": False}
+    )
+    member_profiles: Mapped[list[HouseholdMemberProfile]] = orm.relationship(
+        "HouseholdMemberProfile", **COMMON_ARGS, info={"filterable": False}
+    )
+    meal_preferences: Mapped[HouseholdMealPreferences | None] = orm.relationship(
+        "HouseholdMealPreferences", **COMMON_ARGS, uselist=False, info={"filterable": False}
     )
 
     made_recipes: Mapped[list[RecipeModel]] = orm.relationship(
@@ -101,6 +110,8 @@ class Household(SqlAlchemyBase, BaseMixins):
             "made_recipes",
             "pantry_items",
             "recipe_feedback",
+            "member_profiles",
+            "meal_preferences",
         }
     )
 

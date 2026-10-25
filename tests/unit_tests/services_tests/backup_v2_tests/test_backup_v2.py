@@ -12,6 +12,7 @@ from mealie.db.models._model_utils.guid import GUID
 from mealie.db.models.group import Group
 from mealie.db.models.household.cookbook import CookBook
 from mealie.db.models.household.household import Household
+from mealie.db.models.household.household_profile import HouseholdMemberProfile
 from mealie.db.models.household.household_to_recipe import HouseholdToRecipe
 from mealie.db.models.household.mealplan import GroupMealPlanRules
 from mealie.db.models.household.shopping_list import ShoppingList
@@ -24,6 +25,8 @@ from mealie.db.models.users.users import User
 from mealie.services.backups_v2.alchemy_exporter import AlchemyExporter
 from mealie.services.backups_v2.backup_file import BackupFile
 from mealie.services.backups_v2.backup_v2 import BackupV2
+from tests.utils.factories import random_string
+from tests.utils.fixture_schemas import TestUser
 
 
 def dict_sorter(d: dict) -> Any:
@@ -67,6 +70,43 @@ def test_database_restore():
 
     for s1, s2 in zip(snapshop_1, snapshop_2, strict=False):
         assert snapshop_1[s1].sort(key=dict_sorter) == snapshop_2[s2].sort(key=dict_sorter)
+
+
+def test_restore_keeps_the_profile_of_a_deleted_user(unique_user_fn_scoped: TestUser):
+    """A restore drops rows whose foreign keys dangle, so deleting a linked user must clear the profile's
+    `user_id` on every database (SQLite does not enforce the FK's SET NULL), or the profile and its allergies
+    would be lost by the next backup and restore."""
+    user = unique_user_fn_scoped
+    repos = user.repos
+    group = repos.groups.get_one(user.group_id)
+    household = repos.households.get_one(user.household_id)
+    assert group is not None and household is not None
+    extra = repos.users.create(
+        {
+            "username": random_string(),
+            "email": f"{random_string()}@example.com",
+            "group": group.name,
+            "household": household.name,
+            "full_name": random_string(),
+            "password": random_string(),
+            "admin": False,
+        }
+    )
+    profile = repos.member_profiles.create(
+        {"name": "Leaving", "user_id": extra.id, "allergies": ["sesame"], "dislikes": ["fennel"]}
+    )
+    repos.users.delete(extra.id)
+
+    settings = get_app_settings()
+    backup_v2 = BackupV2(settings.DB_URL)
+    path_to_backup = backup_v2.backup()
+    backup_v2.restore(path_to_backup)
+    backup_v2.db_exporter.engine.dispose()
+
+    with session_context() as session:
+        row = session.get(HouseholdMemberProfile, profile.id)
+        assert row is not None
+        assert (row.name, row.user_id, row.allergies, row.dislikes) == ("Leaving", None, ["sesame"], ["fennel"])
 
 
 def _5ab195a474eb_add_normalized_search_properties(session: Session):

@@ -67,6 +67,7 @@ const SHOP_PATH = "/shopping-lists";
 const PANTRY_PATH = "/household/pantry";
 const CONNECTIONS_PATH = "/user/connections";
 const SETTINGS_PATH = "/user/profile";
+const HOUSEHOLD_PATH = "/household/profile";
 const ADMIN_PATH = "/admin/site-settings";
 // The key the dark-mode plugin's useDark() persists to; writing it here switches the theme everywhere.
 const COLOR_SCHEME_KEY = "vueuse-color-scheme";
@@ -221,6 +222,7 @@ const userItems = computed<AppShellMenuItem[]>(() => {
   }
   const items: AppShellMenuItem[] = [
     { key: "profile", label: i18n.t("app-shell.profile"), to: SETTINGS_PATH, icon: "user" },
+    { key: "household", label: i18n.t("app-shell.household"), to: HOUSEHOLD_PATH, icon: "household" },
   ];
   if (auth.user.value?.admin) {
     items.push({ key: "admin", label: i18n.t("app-shell.admin"), to: ADMIN_PATH, icon: "wrench" });

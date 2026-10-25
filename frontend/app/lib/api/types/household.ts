@@ -7,6 +7,7 @@
 
 export type GroupRecipeActionType = "link" | "post";
 export type WebhookType = "mealplan";
+export type Diet = "none" | "vegetarian" | "vegan" | "pescatarian" | "halal" | "kosher" | "other";
 export type PantryLocation = "fridge" | "freezer" | "cupboard" | "other";
 export type PantrySource = "shopping" | "manual" | "leftover";
 export type FeedbackVerdict = "loved" | "ok" | "never_again";
@@ -227,6 +228,40 @@ export interface ReadWebhook {
   householdId: string;
   id: string;
 }
+export interface HouseholdProfileOut {
+  members?: MemberProfileOut[];
+  preferences?: MealPreferencesOut | null;
+}
+export interface MemberProfileOut {
+  id: string;
+  groupId: string;
+  householdId: string;
+  userId?: string | null;
+  name: string;
+  isChild?: boolean;
+  diet?: Diet;
+  allergies?: string[];
+  exclusions?: string[];
+  dislikes?: string[];
+  likes?: string[];
+  notes?: string | null;
+  position?: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+export interface MealPreferencesOut {
+  id: string;
+  groupId: string;
+  householdId: string;
+  defaultServings?: number | null;
+  quickWeekdays?: number[];
+  weeknightMaxMinutes?: number | null;
+  weekendMaxMinutes?: number | null;
+  favouriteCuisines?: string[];
+  notes?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
 export interface HouseholdRecipeBase {
   lastMade?: string | null;
 }
@@ -265,6 +300,38 @@ export interface HouseholdSummary {
   id: string;
   slug: string;
   preferences?: ReadHouseholdPreferences | null;
+}
+export interface MealPreferencesUpdate {
+  defaultServings?: number | null;
+  quickWeekdays?: number[] | null;
+  weeknightMaxMinutes?: number | null;
+  weekendMaxMinutes?: number | null;
+  favouriteCuisines?: string[] | null;
+  notes?: string | null;
+}
+export interface MemberProfileCreate {
+  name: string;
+  userId?: string | null;
+  isChild?: boolean;
+  diet?: Diet;
+  allergies?: string[];
+  exclusions?: string[];
+  dislikes?: string[];
+  likes?: string[];
+  notes?: string | null;
+  position?: number;
+}
+export interface MemberProfileUpdate {
+  name?: string | null;
+  userId?: string | null;
+  isChild?: boolean | null;
+  diet?: Diet | null;
+  allergies?: string[] | null;
+  exclusions?: string[] | null;
+  dislikes?: string[] | null;
+  likes?: string[] | null;
+  notes?: string | null;
+  position?: number | null;
 }
 export interface PantryItemCreate {
   name: string;

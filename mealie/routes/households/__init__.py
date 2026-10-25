@@ -4,6 +4,7 @@ from . import (
     controller_cookbooks,
     controller_group_notifications,
     controller_group_recipe_actions,
+    controller_household_profile,
     controller_household_self_service,
     controller_invitations,
     controller_mealplan,
@@ -26,6 +27,7 @@ router.include_router(controller_invitations.router)
 router.include_router(controller_pantry.router)
 router.include_router(controller_pantry.put_away_router)
 router.include_router(controller_recipe_feedback.router)
+router.include_router(controller_household_profile.router)
 router.include_router(controller_shopping_lists.router)
 router.include_router(controller_shopping_lists.item_router)
 router.include_router(controller_webhooks.router)

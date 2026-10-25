@@ -183,8 +183,10 @@ def generate_typescript_types() -> None:  # noqa: C901
                     continue
 
                 if type_name := extract_property_type_name(line):
-                    if type_name in replacement_map:
-                        line = line.replace(type_name, replacement_map[type_name])
+                    # the property type may be a union ("Diet2 | null"), so replace each numbered name in it
+                    for numbered, numberless in replacement_map.items():
+                        if re.search(rf"\b{numbered}\b", type_name):
+                            line = re.sub(rf"\b{numbered}\b", numberless, line)
 
                 lines.append(line)
 
