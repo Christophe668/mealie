@@ -123,6 +123,12 @@ households_permissions = "/api/households/permissions"
 """`/api/households/permissions`"""
 households_preferences = "/api/households/preferences"
 """`/api/households/preferences`"""
+households_profile = "/api/households/profile"
+"""`/api/households/profile`"""
+households_profile_members = "/api/households/profile/members"
+"""`/api/households/profile/members`"""
+households_profile_preferences = "/api/households/profile/preferences"
+"""`/api/households/profile/preferences`"""
 households_recipe_actions = "/api/households/recipe-actions"
 """`/api/households/recipe-actions`"""
 households_recipe_feedback = "/api/households/recipe-feedback"
@@ -438,6 +444,11 @@ def households_mealplans_rules_item_id(item_id):
 def households_pantry_item_id(item_id):
     """`/api/households/pantry/{item_id}`"""
     return f"{prefix}/households/pantry/{item_id}"
+
+
+def households_profile_members_item_id(item_id):
+    """`/api/households/profile/members/{item_id}`"""
+    return f"{prefix}/households/profile/members/{item_id}"
 
 
 def households_recipe_actions_item_id(item_id):
