@@ -16,7 +16,13 @@
     <p v-if="step.title?.trim()" class="cook-step__section">
       {{ step.title }}
     </p>
-    <span class="cook-step__number cook-step__number--current" aria-hidden="true">{{ number }}</span>
+    <div class="cook-step__head">
+      <span class="cook-step__number cook-step__number--current" aria-hidden="true">{{ number }}</span>
+      <span v-if="action" class="cook-step__action">
+        <DsIcon :name="action.icon" :size="22" />
+        {{ $t(`step-action.${action.key}`) }}
+      </span>
+    </div>
     <!-- Sanitised markdown, as everywhere else steps are shown. -->
     <!-- eslint-disable-next-line vue/no-v-html -->
     <div class="cook-step__text" v-html="html" />
@@ -38,8 +44,10 @@
 <script setup lang="ts">
 import { marked } from "marked";
 import DsButton from "~/components/Design/DsButton.vue";
+import DsIcon from "~/components/Design/DsIcon.vue";
 import type { CookTimerSpec } from "~/composables/use-cook-timers";
 import type { RecipeStep } from "~/lib/api/types/recipe";
+import { stepAction } from "~/lib/recipe/step-action";
 import { sanitizeMarkdownHtml } from "~/lib/sanitize/markdown";
 
 export type StepTimerState = "idle" | "running" | "paused" | "done";
@@ -65,6 +73,8 @@ const timerActionKey: Record<StepTimerState, string> = {
   paused: "cook.resume-timer",
   done: "cook.restart-timer",
 };
+
+const action = computed(() => stepAction(props.step.text));
 
 const html = computed(() => sanitizeMarkdownHtml(marked.parse(props.step.text || "", { async: false, breaks: true }) as string, []));
 
@@ -129,12 +139,28 @@ const plain = computed(() => {
   font-weight: 600;
 }
 
-.cook-step__number--current {
-  display: block;
+.cook-step__head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 2);
   margin-bottom: var(--ds-space);
+}
+
+.cook-step__number--current {
   color: var(--ds-text-2);
   font-size: var(--ds-t-5);
   line-height: 1;
+}
+
+.cook-step__action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space);
+  color: var(--ds-accent);
+  font-size: var(--ds-t-2);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .cook-step__text {

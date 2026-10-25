@@ -151,6 +151,17 @@ import {
   mdiCalendarEdit,
   mdiNoteTextOutline,
 
+  mdiBlender,
+  mdiGrill,
+  mdiHandBackRightOutline,
+  mdiMicrowave,
+  mdiPan,
+  mdiShakerOutline,
+  mdiSnowflake,
+  mdiStove,
+  mdiThermometer,
+  mdiToasterOven,
+  mdiWater,
 } from "@mdi/js";
 
 export const icons = {
@@ -318,4 +329,16 @@ export const icons = {
   chevronDown: mdiChevronDown,
   chevronRight: mdiChevronRight,
   chevronLeft: mdiChevronLeft,
+  // Step actions (lib/recipe/step-action.ts)
+  blender: mdiBlender,
+  grill: mdiGrill,
+  knead: mdiHandBackRightOutline,
+  microwave: mdiMicrowave,
+  pan: mdiPan,
+  shaker: mdiShakerOutline,
+  snowflake: mdiSnowflake,
+  stove: mdiStove,
+  thermometer: mdiThermometer,
+  oven: mdiToasterOven,
+  water: mdiWater,
 };
