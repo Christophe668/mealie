@@ -6,6 +6,7 @@
 > UI redesigned ("Mise en place"): see [docs/superpowers/specs/2026-10-24-ui-redesign-design.md](docs/superpowers/specs/2026-10-24-ui-redesign-design.md)
 > Pantry: track what you have and put the shopping away; Claude reads it and estimates freshness. See [docs/superpowers/specs/2026-10-24-pantry-slice-design.md](docs/superpowers/specs/2026-10-24-pantry-slice-design.md)
 > Recipe feedback: say how a meal went (Loved it / It was fine / Not again) in cook mode or to Claude; Claude avoids "Not again" recipes. See [docs/superpowers/specs/2026-10-24-feedback-slice-design.md](docs/superpowers/specs/2026-10-24-feedback-slice-design.md)
+> Household profiles: record who eats here (diets, allergies, dislikes, likes) and how you cook on the Household page; Claude treats allergies as hard constraints and asks before recording what it learns. See [docs/superpowers/specs/2026-10-25-profiles-slice-design.md](docs/superpowers/specs/2026-10-25-profiles-slice-design.md)
 > Upstream: [mealie-recipes/mealie](https://github.com/mealie-recipes/mealie), merged from `upstream/mealie-next`.
 
 [![Latest Release][latest-release-shield]][latest-release-url]
