@@ -1589,7 +1589,16 @@
     "last-step": "That’s the last step.",
     "save-failed": "Couldn’t record that you made it.",
     "no-steps": "This recipe has no steps yet.",
-    "for-this-step": "For this step"
+    "for-this-step": "For this step",
+    "from-your-pantry": "From your pantry",
+    "pantry-outcome-label": "What’s left of {name}?",
+    "used-up": "Used up",
+    "some-left": "Some left",
+    "leftovers": "Leftovers",
+    "leftover-portions": "No leftovers | {count} portion | {count} portions",
+    "fewer-portions": "Fewer portions",
+    "more-portions": "More portions",
+    "leftovers-go": "Where the leftovers go"
   },
   "shop": {
     "other": "Other",

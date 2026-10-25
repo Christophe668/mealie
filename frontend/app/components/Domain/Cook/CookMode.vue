@@ -61,9 +61,9 @@
           v-if="isLast"
           class="cook__finish"
           :recipe-id="recipe.id || ''"
-          :recipe-slug="recipe.slug || ''"
           :back-to="backTo"
           :logged-in="loggedIn"
+          :scale="scale"
         />
       </div>
 
