@@ -11,6 +11,10 @@
         <div class="read-steps__card">
           <span class="read-steps__number ds-title" aria-hidden="true">{{ index + 1 }}</span>
           <div class="read-steps__body">
+            <p v-if="step.action" class="read-steps__action">
+              <DsIcon :name="step.action.icon" :size="16" />
+              {{ $t(`step-action.${step.action.key}`) }}
+            </p>
             <SafeMarkdown class="read-steps__text ds-body" :source="step.text" />
             <ul v-if="step.timers.length" class="read-steps__timers" role="list">
               <li v-for="(timer, tIndex) in step.timers" :key="tIndex">
@@ -33,6 +37,7 @@ import { useId } from "vue";
 import DsChip from "~/components/Design/DsChip.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
 import SafeMarkdown from "~/components/global/SafeMarkdown.vue";
+import { stepAction } from "~/lib/recipe/step-action";
 import { findStepTimers } from "~/lib/recipe/step-timers";
 import type { RecipeStep } from "~/lib/api/types/recipe";
 
@@ -46,6 +51,7 @@ const items = computed(() =>
     title: step.title?.trim() || "",
     text: step.text || "",
     timers: findStepTimers(step.text),
+    action: stepAction(step.text),
   })),
 );
 </script>
@@ -88,6 +94,18 @@ const items = computed(() =>
 .read-steps__number {
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
+}
+
+.read-steps__action {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 0.75);
+  margin: 0 0 calc(var(--ds-space) * 0.75);
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-1);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .read-steps__text {
