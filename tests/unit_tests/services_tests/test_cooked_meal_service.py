@@ -474,3 +474,45 @@ def test_uncook_entry_keeps_last_made(unique_user: TestUser, h2_user: TestUser):
 
     with pytest.raises(NoEntryFound):
         service.uncook_entry(_plan(h2_user, recipe, TODAY).id)
+
+
+def _title_only(user: TestUser, day: date) -> ReadPlanEntry:
+    return user.repos.meals.create(
+        SavePlanEntry(date=day, title="Takeaway", group_id=user.group_id, user_id=user.user_id)
+    )
+
+
+def test_mark_entry_recipe_entry_records(unique_user: TestUser):
+    service = _service(unique_user)
+    recipe = _recipe(unique_user)
+    entry = _plan(unique_user, recipe, TODAY)
+
+    out = service.mark_entry(entry.id, TODAY)
+
+    assert out.meal_plan_entry is not None and out.meal_plan_entry.id == entry.id
+    assert out.leftover is None and out.feedback is None and out.kept_items == [] and out.removed_item_ids == []
+    assert _entry(unique_user, entry.id).cooked_at == _noon(TODAY)
+    assert _last_made(unique_user, recipe) == _noon(TODAY)
+    with pytest.raises(AlreadyCookedError):
+        service.mark_entry(entry.id, TODAY)
+
+
+def test_mark_entry_title_only(unique_user: TestUser):
+    service = _service(unique_user)
+    entry = _title_only(unique_user, TODAY)
+
+    out = service.mark_entry(entry.id, TODAY)
+
+    assert out.meal_plan_entry is not None and out.meal_plan_entry.id == entry.id
+    assert out.leftover is None and out.feedback is None and out.kept_items == []
+    assert _entry(unique_user, entry.id).cooked_at == _noon(TODAY)
+    with pytest.raises(AlreadyCookedError):
+        service.mark_entry(entry.id, TODAY)
+
+
+def test_mark_entry_other_household(unique_user: TestUser, h2_user: TestUser):
+    service = _service(unique_user)
+    with pytest.raises(NoEntryFound):
+        service.mark_entry(_title_only(h2_user, TODAY).id, TODAY)
+    with pytest.raises(NoEntryFound):
+        service.mark_entry(_plan(h2_user, _recipe(h2_user), TODAY).id, TODAY)

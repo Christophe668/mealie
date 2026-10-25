@@ -215,6 +215,21 @@ class CookedMealService(BaseService):
             feedback=feedback,
         )
 
+    def mark_entry(self, entry_id: int, cooked_on: date) -> CookedMealOut:
+        """Tick a meal plan entry done. A recipe entry is recorded as a cooking (no pantry outcomes, leftovers or
+        feedback); a title-only entry just gets `cooked_at` (no last made). `NoEntryFound` outside the household,
+        `AlreadyCookedError` when it is done already."""
+        entry = self.repos.meals.get_one(entry_id)  # household-scoped
+        if entry is None:
+            raise NoEntryFound("Meal plan entry not found.")
+        if entry.recipe_id is not None:
+            return self.record(
+                CookedMealCreate(recipe_id=entry.recipe_id, meal_plan_entry_id=entry.id, cooked_on=cooked_on)
+            )
+        if entry.cooked_at is not None:
+            raise AlreadyCookedError(_local_day(entry.cooked_at))
+        return CookedMealOut(meal_plan_entry=self.repos.meals.patch(entry.id, {"cooked_at": local_noon(cooked_on)}))
+
     def uncook_entry(self, entry_id: int) -> ReadPlanEntry:
         """Clear an entry's done state; last made is left as it is. `NoEntryFound` outside the household."""
         entry = self.repos.meals.get_one(entry_id)

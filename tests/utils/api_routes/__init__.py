@@ -99,6 +99,8 @@ groups_storage = "/api/groups/storage"
 """`/api/groups/storage`"""
 households_cookbooks = "/api/households/cookbooks"
 """`/api/households/cookbooks`"""
+households_cooking = "/api/households/cooking"
+"""`/api/households/cooking`"""
 households_events_notifications = "/api/households/events/notifications"
 """`/api/households/events/notifications`"""
 households_invitations = "/api/households/invitations"
@@ -416,6 +418,11 @@ def households_cookbooks_item_id(item_id):
     return f"{prefix}/households/cookbooks/{item_id}"
 
 
+def households_cooking_recipe_id_pantry_check(recipe_id):
+    """`/api/households/cooking/{recipe_id}/pantry-check`"""
+    return f"{prefix}/households/cooking/{recipe_id}/pantry-check"
+
+
 def households_events_notifications_item_id(item_id):
     """`/api/households/events/notifications/{item_id}`"""
     return f"{prefix}/households/events/notifications/{item_id}"
@@ -434,6 +441,11 @@ def households_mealplans_ical_token(token):
 def households_mealplans_item_id(item_id):
     """`/api/households/mealplans/{item_id}`"""
     return f"{prefix}/households/mealplans/{item_id}"
+
+
+def households_mealplans_item_id_cooked(item_id):
+    """`/api/households/mealplans/{item_id}/cooked`"""
+    return f"{prefix}/households/mealplans/{item_id}/cooked"
 
 
 def households_mealplans_rules_item_id(item_id):
