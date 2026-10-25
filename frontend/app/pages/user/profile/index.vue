@@ -164,6 +164,21 @@
           md="6"
         >
           <UserProfileLinkCard
+            :link="{ text: $t('household-profile.settings-link'), to: `/household/profile` }"
+            image="/svgs/manage-members.svg"
+          >
+            <template #title>
+              {{ $t('household-profile.settings-title') }}
+            </template>
+            {{ $t('household-profile.settings-text') }}
+          </UserProfileLinkCard>
+        </v-col>
+        <v-col
+          cols="12"
+          sm="12"
+          md="6"
+        >
+          <UserProfileLinkCard
             :link="{ text: $t('profile.manage-cookbooks'), to: `/g/${groupSlug}/cookbooks` }"
             image="/svgs/manage-cookbooks.svg"
           >

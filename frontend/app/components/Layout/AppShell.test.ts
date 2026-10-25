@@ -300,11 +300,19 @@ describe("AppShell", () => {
 
     await trigger.trigger("click");
     const labels = wrapper.findAll("[role=menu] li > *").map(i => i.text().trim());
-    expect(labels).toEqual(["Profile", "Language", "Light theme", "Dark theme", "Match system theme", "Log out"]);
+    expect(labels).toEqual(["Profile", "Household", "Language", "Light theme", "Dark theme", "Match system theme", "Log out"]);
 
     await wrapper.find("[role=menu]").trigger("keydown", { key: "Escape" });
     expect(wrapper.find("[role=menu]").exists()).toBe(false);
     expect(document.activeElement).toBe(trigger.element);
+  });
+
+  test("the user menu links the Household page", async () => {
+    const wrapper = render();
+
+    await wrapper.find(userTriggers.rail).trigger("click");
+    const household = wrapper.findAll("[role=menuitem]").find(i => i.text().trim() === "Household");
+    expect(household?.attributes("href")).toBe("/household/profile");
   });
 
   test("admins also get the admin link", async () => {
@@ -396,7 +404,7 @@ describe("AppShell", () => {
 
     await wrapper.find(userTriggers["mobile top bar"]).trigger("click");
     const labels = wrapper.findAll("[role=menu] li > *").map(i => i.text().replace(/\s+/g, " ").trim());
-    expect(labels).toEqual(["Profile", "Announcements 2", "Language", "Light theme", "Dark theme", "Match system theme", "Log out"]);
+    expect(labels).toEqual(["Profile", "Household", "Announcements 2", "Language", "Light theme", "Dark theme", "Match system theme", "Log out"]);
     expect(menuButton(wrapper, "Announcements 2").find(".ds-menu__badge").text()).toBe("2");
   });
 
