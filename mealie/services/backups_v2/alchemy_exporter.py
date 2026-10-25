@@ -69,6 +69,7 @@ class AlchemyExporter(BaseService):
         "last_used_at",
         "revoked_at",
         "used_at",
+        "cooked_at",
     }
     """Column names restored back into datetimes. Anything stored as a `NaiveDateTime` and missing
     here comes back from a backup as a string; `test_every_datetime_column_survives_a_backup` guards
