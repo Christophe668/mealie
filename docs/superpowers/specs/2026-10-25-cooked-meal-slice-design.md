@@ -117,7 +117,9 @@ A single service operation records a cooking, so cook mode and Claude behave the
 3. marks the meal plan entry done (§ 4.1);
 4. applies the pantry outcomes and adds the leftover item.
 
-Steps 2-4 commit together; if any fails, nothing is kept and the error says so.
+Steps 2-4 commit together; if any fails, nothing is kept and the error says so. Mealie's repositories commit
+on every write, so the operation runs inside a small `single_commit(session)` context manager that turns those
+commits into flushes and commits once at the end (rolling back on any error). *(Designer's call.)*
 `feedback` (verdict, optional effort) is optional and only used by cook mode: when present, the feedback is
 recorded by the existing feedback service inside the same transaction, so cook mode makes one request and a
 retry never creates a second feedback row. Claude keeps calling `record_recipe_feedback` separately, only when
