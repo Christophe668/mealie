@@ -1,7 +1,7 @@
 <template>
   <article
     class="planner-card"
-    :class="[`planner-card--${layout}`, { 'planner-card--note': !recipe }]"
+    :class="[`planner-card--${layout}`, { 'planner-card--note': !recipe, 'planner-card--done': isCooked }]"
     :data-entry-id="entry.id"
   >
     <span v-if="recipe" class="planner-card__media">
@@ -34,6 +34,16 @@
         {{ title }}
       </button>
       <span v-if="servingsLabel" class="planner-card__fact">{{ servingsLabel }}</span>
+      <button
+        type="button"
+        class="planner-card__cooked ds-focus"
+        :aria-pressed="isCooked"
+        :disabled="busy"
+        @click="toggleCooked"
+      >
+        <DsIcon :name="isCooked ? 'checkBold' : 'check'" :size="16" />
+        {{ $t("planner.cooked") }}
+      </button>
     </div>
 
     <!-- Capture: the trigger's own click opens the menu, so the menu is back on its first step by then. -->
@@ -55,10 +65,12 @@
 </template>
 
 <script setup lang="ts">
+import { format } from "date-fns";
 import { nextTick, useTemplateRef } from "vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
 import AppShellMenu from "~/components/Layout/AppShellMenu.vue";
-import { useStaticRoutes } from "~/composables/api";
+import { useStaticRoutes, useUserApi } from "~/composables/api";
+import { alert } from "~/composables/use-toast";
 import type { PlanEntryType, ReadPlanEntry } from "~/lib/api/types/meal-plan";
 import type { AppShellMenuItem } from "~/types/application-types";
 
@@ -121,6 +133,43 @@ const servingsLabel = computed(() => {
   }
   return i18n.t("planner.scaled", { scale: i18n.n(scale, { maximumFractionDigits: 2 }) });
 });
+
+const cookedAt = ref(props.entry.cookedAt ?? null);
+watch(() => props.entry.cookedAt, value => (cookedAt.value = value ?? null));
+const isCooked = computed(() => !!cookedAt.value);
+const busy = ref(false);
+
+/** Ticks the meal done on the cook's own local day, or takes the tick back. */
+async function toggleCooked() {
+  if (busy.value) {
+    return;
+  }
+  busy.value = true;
+  const api = useUserApi().householdCooking;
+  try {
+    if (isCooked.value) {
+      const { error } = await api.unmarkCooked(props.entry.id);
+      if (error) {
+        throw error;
+      }
+      cookedAt.value = null;
+    }
+    else {
+      const { data, error, response } = await api.markCooked(props.entry.id, format(new Date(), "yyyy-MM-dd"));
+      // 409: already recorded as cooked, so the card is right to show it done
+      if (error && response?.status !== 409) {
+        throw error;
+      }
+      cookedAt.value = data?.mealPlanEntry?.cookedAt ?? new Date().toISOString();
+    }
+  }
+  catch {
+    alert.error(i18n.t("planner.cooked-failed"));
+  }
+  finally {
+    busy.value = false;
+  }
+}
 
 const step = ref<"actions" | "move">("actions");
 
@@ -282,6 +331,36 @@ function onMenuClick(event: MouseEvent) {
 .planner-card__fact {
   color: var(--ds-text-2);
   font-size: var(--ds-t-1);
+}
+
+.planner-card__cooked {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: calc(var(--ds-space) * 0.5);
+  padding: 0 calc(var(--ds-space) * 0.75) 0 calc(var(--ds-space) * 0.5);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-ctl);
+  background: none;
+  color: var(--ds-text-2);
+  font-family: inherit;
+  font-size: var(--ds-t-1);
+  line-height: 1.75;
+  cursor: pointer;
+}
+
+.planner-card__cooked[aria-pressed="true"] {
+  border-color: var(--ds-accent);
+  color: var(--ds-accent);
+}
+
+.planner-card__cooked:disabled {
+  cursor: progress;
+}
+
+.planner-card--done .planner-card__media,
+.planner-card--done .planner-card__title {
+  opacity: 0.6;
 }
 
 .planner-card__menu {

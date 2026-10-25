@@ -1442,6 +1442,8 @@
     "for-servings": "for {servings}",
     "scaled": "×{scale}",
     "entry-actions": "Actions for {title}",
+    "cooked": "Cooked",
+    "cooked-failed": "Couldn’t update that meal. Try again.",
     "open-recipe": "Open recipe",
     "change-servings": "Change servings",
     "edit": "Edit",
