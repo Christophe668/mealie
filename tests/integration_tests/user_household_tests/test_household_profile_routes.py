@@ -238,3 +238,35 @@ def test_preferences_upsert(api_client: TestClient, unique_user_fn_scoped: TestU
         response = api_client.put(api_routes.households_profile_preferences, json=body, headers=user.token)
         assert response.status_code == 422, body
     assert _profile(api_client, user)["preferences"] == updated
+
+
+def test_other_households_cannot_see_or_overwrite_preferences(
+    api_client: TestClient, unique_user: TestUser, h2_user: TestUser, g2_user: TestUser
+):
+    marker = f"Mine {random_string(8)}"
+    response = api_client.put(
+        api_routes.households_profile_preferences,
+        json={"defaultServings": 3, "notes": marker},
+        headers=unique_user.token,
+    )
+    assert response.status_code == 200, response.text
+    mine = response.json()
+
+    for other in (h2_user, g2_user):
+        theirs = _profile(api_client, other)["preferences"]
+        assert theirs is None or theirs["id"] != mine["id"]
+        assert theirs is None or theirs["notes"] != marker
+
+        # a PUT from another household writes that household's own row, never this one
+        response = api_client.put(
+            api_routes.households_profile_preferences,
+            json={"defaultServings": 8, "notes": "theirs"},
+            headers=other.token,
+        )
+        assert response.status_code == 200, response.text
+        written = response.json()
+        assert written["id"] != mine["id"]
+        assert written["householdId"] == str(other.household_id)
+        assert written["groupId"] == str(other.group_id)
+
+    assert _profile(api_client, unique_user)["preferences"] == mine
