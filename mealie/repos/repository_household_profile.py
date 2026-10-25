@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import Select, select
 
 from mealie.db.models.household.household_profile import HouseholdMealPreferences, HouseholdMemberProfile
-from mealie.schema.household.household_profile import MealPreferencesOut, MemberProfileOut
+from mealie.schema.household.household_profile import MealPreferencesOut, MemberProfileOut, name_key
 
 from .repository_generic import HouseholdRepositoryGeneric
 
@@ -71,20 +71,20 @@ class RepositoryMemberProfiles(HouseholdRepositoryGeneric[MemberProfileOut, Hous
         return None if row is None else self.schema.model_validate(row)
 
     def by_name_casefold(self, name: str) -> MemberProfileOut | None:
-        """The household's profile whose trimmed name equals `name`, case-folded.
+        """The household's profile whose name equals `name` once both are NFC-normalised, trimmed and case-folded.
 
         Compared in Python because SQLite's `lower()` only folds ASCII ("Crème" != "CRÈME").
         """
         return next(iter(self.all_by_name_casefold(name)), None)
 
     def all_by_name_casefold(self, name: str) -> list[MemberProfileOut]:
-        """Every profile of the household whose trimmed name equals `name`, case-folded, `id` descending.
+        """Every profile of the household whose name matches `name` (see `name_key`), `id` descending.
 
         Names are unique per household by a service check only, so old data or a lost race can hold several.
         """
-        target = name.strip().casefold()
+        target = name_key(name)
         stmt = self._scoped_select().order_by(HouseholdMemberProfile.id.desc())
-        return [row for row in self._all(stmt) if row.name.strip().casefold() == target]
+        return [row for row in self._all(stmt) if name_key(row.name) == target]
 
 
 class RepositoryMealPreferences(HouseholdRepositoryGeneric[MealPreferencesOut, HouseholdMealPreferences]):

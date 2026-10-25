@@ -92,6 +92,15 @@ def test_duplicate_name_is_a_conflict(api_client: TestClient, unique_user_fn_sco
     assert [m["name"] for m in _profile(api_client, user)["members"]] == ["Alex", "Sam"]
 
 
+def test_names_in_nfc_and_nfd_are_the_same_name(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    created = _create(api_client, user, name="Zoe\u0301")
+    assert created["name"] == "Zo\u00e9"
+
+    response = api_client.post(api_routes.households_profile_members, json={"name": "Zo\u00e9"}, headers=user.token)
+    assert response.status_code == 409
+
+
 def test_second_profile_for_a_user_is_a_conflict(api_client: TestClient, unique_user_fn_scoped: TestUser):
     user = unique_user_fn_scoped
     _create(api_client, user, name="Me", userId=str(user.user_id))
@@ -176,6 +185,7 @@ def test_requires_a_token(api_client: TestClient):
     [
         {},
         {"name": "   "},
+        {"name": "n" * 61},
         {"name": "x", "diet": "carnivore"},
         {"name": "x", "position": -1},
         {"name": "x", "allergies": ["a" * 61]},
@@ -194,7 +204,7 @@ def test_update_validation(api_client: TestClient, unique_user_fn_scoped: TestUs
     user = unique_user_fn_scoped
     member = _create(api_client, user, name="Sam", likes=["pasta"])
     item = api_routes.households_profile_members_item_id(member["id"])
-    for body in ({"name": ""}, {"likes": None}, {"diet": "carnivore"}, {"position": -2}):
+    for body in ({"name": ""}, {"name": "n" * 61}, {"likes": None}, {"diet": "carnivore"}, {"position": -2}):
         response = api_client.put(item, json=body, headers=user.token)
         assert response.status_code == 422, body
     assert (

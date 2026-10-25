@@ -262,6 +262,8 @@ def _invalid_cases(sam_id: str, foreign_user_id: str) -> list[tuple[dict[str, An
         ({"members": [{"name": "Kim", "notes": "n" * 501}]}, "notes"),
         ({"members": [{"is_child": True}]}, r"members\[1\]: name: Field required"),
         ({"members": [{"name": "   "}]}, "name must not be empty"),
+        ({"members": [{"name": "n" * 61}]}, "name must be at most 60 characters"),
+        ({"members": [{"name": "Zo\u00e9"}, {"name": "ZOE\u0301"}]}, "a member named 'Zo\u00e9' already exists"),
         ({"members": ["Kim"]}, "expected an object"),
         ({"members": [{"name": "SAM"}]}, "a member named 'Sam' already exists"),
         ({"members": [{"name": "Kim"}, {"name": "kim"}]}, "a member named 'Kim' already exists"),

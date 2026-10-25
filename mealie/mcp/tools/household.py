@@ -18,6 +18,7 @@ from mealie.schema.household.household_profile import (
     MemberProfileCreate,
     MemberProfileOut,
     MemberProfileUpdate,
+    name_key,
     normalise_list,
 )
 from mealie.services.claude_context.household_profile_service import (
@@ -143,7 +144,7 @@ def _validate[M: BaseModel](model: type[M], fields: dict[str, Any], where: str) 
 
 
 def _key(name: str) -> str:
-    return name.strip().casefold()
+    return name_key(name)
 
 
 class _Batch:
@@ -363,13 +364,17 @@ async def update_household_profile(
     it, and never infer allergies: record an allergy only when the user states it.
     members: [{id?, name?, user_id?, is_child?, diet?, allergies?, exclusions?, dislikes?, likes?,
     notes?}]; an entry with `id` (from get_household_context) updates only the fields given (a list
-    given replaces that list), one without `id` creates a member (`name` required). diet is none,
-    vegetarian, vegan, pescatarian, halal, kosher or other; user_id links a Mealie user of this household;
-    lists hold short strings (at most 60 characters, 30 entries, duplicates dropped).
+    given replaces that list), one without `id` creates a member (`name` required, at most 60
+    characters, unique ignoring case). diet is none, vegetarian, vegan, pescatarian, halal, kosher or
+    other; user_id links a Mealie user of this household and `user_id: null` unlinks it; lists hold
+    short strings (at most 60 characters, 30 entries, duplicates dropped) and are cleared by sending [],
+    never null; `notes: null` clears the notes.
     remove_member_ids: [id].
-    household: {default_servings? (1-20), quick_weekdays? ([0-6], 0 = Monday), weeknight_max_minutes?,
-    weekend_max_minutes? (5-480), favourite_cuisines?, notes?}; fields left out keep their value, null
-    clears one.
+    household: {default_servings? (1-20), quick_weekdays? ([0-6]), weeknight_max_minutes?,
+    weekend_max_minutes? (5-480), favourite_cuisines?, notes?}; fields left out keep their value.
+    quick_weekdays uses 0 = Monday ... 6 = Sunday, which is NOT the 0 = Sunday of get_household_context's
+    first_day_of_week. Lists (quick_weekdays, favourite_cuisines) are cleared by sending [], never null;
+    the other fields (default_servings, the max minutes, notes) are cleared by sending null.
     add_to: {member: name or id, field: "allergies"|"exclusions"|"dislikes"|"likes", values: [str]}
     appends to that list without replacing it; prefer it for what you learn in conversation ("Sam
     doesn't eat mushrooms").

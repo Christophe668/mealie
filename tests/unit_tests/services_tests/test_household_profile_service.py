@@ -132,6 +132,41 @@ def test_name_unique_case_insensitive(unique_user_fn_scoped: TestUser):
     assert len(service.get().members) == 2
 
 
+ZOE_NFC = "Zo\u00e9"
+ZOE_NFD = "Zoe\u0301"
+
+
+def test_name_nfc_and_nfd_spellings_clash(unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    service = _service(user)
+    zoe = service.create_member(MemberProfileCreate(name=ZOE_NFD))
+    assert zoe.name == ZOE_NFC  # stored normalised
+
+    with pytest.raises(ProfileConflict):
+        service.create_member(MemberProfileCreate(name=ZOE_NFC))
+    with pytest.raises(ProfileConflict):
+        service.create_member(MemberProfileCreate(name=ZOE_NFD.upper()))
+
+    # a row stored as NFD before names were normalised still clashes and is still found by name
+    user.repos.session.execute(
+        update(HouseholdMemberProfile).where(HouseholdMemberProfile.id == zoe.id).values(name=ZOE_NFD)
+    )
+    user.repos.session.commit()
+    with pytest.raises(ProfileConflict):
+        service.create_member(MemberProfileCreate(name=ZOE_NFC))
+    assert service.add_to_member(ZOE_NFC, "likes", ["soup"]).likes == ["soup"]
+
+
+def test_name_at_most_60_characters():
+    assert MemberProfileCreate(name="n" * 60).name == "n" * 60
+    with pytest.raises(ValueError, match="at most 60"):
+        MemberProfileCreate(name="n" * 61)
+    with pytest.raises(ValueError, match="at most 60"):
+        MemberProfileUpdate(name="n" * 61)
+    # trimmed before measuring
+    assert MemberProfileCreate(name=f"  {'n' * 60}  ").name == "n" * 60
+
+
 def test_name_unique_ignores_other_households(unique_user: TestUser, h2_user: TestUser):
     name = f"Shared {random_string(8)}"
     _service(unique_user).create_member(MemberProfileCreate(name=name))

@@ -1,3 +1,4 @@
+import unicodedata
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any
@@ -64,10 +65,24 @@ def _refuse_null(value: Any) -> Any:
 _PROFILE_LISTS = ("allergies", "exclusions", "dislikes", "likes")
 
 
+MAX_NAME_LENGTH = 60
+
+
+def name_key(name: str) -> str:
+    """The form two member names are compared in: NFC, trimmed, case-folded.
+
+    NFC first so "Zoé" typed with a precomposed "é" and with "e" plus a combining accent are the same name, also
+    against rows stored before names were normalised on write.
+    """
+    return unicodedata.normalize("NFC", name).strip().casefold()
+
+
 def _clean_name(value: str) -> str:
-    value = value.strip()
+    value = unicodedata.normalize("NFC", value).strip()
     if not value:
         raise ValueError("name must not be empty")
+    if len(value) > MAX_NAME_LENGTH:
+        raise ValueError(f"name must be at most {MAX_NAME_LENGTH} characters")
     return value
 
 
