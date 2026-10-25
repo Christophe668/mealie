@@ -5,6 +5,7 @@ from fractions import Fraction
 from typing import Any
 from uuid import uuid4
 
+import httpx
 import pytest
 from mcp.server.auth.provider import AccessToken
 from mcp.server.mcpserver.exceptions import ToolError
@@ -18,8 +19,10 @@ from mealie.mcp.errors import McpToolError
 from mealie.mcp.server import INSTRUCTIONS, mcp_server
 from mealie.mcp.tools import recipe_write
 from mealie.mcp.tools._summaries import time_text
-from mealie.mcp.tools.recipe_write import create_recipe, to_tool_error, update_recipe
+from mealie.mcp.tools.recipe_write import create_recipe, import_recipe_from_url, to_tool_error, update_recipe
 from mealie.mcp.tools.recipes import get_recipe_impl
+from mealie.pkgs import safehttp
+from mealie.pkgs.safehttp.fetch import FetchResult
 from mealie.repos.all_repositories import get_repositories
 from mealie.schema.recipe.recipe import Recipe
 from mealie.schema.recipe.recipe_asset import RecipeAsset
@@ -40,7 +43,11 @@ from mealie.services.claude_context.recipe_writer import (
 )
 from mealie.services.event_bus_service.event_types import EventTypes
 from mealie.services.recipe import recipe_service as recipe_service_module
+from mealie.services.recipe.recipe_data_service import RecipeDataService
 from mealie.services.recipe.recipe_service import RecipeService
+from mealie.services.recipe.recipe_web_import import normalise_source_url
+from mealie.services.scraper import recipe_scraper as recipe_scraper_module
+from tests import data as test_data
 from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
 
@@ -1817,3 +1824,357 @@ async def test_failure_inside_apply_leaves_nothing_behind(
     session.expire_all()
     assert _counts(user) == before
     assert _snapshot(user, recipe.id) == snapshot
+
+
+# ---------------------------------------------------------------------- import_recipe_from_url
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch, html: str) -> list[str]:
+    """The scraper's fetch returns `html` for any URL (no network) and no image is downloaded;
+    returns the list of URLs fetched."""
+    fetched: list[str] = []
+
+    async def fake_fetch(url: str, **_: Any) -> FetchResult:
+        fetched.append(url)
+        return FetchResult(html.encode(), 200, url, httpx.Headers(), "utf-8")
+
+    async def no_image(self: RecipeDataService, *_: Any) -> None:
+        return None
+
+    monkeypatch.setattr(recipe_scraper_module, "resilient_fetch", fake_fetch)
+    monkeypatch.setattr(RecipeDataService, "scrape_image", no_image)
+    return fetched
+
+
+def _fail_fetch(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    async def failing_fetch(url: str, **_: Any) -> FetchResult:
+        raise exc
+
+    monkeypatch.setattr(recipe_scraper_module, "resilient_fetch", failing_fetch)
+
+
+def _page_url() -> str:
+    return f"https://www.example.com/recipes/{random_string(8)}"
+
+
+class _EventLog:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.calls: list[dict[str, Any]] = []
+        log = self
+
+        class FakeBus:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+            def dispatch(self, **kwargs: Any) -> None:
+                log.calls.append(kwargs)
+
+        monkeypatch.setattr(recipe_writer_module, "EventBusService", FakeBus)
+
+
+PIZZA = test_data.html_detroit_style_pepperoni_pizza
+CHICKEN = test_data.html_taiwanese_three_cup_chicken_san_bei_gi_recipe
+
+
+def _json_ld_page(recipe: dict[str, Any]) -> str:
+    import json
+
+    data = {"@context": "https://schema.org", "@type": "Recipe", **recipe}
+    return f'<html><head><script type="application/ld+json">{json.dumps(data)}</script></head><body></body></html>'
+
+
+@pytest.mark.asyncio
+async def test_import_success(monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    fetched = _serve(monkeypatch, PIZZA.read_text())
+    events = _EventLog(monkeypatch)
+    url = _page_url()
+
+    result = await import_recipe_from_url(url=url)
+
+    assert fetched == [url]
+    assert result["already_existed"] is False
+    assert result["name"] == "Detroit-Style Pepperoni Pizza"
+    assert result["org_url"] == url
+    stored = _stored(user, result["slug"])
+    assert str(stored.user_id) == str(user.user_id)
+    assert str(stored.household_id) == str(user.household_id)
+    assert len(stored.recipe_ingredient) == 8 and len(stored.recipe_instructions or []) == 5
+    # parsed into food and unit where possible, the rest kept as notes with the original line
+    by_food = {i.food.name: i for i in stored.recipe_ingredient if i.food is not None}
+    assert "pepperoni" in by_food
+    pepperoni = by_food["pepperoni"]
+    assert pepperoni.quantity == 4 and pepperoni.unit is not None
+    assert all(i.original_text for i in stored.recipe_ingredient)
+    assert len(by_food) >= 5
+    # include_tags defaults to true: the page's 12 tags
+    assert len(stored.tags or []) == 12
+    assert [c["event_type"] for c in events.calls] == [EventTypes.recipe_created]
+    assert events.calls[0]["document_data"].recipe_slug == result["slug"]
+
+
+@pytest.mark.asyncio
+async def test_import_without_tags_and_bare_yield_becomes_servings(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    _serve(monkeypatch, CHICKEN.read_text())
+    before = _counts(user)
+
+    result = await import_recipe_from_url(url=_page_url(), include_tags=False)
+
+    stored = _stored(user, result["slug"])
+    # the page says "recipeYield": "6": schema.org's servings, so the recipe can be scaled
+    assert (stored.recipe_servings, stored.recipe_yield_quantity) == (6, 0)
+    assert result["servings"] == 6
+    assert stored.tags == [] and _counts(user)["tags"] == before["tags"]
+
+
+@pytest.mark.asyncio
+async def test_import_dedup(monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    fetched = _serve(monkeypatch, CHICKEN.read_text())
+    url = _page_url()
+
+    first = await import_recipe_from_url(url=url)
+    recipes = _counts(user)["recipes"]
+
+    for again in (f"{url}/", f"{url}#step-2", url.replace("https://www.example.com", "HTTPS://WWW.Example.COM")):
+        result = await import_recipe_from_url(url=again)
+        assert result["already_existed"] is True, again
+        assert result["id"] == first["id"]
+    assert _counts(user)["recipes"] == recipes
+    assert fetched == [url]  # nothing fetched for a page already imported
+
+    other_page = await import_recipe_from_url(url=f"{url}?page=2")
+    assert other_page["already_existed"] is False
+    assert other_page["id"] != first["id"]
+    assert _counts(user)["recipes"] == recipes + 1
+
+    # an older recipe whose source was stored un-normalised
+    path = random_string(8)
+    older = await create_recipe(
+        name="Older", ingredients=["1 egg"], instructions=["Cook."], source_url=f"HTTPS://Example.com/{path}/"
+    )
+    result = await import_recipe_from_url(url=f"https://example.com/{path}")
+    assert result["already_existed"] is True
+    assert result["id"] == older["id"]
+    assert len(fetched) == 2
+
+
+@pytest.mark.asyncio
+async def test_import_dedup_is_group_wide(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user: TestUser, h2_user: TestUser, g2_user: TestUser
+):
+    """A page another household of the group imported is returned, not imported again; another
+    group's import isn't seen."""
+    _serve(monkeypatch, CHICKEN.read_text())
+    url = _page_url()
+    _as_user(monkeypatch, session, h2_user)
+    theirs = await import_recipe_from_url(url=url)
+
+    _as_user(monkeypatch, session, unique_user)
+    mine = await import_recipe_from_url(url=url)
+    assert mine["already_existed"] is True and mine["id"] == theirs["id"]
+
+    _as_user(monkeypatch, session, g2_user)
+    other_group = await import_recipe_from_url(url=url)
+    assert other_group["already_existed"] is False and other_group["id"] != theirs["id"]
+
+
+def test_normalise_source_url():
+    assert normalise_source_url("HTTPS://Example.com/r/") == "https://example.com/r"
+    assert normalise_source_url(" https://example.com/r#x ") == "https://example.com/r"
+    assert normalise_source_url("https://example.com/R/") == "https://example.com/R"  # paths keep their case
+    assert normalise_source_url("https://example.com/r/?page=2#x") == "https://example.com/r?page=2"
+    assert normalise_source_url("https://example.com/") == "https://example.com"
+
+
+@pytest.mark.asyncio
+async def test_import_errors(monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    before = _counts(user)
+
+    # not a web link: refused before anything is fetched
+    for bad in ("ftp://example.com/r", "file:///etc/passwd", "javascript:alert(1)", "example.com/r", "", "https://"):
+        with pytest.raises(McpToolError, match="url must be a web link"):
+            await import_recipe_from_url(url=bad)
+
+    # no recipe on the page
+    _serve(monkeypatch, "<html><head><title>Hello</title></head><body><p>Just a blog.</p></body></html>")
+    with pytest.raises(McpToolError, match="No recipe found on that page"):
+        await import_recipe_from_url(url=_page_url())
+
+    # unreachable: the connection fails, or the host doesn't resolve
+    _fail_fetch(monkeypatch, httpx.ConnectError("connection refused"))
+    with pytest.raises(McpToolError, match="Couldn't reach www.example.com: the site didn't answer"):
+        await import_recipe_from_url(url=_page_url())
+    _fail_fetch(monkeypatch, safehttp.InvalidDomainError("could not resolve host: nowhere.invalid"))
+    with pytest.raises(McpToolError, match="Couldn't reach nowhere.invalid"):
+        await import_recipe_from_url(url="https://nowhere.invalid/r")
+    _fail_fetch(monkeypatch, safehttp.ForceTimeoutException())
+    with pytest.raises(McpToolError, match="Couldn't reach"):
+        await import_recipe_from_url(url=_page_url())
+
+    assert _counts(user) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", ["http://127.0.0.1/recipe", "http://10.1.2.3/r", "http://[::1]:8080/r"])
+async def test_import_blocked_address(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser, url: str
+):
+    """The real fetch (not patched): Mealie's SSRF guard refuses a private address before connecting,
+    on the tool's worker-thread event loop, and the tool reports it."""
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    before = _counts(user)
+
+    with pytest.raises(McpToolError, match="won't fetch that link"):
+        await import_recipe_from_url(url=url)
+
+    assert _counts(user) == before
+
+
+@pytest.mark.asyncio
+async def test_import_real_client_on_the_worker_loop(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    """The real curl-based client (only the address allow-list is widened to loopback) fetches a
+    recorded page from a local server, on the event loop `run_in_context` starts in its worker
+    thread. Twice, so a second fresh loop works too. No outside network: the server is local."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from mealie.core.config import get_app_settings
+    from mealie.pkgs.safehttp import fetch as fetch_module
+
+    page = CHICKEN.read_bytes()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page)))
+            self.end_headers()
+            self.wfile.write(page)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        settings = get_app_settings().model_copy(update={"HTTP_ALLOW_LIST": "127.0.0.1"})
+        monkeypatch.setattr(fetch_module, "get_app_settings", lambda: settings)
+
+        async def no_image(self: RecipeDataService, *_: Any) -> None:
+            return None
+
+        monkeypatch.setattr(RecipeDataService, "scrape_image", no_image)
+        user = unique_user_fn_scoped
+        _as_user(monkeypatch, session, user)
+        port = server.server_address[1]
+
+        first = await import_recipe_from_url(url=f"http://127.0.0.1:{port}/three-cup-chicken")
+        second = await import_recipe_from_url(url=f"http://127.0.0.1:{port}/three-cup-chicken?again=1")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert first["name"] == "Taiwanese Three Cup Chicken (San Bei Ji) Recipe"
+    assert second["name"] == f"{first['name']} (1)"
+    assert first["already_existed"] is False and second["already_existed"] is False
+
+
+@pytest.mark.asyncio
+async def test_import_keeps_long_lines_as_notes_and_skips_unusable_names(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    long_line = "2 cups flour " + "and a very long story about flour " * 12
+    long_tag = "t" * 101
+    good_tag = f"Weeknight {random_string(6)}"
+    _serve(
+        monkeypatch,
+        _json_ld_page(
+            {
+                "name": f"Bread {random_string(6)}",
+                "recipeYield": "4 people",
+                "recipeIngredient": ["500 g flour", long_line, "salt to taste"],
+                "recipeInstructions": [{"@type": "HowToStep", "text": "Knead and bake."}],
+                "keywords": f"{good_tag}, !!!, {long_tag}",
+            }
+        ),
+    )
+    before = _counts(user)
+
+    result = await import_recipe_from_url(url=_page_url())
+
+    stored = _stored(user, result["slug"])
+    flour, story, salt = stored.recipe_ingredient
+    assert flour.food is not None and flour.quantity == 500
+    assert story.food is None and story.note == long_line.strip() and story.quantity is None
+    assert salt.quantity in (None, 0) and salt.original_text == "salt to taste"
+    assert stored.recipe_servings == 4  # "4 people"
+    assert [t.name.casefold() for t in stored.tags or []] == [good_tag.casefold()]  # the scraper title-cases
+    assert _counts(user)["tags"] == before["tags"] + 1
+
+
+@pytest.mark.asyncio
+async def test_import_failed_save_leaves_nothing_behind(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user)
+    _serve(
+        monkeypatch,
+        _json_ld_page(
+            {
+                "name": "Stew",
+                "recipeIngredient": [f"2 {random_string(8)} {random_string(10)}"],
+                "recipeInstructions": [{"@type": "HowToStep", "text": "Simmer."}],
+                "keywords": random_string(10),
+            }
+        ),
+    )
+    before = _counts(user)
+
+    def broken_create_one(self: RecipeService, data: Any) -> Recipe:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(RecipeService, "create_one", broken_create_one)
+
+    with pytest.raises(McpToolError, match="^Mealie couldn't save the recipe: disk full. Nothing was saved"):
+        await import_recipe_from_url(url=_page_url())
+
+    session.expire_all()
+    assert _counts(user) == before
+
+
+@pytest.mark.asyncio
+async def test_import_requires_recipes_write(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    _as_user(monkeypatch, session, user, scopes=["recipes:read"])
+    fetched = _serve(monkeypatch, CHICKEN.read_text())
+
+    with pytest.raises(McpToolError, match="recipes:write"):
+        await import_recipe_from_url(url=_page_url())
+    assert fetched == []
+
+
+@pytest.mark.asyncio
+async def test_import_tool_is_registered():
+    tools = {tool.name: tool for tool in await mcp_server.list_tools()}
+
+    schema = tools["import_recipe_from_url"].input_schema
+    assert set(schema["properties"]) == {"url", "include_tags"}
+    assert schema["required"] == ["url"]
+    assert "already_existed" in (tools["import_recipe_from_url"].description or "")

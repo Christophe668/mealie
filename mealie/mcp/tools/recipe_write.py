@@ -4,8 +4,11 @@ recipe; saving goes through `RecipeService`, as in the UI."""
 import warnings
 from collections.abc import Callable
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 from uuid import uuid4
 
+import httpx
+from fastapi import HTTPException
 from pydantic import ValidationError, WithJsonSchema
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -17,6 +20,7 @@ from mealie.mcp.server import mcp_server
 from mealie.mcp.tools import run_in_context
 from mealie.mcp.tools._summaries import recipe_url
 from mealie.mcp.tools.recipes import _find_recipe, get_recipe_impl
+from mealie.pkgs import safehttp
 from mealie.schema.recipe.recipe import Recipe, create_recipe_slug
 from mealie.services.claude_context.recipe_writer import (
     IngredientIn,
@@ -27,6 +31,9 @@ from mealie.services.claude_context.recipe_writer import (
     RecipeWriter,
     StepIn,
 )
+from mealie.services.recipe.import_workflow.exceptions import NoRecipeDataError
+from mealie.services.recipe.recipe_web_import import find_imported_recipe, import_from_web
+from mealie.services.scraper.scraped_extras import ScrapedExtras
 
 logger = get_logger(__name__)
 
@@ -261,6 +268,90 @@ async def update_recipe_impl(
     return result
 
 
+def _import_url(url: Any) -> str:
+    """The link to import, checked before anything is fetched: an http(s) URL with a host."""
+    text = url.strip() if isinstance(url, str) else ""
+    parts = urlsplit(text)
+    web = parts.scheme.lower() in ("http", "https") and bool(parts.hostname)
+    if not web or any(c.isspace() for c in text):
+        raise McpToolError("url must be a web link starting with http:// or https://")
+    return text
+
+
+def _scrape_error(exc: Exception, url: str) -> McpToolError | None:
+    """A readable error for a failure to fetch or read the page (nothing was saved), or None when
+    `exc` isn't one."""
+    host = urlsplit(url).hostname or url
+    if isinstance(exc, safehttp.InvalidDomainError):
+        if str(exc).startswith("could not resolve host"):
+            return McpToolError(f"Couldn't reach {host}: the site doesn't exist or is down. Check the link.")
+        return McpToolError(
+            "Mealie won't fetch that link: it points to a private or local address, or to a site the "
+            "server blocks. Nothing was imported."
+        )
+    if isinstance(exc, httpx.RequestError | safehttp.ForceTimeoutException | TimeoutError):
+        return McpToolError(f"Couldn't reach {host}: the site didn't answer. Check the link, or try again later.")
+    if isinstance(exc, safehttp.ResponseTooLargeError):
+        return McpToolError(f"The page at {host} is too large for Mealie to import.")
+    if isinstance(exc, NoRecipeDataError) or (isinstance(exc, HTTPException) and exc.status_code == 400):
+        return McpToolError(
+            "No recipe found on that page. Mealie reads the recipe data (schema.org) that recipe sites "
+            "publish; this page has none, or the site refused to serve it (some block automated "
+            "access). Nothing was imported."
+        )
+    return None
+
+
+async def import_recipe_from_url_impl(ctx: McpContext, url: str, include_tags: bool = True) -> dict[str, Any]:
+    """Already imported? → return it. Otherwise scrape (Mealie's scraper and its fetch safeguards)
+    → plan the ingredients, yield and tags (read-only) → create the missing foods, units and tags →
+    save → event, all through `import_from_web` with this tool's `prepare` step.
+
+    The ingredients are parsed *before* the save, inside `import_from_web`'s `prepare` hook, so the
+    recipe is saved once, already structured. The rows `apply()` creates are remembered: a save
+    that fails is handled as in create_recipe (deleted again when the recipe isn't there, a
+    `warning` when it is). Scraper failures are readable errors and create nothing."""
+    existing = find_imported_recipe(ctx.session, ctx.user.group_id, url)
+    if existing is not None:
+        result = get_recipe_impl(ctx, str(existing))
+        result["already_existed"] = True
+        return result
+
+    writer = RecipeWriter(ctx.repos, ctx.user, ctx.household, ctx.translator)
+    scraped: list[Recipe] = []
+
+    async def prepare(recipe: Recipe, extras: ScrapedExtras | None) -> None:
+        scraped.append(recipe)  # its id (set by the scraper) tells whether a failed save landed
+        tags = extras.tag_names if include_tags and extras is not None else None
+        writer.apply(await writer.plan_import(recipe, tags=tags))
+
+    warnings: list[str] = []
+    try:
+        created = await import_from_web(
+            ctx.repos, writer.service, ctx.translator, url, None, include_tags, False, prepare=prepare
+        )
+    except Exception as e:
+        if not scraped:
+            # the scrape itself failed: nothing was planned or written
+            if (error := _scrape_error(e, url)) is not None:
+                logger.info(f"import_recipe_from_url: {url}: {type(e).__name__}: {e}")
+                raise error from e
+            logger.exception(f"import_recipe_from_url: scraping {url} failed")
+            raise McpToolError(f"Mealie couldn't import that page: {_failure_reason(e)}.") from e
+        logger.exception(f"import_recipe_from_url: saving the recipe from {url} failed")
+        ctx.session.rollback()
+        saved = ctx.repos.recipes.get_one(scraped[0].id, "id") if scraped[0].id else None
+        if saved is None:
+            writer.discard_created()
+            raise _save_error(e) from e
+        created = saved
+        warnings.append("the recipe was saved, but one of Mealie's follow-up steps (rating, timeline) failed")
+
+    result = finish_saved(ctx, writer, created, "create", warnings)
+    result["already_existed"] = False
+    return result
+
+
 # The SDK validates arguments against the signature before the tool runs, with an unreadable
 # message, so every parameter accepts anything (`Any`) and `RecipeCreateIn` does the validation.
 # `WithJsonSchema` still shows Claude the real shape.
@@ -452,3 +543,30 @@ async def _update_recipe(
 
 
 update_recipe = _register_quietly(mcp_server.tool(name="update_recipe"), require_scope("recipes:write")(_update_recipe))
+
+
+@mcp_server.tool()
+@require_scope("recipes:write")
+async def import_recipe_from_url(
+    url: Annotated[Any, _schema({"type": "string", "description": "the recipe page, http(s)"}, optional=False)],
+    include_tags: Annotated[Any, _schema({"type": "boolean"})] = True,
+) -> dict[str, Any]:
+    """Import a recipe from a web page into Mealie with Mealie's own importer, owned by the user,
+    in their household. The ingredients are parsed into quantity, unit and food (lines it can't
+    parse stay as notes), and a yield such as "4 servings" becomes the servings, so the shopping
+    list and scaling work on it. The page's image is downloaded; include_tags (default true) adds
+    the page's tags.
+    If the same page was imported before in this household's group (same link, ignoring case in the
+    domain, a trailing "/" and a "#section"), nothing is imported: you get that recipe with
+    `already_existed: true`, worth telling the user. Afterwards add_mealplan_entries can plan it,
+    and update_recipe can adapt it.
+    Errors say what went wrong: no recipe on the page, the site unreachable, or a link Mealie won't
+    fetch (only public http(s) pages). Nothing is saved then.
+    Returns the recipe as get_recipe does (with its Mealie `url`), plus `already_existed`. A
+    `warning` means the recipe was saved but something after the save failed: don't import it again."""
+    checked = _import_url(url)
+    if include_tags is None:
+        include_tags = True
+    if not isinstance(include_tags, bool):
+        raise McpToolError("include_tags must be true or false")
+    return await run_in_context(import_recipe_from_url_impl, checked, include_tags)

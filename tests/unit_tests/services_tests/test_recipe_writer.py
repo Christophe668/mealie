@@ -675,3 +675,33 @@ async def test_other_groups_foods_units_and_organizers_never_match(unique_user: 
     assert g2_user.repos.ingredient_foods.get_one(theirs["food"].id) is not None
     assert g2_user.repos.tags.get_one(tag, "name") is not None
     assert mine.ingredient_foods.get_one(theirs["food"].id) is None
+
+
+# ---------------------------------------------------------------------- scraped recipes (import)
+
+
+@pytest.mark.parametrize(
+    ("servings", "quantity", "text", "expected"),
+    [
+        (0, 6, "", (6, 0, "")),  # a bare "6": schema.org's servings
+        (0, 4, "people", (4, 0, "")),
+        (0, 4, "Persons.", (4, 0, "")),
+        (0, 12, "cookies", (0, 12, "cookies")),  # a real yield
+        (0, 4, "to 6", (0, 4, "to 6")),  # ambiguous: left alone
+        (0, 1, "9-inch pie", (0, 1, "9-inch pie")),
+        (4, 4, "", (4, 4, "")),  # already has servings
+        (0, 0, "", (0, 0, "")),
+    ],
+)
+def test_servings_from_yield(servings: float, quantity: float, text: str, expected: tuple[float, float, str]):
+    recipe = Recipe(name="r", recipe_servings=servings, recipe_yield_quantity=quantity, recipe_yield=text)
+
+    recipe_writer_module.servings_from_yield(recipe)
+
+    assert (recipe.recipe_servings, recipe.recipe_yield_quantity, recipe.recipe_yield or "") == expected
+
+
+def test_usable_organizer_names():
+    names = ["Dinner", "  Quick  ", "!!!", "", "x" * 101, "y" * 100, "a\x00b"]
+
+    assert recipe_writer_module.usable_organizer_names(names) == ["Dinner", "Quick", "y" * 100, "ab"]

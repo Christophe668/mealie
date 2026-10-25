@@ -32,6 +32,16 @@ class ScrapedExtras:
     def set_tools(self, tools: list[str]) -> None:
         self._tools = tools
 
+    @property
+    def tag_names(self) -> list[str]:
+        """The scraped tag names, as found on the page (nothing is created)."""
+        return list(self._tags)
+
+    @property
+    def category_names(self) -> list[str]:
+        """The scraped category names, as found on the page (nothing is created)."""
+        return list(self._categories)
+
     def use_tags(self, ctx: ScraperContext) -> list[TagOut]:
         if not self._tags:
             return []

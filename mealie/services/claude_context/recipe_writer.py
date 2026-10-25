@@ -420,7 +420,7 @@ class RecipeWriter:
                 logger.exception("Brute force ingredient parser failed; keeping the line as a note")
 
         if parsed is None or parsed.food is None or not IngredientFoodModel.normalize(parsed.food.name or ""):
-            return RecipeIngredient(quantity=None, note=line, original_text=line)
+            return _note_only(line)
 
         return RecipeIngredient(
             quantity=parsed.quantity,
@@ -476,6 +476,54 @@ class RecipeWriter:
                 planned[slug] = _PlannedName(name=name)
                 new.append(name)
         return existing, new
+
+    # --- import -----------------------------------------------------------------------------
+
+    async def plan_import(
+        self, recipe: Recipe, tags: list[str] | None = None, categories: list[str] | None = None
+    ) -> PlannedRecipe:
+        """Plans a scraped recipe like a written one, without writing: every plain ingredient line
+        is parsed and matched as `_parse_line` does for create_recipe, the yield text becomes
+        servings where that's unambiguous, and the scraped organizer names are matched (`None`
+        leaves the recipe's organizers alone). `recipe` is changed in place; `apply()` then creates
+        what is missing.
+
+        Scraped data skips the input models' validators (a page can exceed their caps), so the
+        limits are applied here: a line over 300 characters, or one whose parsed food or unit name
+        is over 100, is kept as a note-only line, and organizer names with no slug or over 100
+        characters are skipped."""
+        planned = PlannedRecipe(recipe=recipe)
+        recipe.recipe_ingredient = [await self._import_line(line) for line in recipe.recipe_ingredient]
+        self._plan_foods_and_units(planned)
+        servings_from_yield(recipe)
+
+        resolver = OrganizerResolver(self.repos)
+        threshold = resolver.fuzzy_match_threshold
+        if tags is not None:
+            recipe.tags, planned.new_tags = self._plan_organizers(
+                usable_organizer_names(tags), resolver.resolve_tags, threshold
+            )
+        if categories is not None:
+            recipe.recipe_category, planned.new_categories = self._plan_organizers(
+                usable_organizer_names(categories), resolver.resolve_categories, threshold
+            )
+        return planned
+
+    async def _import_line(self, line: RecipeIngredient) -> RecipeIngredient:
+        """A scraped ingredient (its text is in `note`) parsed into quantity, unit and food. It keeps
+        its section title and identity; one already structured, or empty, is left as it is."""
+        text = _CONTROL_CHARS.sub("", line.note or line.original_text or "").strip()
+        if line.food is not None or not text:
+            return line
+        parsed = await self._parse_line(text) if len(text) <= MAX_LINE else _note_only(text)
+        too_long = (parsed.food is not None and len(parsed.food.name or "") > MAX_NAME) or (
+            parsed.unit is not None and len(parsed.unit.name or "") > MAX_NAME
+        )
+        if too_long:
+            parsed = _note_only(text)
+        parsed.title = line.title
+        parsed.reference_id = line.reference_id
+        return parsed
 
     # --- apply ------------------------------------------------------------------------------
 
@@ -661,6 +709,43 @@ class RecipeWriter:
                     logger.exception(f"Publishing the {event_type.name} event for {recipe.slug} failed")
 
         dispatch_off_request(run_listeners)
+
+
+def _note_only(line: str) -> RecipeIngredient:
+    return RecipeIngredient(quantity=None, note=line, original_text=line)
+
+
+def usable_organizer_names(names: list[str]) -> list[str]:
+    """Scraped tag or category names that can be stored: stripped, with a slug, at most 100 characters."""
+    usable: list[str] = []
+    for name in names:
+        name = _CONTROL_CHARS.sub("", name or "").strip()
+        if name and len(name) <= MAX_NAME and slugify(name):
+            usable.append(name)
+    return usable
+
+
+# What a yield's text can say, after Mealie's scraper took the number out, for the number to be the
+# servings: nothing (a bare "4", which schema.org and Google define as the servings), or people.
+_SERVINGS_WORDS = frozenset(
+    {"", "people", "person", "persons", "portion", "portions", "pax", "personen", "personnes", "persone", "personas"}
+)
+
+
+def servings_from_yield(recipe: Recipe) -> None:
+    """Turns a scraped yield that only counts people into servings, so the recipe can be scaled.
+
+    Mealie's scraper cleaner already sets the servings for "4 servings", "Serves 4 people" or
+    "4 portions" (and their translations) and keeps a real yield as quantity and text ("12
+    cookies"). What it leaves as a yield although it means servings is a bare number ("4") and
+    "4 people"; those become 4 servings here. Anything else ("4 to 6", "1 9-inch pie", "Für 4
+    Personen"), or a recipe that already has servings, is left alone."""
+    if recipe.recipe_servings or not recipe.recipe_yield_quantity:
+        return
+    if (recipe.recipe_yield or "").strip().rstrip(".").casefold() in _SERVINGS_WORDS:
+        recipe.recipe_servings = recipe.recipe_yield_quantity
+        recipe.recipe_yield_quantity = 0
+        recipe.recipe_yield = ""
 
 
 def _follow_servings(recipe: Recipe, old: float, new: float) -> None:
