@@ -10,31 +10,15 @@
       <DsIcon :name="item.icon" :size="22" />
       <span class="ds-tabbar__label">{{ item.shortLabel || item.label }}</span>
     </NuxtLink>
-
-    <AppShellMenu
-      v-if="addItems.length"
-      class="ds-tabbar__add"
-      :items="addItems"
-      :label="$t('app-shell.add')"
-      :trigger-label="$t('app-shell.add')"
-      trigger-class="ds-tabbar__plus ds-focus"
-      placement="top-end"
-    >
-      <template #trigger>
-        <DsIcon name="createAlt" :size="26" />
-      </template>
-    </AppShellMenu>
   </nav>
 </template>
 
 <script setup lang="ts">
-import AppShellMenu from "./AppShellMenu.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
-import type { AppShellMenuItem, AppShellNavItem } from "~/types/application-types";
+import type { AppShellNavItem } from "~/types/application-types";
 
 defineProps<{
   items: AppShellNavItem[];
-  addItems: AppShellMenuItem[];
 }>();
 </script>
 
@@ -48,8 +32,7 @@ defineProps<{
   z-index: 1005;
   display: flex;
   align-items: center;
-  /* Tight: five tabs and the add button share a 360 px phone. */
-  gap: 2px;
+  gap: calc(var(--ds-space) * 0.5);
   padding: calc(var(--ds-space) * 0.75);
   border: 1px solid var(--ds-border);
   border-radius: var(--ds-radius-card);
@@ -85,23 +68,5 @@ defineProps<{
   background: var(--ds-bg);
   color: var(--ds-text);
   font-weight: 700;
-}
-
-.ds-tabbar__add {
-  flex: none;
-  margin-left: calc(var(--ds-space) * 0.5);
-}
-
-/* Ink, not saffron: Home's Tonight board is the screen's single accent. */
-.ds-tabbar__add :deep(.ds-tabbar__plus) {
-  display: grid;
-  place-items: center;
-  width: calc(var(--ds-space) * 6.5);
-  height: calc(var(--ds-space) * 6.5);
-  border: 0;
-  border-radius: var(--ds-radius-card);
-  background: var(--ds-text);
-  color: var(--ds-bg);
-  cursor: pointer;
 }
 </style>

@@ -1364,10 +1364,8 @@
   "app-shell": {
     "main-navigation": "Main navigation",
     "today": "Today",
-    "today-short": "Today",
     "recipes": "Recipes",
     "plan": "Plan",
-    "plan-short": "Plan",
     "shop": "Shop",
     "pantry": "Pantry",
     "pantry-short": "Pantry",

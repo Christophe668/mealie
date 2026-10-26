@@ -42,7 +42,6 @@
     <AppShellTabBar
       class="ds-mobile-only"
       :items="primaryItems"
-      :add-items="addItems"
     />
   </v-app>
 </template>
@@ -104,7 +103,6 @@ const recipesActive = computed(() => {
   return ["recipes", "r", "cookbooks"].some(section => isUnder(`${group}/${section}`));
 });
 
-/** The short labels are for the mobile tab bar: five tabs and the add button share a 360 px phone. */
 const primaryItems = computed<AppShellNavItem[]>(() => {
   const recipes: AppShellNavItem = {
     key: "recipes",
@@ -121,7 +119,6 @@ const primaryItems = computed<AppShellNavItem[]>(() => {
     {
       key: "today",
       label: i18n.t("app-shell.today"),
-      shortLabel: i18n.t("app-shell.today-short"),
       to: todayPath.value,
       icon: "home",
       active: currentPath.value === todayPath.value,
@@ -130,7 +127,6 @@ const primaryItems = computed<AppShellNavItem[]>(() => {
     {
       key: "plan",
       label: i18n.t("app-shell.plan"),
-      shortLabel: i18n.t("app-shell.plan-short"),
       to: PLAN_PATH,
       icon: "calendar",
       active: isUnder("/household/mealplan"),
@@ -145,6 +141,7 @@ const primaryItems = computed<AppShellNavItem[]>(() => {
     {
       key: "pantry",
       label: i18n.t("app-shell.pantry"),
+      // The mobile tab bar's five tabs share a 360 px phone: "Garde-manger" would not fit.
       shortLabel: i18n.t("app-shell.pantry-short"),
       to: PANTRY_PATH,
       icon: "fridgeOutline",

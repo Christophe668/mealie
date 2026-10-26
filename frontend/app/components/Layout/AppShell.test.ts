@@ -212,7 +212,7 @@ describe("AppShell", () => {
 
   test("the add button opens a menu and Escape closes it, returning focus", async () => {
     const wrapper = render();
-    const trigger = wrapper.find(".ds-tabbar button[aria-haspopup=menu]");
+    const trigger = wrapper.find(".ds-topbar__add button[aria-haspopup=menu]");
 
     expect(trigger.attributes("aria-expanded")).toBe("false");
     expect(wrapper.find("[role=menu]").exists()).toBe(false);
@@ -243,7 +243,7 @@ describe("AppShell", () => {
 
   test("arrow keys move through the add menu", async () => {
     const wrapper = render();
-    await wrapper.find(".ds-tabbar button[aria-haspopup=menu]").trigger("click");
+    await wrapper.find(".ds-topbar__add button[aria-haspopup=menu]").trigger("click");
     const menu = wrapper.find("[role=menu]");
     const items = wrapper.findAll("[role=menuitem]");
 
@@ -260,15 +260,18 @@ describe("AppShell", () => {
 
     const labels = wrapper.findAll(".ds-tabbar a").map(a => a.text().trim());
     expect(labels).toEqual(["Recipes"]);
-    expect(wrapper.find(".ds-tabbar button[aria-haspopup=menu]").exists()).toBe(false);
+    expect(wrapper.find(".ds-topbar__add button[aria-haspopup=menu]").exists()).toBe(false);
     expect(wrapper.find(".ds-rail").text()).not.toContain("Connections");
     expect(wrapper.find(".ds-rail").text()).not.toContain("Pantry");
     expect(wrapper.find(".ds-rail").text()).toContain("Log in");
   });
 
-  test("desktop has its own add button opening the same menu", async () => {
+  test("the add button sits in the top bar on every screen, leaving the tab bar to the destinations", async () => {
     const wrapper = render();
-    const trigger = wrapper.find(".ds-topbar .ds-desktop-only button[aria-haspopup=menu]");
+    const trigger = wrapper.find(".ds-topbar__add button[aria-haspopup=menu]");
+
+    expect(wrapper.find(".ds-topbar__add").classes()).not.toContain("ds-desktop-only");
+    expect(wrapper.find(".ds-tabbar button").exists()).toBe(false);
 
     await trigger.trigger("click");
     expect(wrapper.findAll("[role=menu] [role=menuitem]").map(i => i.text().trim())).toEqual([
@@ -286,7 +289,7 @@ describe("AppShell", () => {
     route.params = {};
     const wrapper = render();
 
-    await wrapper.find(".ds-tabbar button[aria-haspopup=menu]").trigger("click");
+    await wrapper.find(".ds-topbar__add button[aria-haspopup=menu]").trigger("click");
     const hrefs = wrapper.findAll("[role=menuitem]").map(i => i.attributes("href"));
     expect(hrefs).toEqual(["/household/mealplan/planner/view", "/shopping-lists", "/household/pantry?add=1"]);
     expect(link(wrapper, ".ds-rail", "Today").attributes("aria-current")).toBe("page");
@@ -395,7 +398,7 @@ describe("AppShell", () => {
     mocks.aiEnabled.value = true;
     const wrapper = render();
 
-    await wrapper.find(".ds-tabbar button[aria-haspopup=menu]").trigger("click");
+    await wrapper.find(".ds-topbar__add button[aria-haspopup=menu]").trigger("click");
     const ai = wrapper.findAll("[role=menuitem]").find(i => i.text().trim() === "Import with AI");
     expect(ai?.attributes("href")).toBe("/g/home/r/create/ai");
   });

@@ -35,10 +35,10 @@
         <kbd class="ds-topbar__kbd" :title="$t('app-shell.search-shortcut-hint', { shortcut: shortcutLabel })">{{ shortcutLabel }}</kbd>
       </form>
 
-      <!-- Desktop create menu; mobile has the same menu on the floating tab bar. -->
+      <!-- The create menu, on every screen: on mobile it leaves the tab bar's width to the five tabs. -->
       <AppShellMenu
         v-if="addItems.length"
-        class="ds-desktop-only"
+        class="ds-topbar__add"
         :items="addItems"
         :label="$t('app-shell.add')"
         :trigger-label="$t('app-shell.add')"
@@ -233,7 +233,7 @@ defineExpose({ focus });
   white-space: nowrap;
 }
 
-/* Ink, not saffron, like the mobile "+". */
+/* Ink, not saffron: the screen's accent belongs to its content. */
 .ds-topbar__actions :deep(.ds-topbar__plus) {
   display: grid;
   place-items: center;
@@ -260,6 +260,22 @@ defineExpose({ focus });
 @media (max-width: 1023px) {
   .ds-topbar {
     margin-bottom: calc(var(--ds-space) * 2);
+  }
+
+  /* The add menu hangs from the bar's right edge, not from the "+": the account icon sits to its right, and a
+     menu ending at the "+" would run off the left of a phone. */
+  .ds-topbar__actions {
+    position: relative;
+    gap: var(--ds-space);
+  }
+
+  .ds-topbar__actions :deep(.ds-topbar__add) {
+    position: static;
+  }
+
+  .ds-topbar__actions :deep(.ds-topbar__plus) {
+    width: calc(var(--ds-space) * 4.5);
+    height: calc(var(--ds-space) * 4.5);
   }
 
   /* One line on mobile: a long title ellipsizes instead of crowding the brand. */
