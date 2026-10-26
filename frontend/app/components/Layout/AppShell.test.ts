@@ -212,7 +212,7 @@ describe("AppShell", () => {
 
   test("the add button opens a menu and Escape closes it, returning focus", async () => {
     const wrapper = render();
-    const trigger = wrapper.find(".ds-topbar__add button[aria-haspopup=menu]");
+    const trigger = wrapper.find(".ds-shell__fab button[aria-haspopup=menu]");
 
     expect(trigger.attributes("aria-expanded")).toBe("false");
     expect(wrapper.find("[role=menu]").exists()).toBe(false);
@@ -243,7 +243,7 @@ describe("AppShell", () => {
 
   test("arrow keys move through the add menu", async () => {
     const wrapper = render();
-    await wrapper.find(".ds-topbar__add button[aria-haspopup=menu]").trigger("click");
+    await wrapper.find(".ds-shell__fab button[aria-haspopup=menu]").trigger("click");
     const menu = wrapper.find("[role=menu]");
     const items = wrapper.findAll("[role=menuitem]");
 
@@ -260,17 +260,18 @@ describe("AppShell", () => {
 
     const labels = wrapper.findAll(".ds-tabbar a").map(a => a.text().trim());
     expect(labels).toEqual(["Recipes"]);
-    expect(wrapper.find(".ds-topbar__add button[aria-haspopup=menu]").exists()).toBe(false);
+    expect(wrapper.find(".ds-shell__fab button[aria-haspopup=menu]").exists()).toBe(false);
     expect(wrapper.find(".ds-rail").text()).not.toContain("Connections");
     expect(wrapper.find(".ds-rail").text()).not.toContain("Pantry");
     expect(wrapper.find(".ds-rail").text()).toContain("Log in");
   });
 
-  test("the add button sits in the top bar on every screen, leaving the tab bar to the destinations", async () => {
+  test("mobile floats its add button above the tab bar; desktop has its own in the top bar", async () => {
     const wrapper = render();
     const trigger = wrapper.find(".ds-topbar__add button[aria-haspopup=menu]");
 
-    expect(wrapper.find(".ds-topbar__add").classes()).not.toContain("ds-desktop-only");
+    expect(wrapper.find(".ds-shell__fab").classes()).toContain("ds-mobile-only");
+    expect(wrapper.find(".ds-topbar__add").classes()).toContain("ds-desktop-only");
     expect(wrapper.find(".ds-tabbar button").exists()).toBe(false);
 
     await trigger.trigger("click");
@@ -283,13 +284,34 @@ describe("AppShell", () => {
     ]);
   });
 
+  test.each([
+    ["a shopping list", "/shopping-lists/abc"],
+    ["the pantry", "/household/pantry"],
+    ["a recipe", "/g/home/r/roast-chicken"],
+    ["the recipe editor", "/g/home/r/roast-chicken/edit"],
+  ])("the floating add button stays off %s, which pins its own action there", (_page, path) => {
+    route.path = path;
+    const wrapper = render();
+
+    expect(wrapper.find(".ds-shell__fab").exists()).toBe(false);
+    expect(wrapper.find(".ds-shell").classes()).not.toContain("ds-shell--fab");
+  });
+
+  test("the shopping lists overview keeps the floating add button", () => {
+    route.path = "/shopping-lists";
+    const wrapper = render();
+
+    expect(wrapper.find(".ds-shell__fab").exists()).toBe(true);
+    expect(wrapper.find(".ds-shell").classes()).toContain("ds-shell--fab");
+  });
+
   test("the add menu leaves out group links until the group is known", async () => {
     mocks.groupSlug.value = undefined;
     route.path = "/";
     route.params = {};
     const wrapper = render();
 
-    await wrapper.find(".ds-topbar__add button[aria-haspopup=menu]").trigger("click");
+    await wrapper.find(".ds-shell__fab button[aria-haspopup=menu]").trigger("click");
     const hrefs = wrapper.findAll("[role=menuitem]").map(i => i.attributes("href"));
     expect(hrefs).toEqual(["/household/mealplan/planner/view", "/shopping-lists", "/household/pantry?add=1"]);
     expect(link(wrapper, ".ds-rail", "Today").attributes("aria-current")).toBe("page");
@@ -398,7 +420,7 @@ describe("AppShell", () => {
     mocks.aiEnabled.value = true;
     const wrapper = render();
 
-    await wrapper.find(".ds-topbar__add button[aria-haspopup=menu]").trigger("click");
+    await wrapper.find(".ds-shell__fab button[aria-haspopup=menu]").trigger("click");
     const ai = wrapper.findAll("[role=menuitem]").find(i => i.text().trim() === "Import with AI");
     expect(ai?.attributes("href")).toBe("/g/home/r/create/ai");
   });
