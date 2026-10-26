@@ -1,5 +1,6 @@
 import math
 from collections import Counter
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from mealie.schema.household.cooked_meal import (
     CookedMealCreate,
     CookedMealOut,
     PantryCheckOut,
+    PantryIngredientMatch,
     PantryOutcome,
 )
 from mealie.schema.household.household import HouseholdInDB
@@ -26,6 +28,7 @@ from mealie.schema.household.pantry import (
 from mealie.schema.household.recipe_feedback import RecipeFeedbackCreate, RecipeFeedbackOut
 from mealie.schema.meal_plan.new_meal import ReadPlanEntry
 from mealie.schema.recipe.recipe import Recipe
+from mealie.schema.recipe.recipe_ingredient import IngredientFood
 from mealie.schema.user.user import PrivateUser
 from mealie.services._base_service import BaseService
 from mealie.services.claude_context.pantry_service import PantryService
@@ -90,16 +93,15 @@ class CookedMealService(BaseService):
             raise NoEntryFound("Recipe not found.")
         return recipe
 
-    def _matching_items(self, recipe: Recipe, pantry: list[PantryItemOut] | None = None) -> list[PantryItemOut]:
-        """Pantry items matching the recipe's foods: by `food_id`, or (items without a food) by the food's name or
-        its simple singular/plural, case-insensitively. In `get_pantry` order."""
+    @staticmethod
+    def _food_matcher(foods: list[IngredientFood]) -> Callable[[PantryItemOut], bool]:
+        """Whether a pantry item is one of `foods`: by `food_id`, or (items without a food) by the food's name or
+        its simple singular/plural, case-insensitively."""
         food_ids: set[str] = set()
         names: set[str] = set()
-        for ingredient in recipe.recipe_ingredient:
-            if ingredient.food is None:
-                continue
-            food_ids.add(str(ingredient.food.id))
-            key = IngredientFoodModel.normalize(ingredient.food.name)
+        for food in foods:
+            food_ids.add(str(food.id))
+            key = IngredientFoodModel.normalize(food.name)
             names.add(key)
             names.update(food_name_variants(key))
 
@@ -108,8 +110,28 @@ class CookedMealService(BaseService):
                 return str(item.food_id) in food_ids
             return IngredientFoodModel.normalize(item.name) in names
 
+        return matches
+
+    def _matching_items(self, recipe: Recipe, pantry: list[PantryItemOut] | None = None) -> list[PantryItemOut]:
+        """Pantry items matching the recipe's foods (see `_food_matcher`), in `get_pantry` order."""
+        matches = self._food_matcher([i.food for i in recipe.recipe_ingredient if i.food is not None])
         items = self.repos.pantry_items.ordered() if pantry is None else pantry
         return [item for item in items if matches(item)]
+
+    def _ingredient_matches(self, recipe: Recipe, pantry: list[PantryItemOut]) -> list[PantryIngredientMatch]:
+        """Per ingredient naming a food, the pantry items of that food, by the same rule as `_matching_items`."""
+        result: list[PantryIngredientMatch] = []
+        for ingredient in recipe.recipe_ingredient:
+            if ingredient.food is None or ingredient.reference_id is None:
+                continue
+            matches = self._food_matcher([ingredient.food])
+            result.append(
+                PantryIngredientMatch(
+                    reference_id=ingredient.reference_id,
+                    pantry_item_ids=[item.id for item in pantry if matches(item)],
+                )
+            )
+        return result
 
     def _suggested_portions(self, recipe: Recipe, scale: float) -> int:
         """Servings cooked minus the household's `default_servings`, when both are known and positive; else 0."""
@@ -133,7 +155,8 @@ class CookedMealService(BaseService):
         return candidates[0] if candidates else None
 
     def pantry_check(self, recipe_id: UUID, cooked_on: date, scale: float | None = None) -> PantryCheckOut:
-        """The pantry items matching the recipe, the suggested leftover portions and the entry a cooking would mark.
+        """The pantry items matching the recipe (also per ingredient), the suggested leftover portions and the entry
+        a cooking would mark.
 
         The scale is the given one, else the matching entry's `recipe_scale`, else 1.
         """
@@ -141,8 +164,10 @@ class CookedMealService(BaseService):
         entry = self.find_entry(recipe_id, cooked_on)
         if scale is None:
             scale = entry.recipe_scale if entry else 1.0
+        pantry = self.repos.pantry_items.ordered()
         return PantryCheckOut(
-            items=self._matching_items(recipe),
+            items=self._matching_items(recipe, pantry),
+            ingredients=self._ingredient_matches(recipe, pantry),
             suggested_leftover_portions=self._suggested_portions(recipe, scale),
             meal_plan_entry_id=entry.id if entry else None,
         )

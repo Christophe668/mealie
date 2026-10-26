@@ -6,6 +6,7 @@ from .cooked_meal import (
     CookedMealOut,
     CookedPantryOutcome,
     PantryCheckOut,
+    PantryIngredientMatch,
     PantryOutcome,
 )
 from .group_events import (
@@ -130,6 +131,7 @@ __all__ = [
     "CookedMealOut",
     "CookedPantryOutcome",
     "PantryCheckOut",
+    "PantryIngredientMatch",
     "PantryOutcome",
     "HouseholdStatistics",
     "Diet",

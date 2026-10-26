@@ -2,6 +2,8 @@ import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import RecipeReadIngredients, { ingredientTicksKey } from "./RecipeReadIngredients.vue";
 import type { RecipeIngredient } from "~/lib/api/types/recipe";
+import type { PantryItemOut } from "~/lib/api/types/household";
+import type { IngredientPantry } from "~/composables/use-recipe-pantry";
 import { useIngredientTextParser } from "~/composables/recipes";
 import { useLocales } from "~/composables/use-locales";
 
@@ -30,7 +32,7 @@ const lemon: RecipeIngredient = {
   food: { id: "f-lemon", name: "lemon" },
 };
 
-function render(props: Partial<{ ingredients: RecipeIngredient[]; scale: number; recipeSlug: string; collapsible: boolean }> = {}) {
+function render(props: Partial<{ ingredients: RecipeIngredient[]; scale: number; recipeSlug: string; collapsible: boolean; pantry: IngredientPantry | null }> = {}) {
   return mount(RecipeReadIngredients, {
     props: { ingredients: [flour, butter, lemon], scale: 1, recipeSlug: "lemon-cake", groupSlug: "home", ...props },
     global: { stubs },
@@ -52,6 +54,47 @@ beforeEach(() => {
 
 afterEach(() => {
   document.body.innerHTML = "";
+});
+
+const pantryItem = (extra: Partial<PantryItemOut>): PantryItemOut => ({ id: "p", name: "x", groupId: "g", householdId: "h", ...extra });
+
+describe("RecipeReadIngredients pantry", () => {
+  test("marks each ingredient in the pantry or not, with where it is, and sums it up", () => {
+    const wrapper = render({
+      pantry: {
+        "ing-flour": [pantryItem({ id: "p1", location: "cupboard" })],
+        "ing-butter": [],
+        "ing-lemon": [pantryItem({ id: "p2", location: "fridge" }), pantryItem({ id: "p3", location: "freezer" })],
+      },
+    });
+
+    const marks = rows(wrapper).map(row => row.find(".read-ingredients__pantry"));
+    expect(marks.map(m => m.text())).toEqual(["In pantry · Cupboard", "Not in pantry", "In pantry · Fridge, Freezer"]);
+    expect(marks.map(m => m.classes().includes("read-ingredients__pantry--have"))).toEqual([true, false, true]);
+    expect(wrapper.find(".read-ingredients__summary").text()).toBe("2 of 3 in your pantry");
+  });
+
+  test("an item near its use-by date says so", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 26, 12));
+    const wrapper = render({ pantry: { "ing-butter": [pantryItem({ location: "fridge", useBy: "2026-10-27" })] } });
+    vi.useRealTimers();
+
+    const mark = wrapper.find(".read-ingredients__pantry");
+    expect(mark.text()).toBe("In pantry · Fridge · Use by October 27");
+    expect(mark.classes()).toContain("read-ingredients__pantry--urgent");
+  });
+
+  test("ingredients the pantry can't tell, and an unknown pantry, show nothing", () => {
+    const told = render({ pantry: { "ing-flour": [] } });
+    expect(rows(told).map(row => row.find(".read-ingredients__pantry").exists())).toEqual([true, false, false]);
+    expect(told.find(".read-ingredients__summary").text()).toBe("0 of 1 in your pantry");
+    told.unmount();
+
+    const unknown = render({ pantry: null });
+    expect(unknown.find(".read-ingredients__pantry").exists()).toBe(false);
+    expect(unknown.find(".read-ingredients__summary").exists()).toBe(false);
+  });
 });
 
 describe("RecipeReadIngredients", () => {

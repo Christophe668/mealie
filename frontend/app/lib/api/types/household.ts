@@ -531,6 +531,11 @@ export interface PantryCheckOut {
   items: PantryItemOut[];
   suggestedLeftoverPortions: number;
   mealPlanEntryId?: number | null;
+  ingredients?: PantryIngredientMatch[];
+}
+export interface PantryIngredientMatch {
+  referenceId: string;
+  pantryItemIds?: string[];
 }
 export interface PantryItemCreate {
   name: string;

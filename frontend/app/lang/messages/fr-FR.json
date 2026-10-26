@@ -1512,6 +1512,9 @@
   },
   "recipe-read": {
     "ingredients": "Ingrédients",
+    "in-pantry": "Au garde-manger",
+    "not-in-pantry": "Pas au garde-manger",
+    "pantry-summary": "{have} sur {total} au garde-manger",
     "method": "Préparation",
     "notes": "Notes",
     "prep": "Préparation {time}",

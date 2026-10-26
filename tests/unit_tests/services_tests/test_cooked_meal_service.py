@@ -136,6 +136,40 @@ def test_pantry_check_matches_food_and_name_variants(unique_user: TestUser):
     assert out.meal_plan_entry_id is None
 
 
+def test_pantry_check_per_ingredient(unique_user: TestUser):
+    tag = random_string(8)
+    spaghetti = _food(unique_user, f"{tag} spaghetti")
+    egg = _food(unique_user, f"{tag} egg")
+    cheese = _food(unique_user, f"{tag} cheese")
+    recipe = unique_user.repos.recipes.create(
+        Recipe(
+            name=random_string(10),
+            user_id=unique_user.user_id,
+            group_id=unique_user.group_id,
+            recipe_ingredient=[
+                RecipeIngredient(note="", food=spaghetti, quantity=200),
+                RecipeIngredient(note="", food=egg, quantity=2),
+                RecipeIngredient(note="", food=cheese, quantity=50),
+                RecipeIngredient(note="salt to taste"),
+            ],
+        )
+    )
+    pasta = _item(unique_user, spaghetti.name, spaghetti)
+    eggs = _item(unique_user, f"{tag} eggs")
+    more_eggs = _item(unique_user, f"{tag} egg", location=PantryLocation.fridge)
+
+    out = _service(unique_user).pantry_check(recipe.id, TODAY)
+
+    # the unparsed "salt to taste" names no food, so it is left out
+    by_ref = {m.reference_id: set(m.pantry_item_ids) for m in out.ingredients}
+    spaghetti_line, egg_line, cheese_line, _salt = recipe.recipe_ingredient
+    assert by_ref == {
+        spaghetti_line.reference_id: {pasta.id},
+        egg_line.reference_id: {eggs.id, more_eggs.id},
+        cheese_line.reference_id: set(),
+    }
+
+
 def test_pantry_check_keeps_pantry_order(unique_user: TestUser):
     food_a, food_b = _food(unique_user), _food(unique_user)
     recipe = _recipe(unique_user, [food_a, food_b])
