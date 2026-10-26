@@ -48,9 +48,10 @@ class HouseholdCookingController(_CookedMealControllerBase):
             return self.service.pantry_check(recipe_id, cooked_on, scale)
 
     @router.post("", response_model=CookedMealOut, status_code=status.HTTP_201_CREATED)
-    def record(self, data: CookedMealCreate):
+    def record(self, data: CookedMealCreate, amend: bool = False):
+        """`amend`: told later, so a cooking already recorded gets the pantry, leftovers and feedback added."""
         with _service_errors():
-            return self.service.record(data)
+            return self.service.record(data, amend=amend)
 
 
 @controller(entry_router)

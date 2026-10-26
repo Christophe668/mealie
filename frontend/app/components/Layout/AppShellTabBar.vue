@@ -8,33 +8,17 @@
       :aria-current="item.active ? 'page' : undefined"
     >
       <DsIcon :name="item.icon" :size="22" />
-      <span>{{ item.label }}</span>
+      <span class="ds-tabbar__label">{{ item.shortLabel || item.label }}</span>
     </NuxtLink>
-
-    <AppShellMenu
-      v-if="addItems.length"
-      class="ds-tabbar__add"
-      :items="addItems"
-      :label="$t('app-shell.add')"
-      :trigger-label="$t('app-shell.add')"
-      trigger-class="ds-tabbar__plus ds-focus"
-      placement="top-end"
-    >
-      <template #trigger>
-        <DsIcon name="createAlt" :size="26" />
-      </template>
-    </AppShellMenu>
   </nav>
 </template>
 
 <script setup lang="ts">
-import AppShellMenu from "./AppShellMenu.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
-import type { AppShellMenuItem, AppShellNavItem } from "~/types/application-types";
+import type { AppShellNavItem } from "~/types/application-types";
 
 defineProps<{
   items: AppShellNavItem[];
-  addItems: AppShellMenuItem[];
 }>();
 </script>
 
@@ -58,39 +42,31 @@ defineProps<{
 
 .ds-tabbar__link {
   display: flex;
-  flex: 1;
+  /* Sized by the label, so a long one ("Recipes", "Aujourd’hui") takes room from the short ones. */
+  flex: 1 1 auto;
   flex-direction: column;
   align-items: center;
   gap: calc(var(--ds-space) * 0.25);
   min-width: 0;
-  padding: calc(var(--ds-space) * 0.75) calc(var(--ds-space) * 0.5);
+  padding: calc(var(--ds-space) * 0.75) 2px;
   border-radius: var(--ds-radius-ctl);
   color: var(--ds-text-2);
-  font-size: var(--ds-t-1);
+  font-size: 0.75rem;
   font-weight: 500;
   text-decoration: none;
+}
+
+/* A long translation shortens rather than pushes the add button off screen. */
+.ds-tabbar__label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ds-tabbar__link[aria-current="page"] {
   background: var(--ds-bg);
   color: var(--ds-text);
   font-weight: 700;
-}
-
-.ds-tabbar__add {
-  flex: none;
-}
-
-/* Ink, not saffron: Home's Tonight board is the screen's single accent. */
-.ds-tabbar__add :deep(.ds-tabbar__plus) {
-  display: grid;
-  place-items: center;
-  width: calc(var(--ds-space) * 6.5);
-  height: calc(var(--ds-space) * 6.5);
-  border: 0;
-  border-radius: var(--ds-radius-card);
-  background: var(--ds-text);
-  color: var(--ds-bg);
-  cursor: pointer;
 }
 </style>

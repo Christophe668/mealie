@@ -83,6 +83,12 @@ const props = defineProps<{
   loggedIn: boolean;
   /** The scale cooked: it sizes the suggested leftovers. */
   scale: number;
+  /** The day it was cooked (`YYYY-MM-DD`) when told later; else today. */
+  cookedOn?: string;
+  /** The meal plan entry it was cooked for, when known; else the server's pick for the day. */
+  mealPlanEntryId?: number;
+  /** Told later: a cooking already recorded (ticked done, or skipped here) still takes the pantry and verdict. */
+  amend?: boolean;
 }>();
 
 const headingId = useId();
@@ -101,14 +107,14 @@ const check = ref<PantryCheckOut | null>(null);
 const choices = ref<PantryChoices>({ outcomes: {}, portions: 0, location: "fridge" });
 
 // The cook's own day, not the server's: a container on UTC would date a late dinner the day before.
-const today = () => format(new Date(), "yyyy-MM-dd");
+const cookedOn = () => props.cookedOn || format(new Date(), "yyyy-MM-dd");
 
 onMounted(async () => {
   if (!props.loggedIn) {
     return;
   }
   try {
-    const { data } = await useUserApi().householdCooking.pantryCheck(props.recipeId, today(), props.scale);
+    const { data } = await useUserApi().householdCooking.pantryCheck(props.recipeId, cookedOn(), props.scale);
     if (data) {
       check.value = data;
       choices.value = { ...choices.value, portions: data.suggestedLeftoverPortions };
@@ -139,9 +145,10 @@ function goBack() {
 }
 
 function cookedMeal(withFeedback: boolean): CookedMealCreate {
-  const body: CookedMealCreate = { recipeId: props.recipeId, cookedOn: today(), scale: props.scale };
-  if (check.value?.mealPlanEntryId) {
-    body.mealPlanEntryId = check.value.mealPlanEntryId;
+  const body: CookedMealCreate = { recipeId: props.recipeId, cookedOn: cookedOn(), scale: props.scale };
+  const entryId = props.mealPlanEntryId ?? check.value?.mealPlanEntryId;
+  if (entryId) {
+    body.mealPlanEntryId = entryId;
   }
   const pantry = Object.entries(choices.value.outcomes).map(([pantryItemId, outcome]) => ({ pantryItemId, outcome }));
   if (pantry.length) {
@@ -170,7 +177,10 @@ async function save(withFeedback: boolean) {
   busy.value = true;
   let saved = false;
   try {
-    const result = await useUserApi().householdCooking.record(cookedMeal(withFeedback));
+    const cooking = useUserApi().householdCooking;
+    const result = props.amend
+      ? await cooking.record(cookedMeal(withFeedback), { amend: true })
+      : await cooking.record(cookedMeal(withFeedback));
     if (!result.error) {
       saved = true;
     }

@@ -7,7 +7,7 @@ import type { PantryCheckOut, PantryItemOut } from "~/lib/api/types/household";
 type ApiResult<T> = { data: T | null; error: unknown; response?: { status: number } };
 
 const pantryCheck = vi.fn<(recipeId: string, cookedOn: string, scale?: number) => Promise<ApiResult<PantryCheckOut>>>();
-const record = vi.fn<(payload: object) => Promise<ApiResult<object>>>();
+const record = vi.fn<(payload: object, options?: { amend?: boolean }) => Promise<ApiResult<object>>>();
 vi.mock("~/composables/api", () => ({
   useUserApi: () => ({ householdCooking: { pantryCheck, record } }),
 }));
@@ -27,7 +27,7 @@ function check(extra: Partial<PantryCheckOut> = {}): ApiResult<PantryCheckOut> {
   return { data: { items: [], suggestedLeftoverPortions: 0, mealPlanEntryId: null, ...extra }, error: null, response: { status: 200 } };
 }
 
-async function render(props: Partial<{ loggedIn: boolean; scale: number }> = {}) {
+async function render(props: Partial<{ loggedIn: boolean; scale: number; cookedOn: string; mealPlanEntryId: number; amend: boolean }> = {}) {
   const wrapper = mount(CookFinish, {
     props: { recipeId: "r-1", backTo: "/g/home/r/onion-soup", loggedIn: true, scale: 1, ...props },
     global: { stubs },
@@ -59,6 +59,22 @@ afterEach(() => {
 });
 
 describe("CookFinish", () => {
+  test("told later: checks and records the given day and entry, amending a cooking already recorded", async () => {
+    pantryCheck.mockResolvedValue(check({ mealPlanEntryId: 9 }));
+    const wrapper = await render({ cookedOn: "2026-10-23", mealPlanEntryId: 7, amend: true });
+
+    expect(pantryCheck).toHaveBeenCalledWith("r-1", "2026-10-23", 1);
+    await button(wrapper, "Loved it").trigger("click");
+    await button(wrapper, "Done").trigger("click");
+    await flushPromises();
+
+    expect(record).toHaveBeenCalledWith(
+      { recipeId: "r-1", cookedOn: "2026-10-23", scale: 1, mealPlanEntryId: 7, feedback: { verdict: "loved" } },
+      { amend: true },
+    );
+    expect(replace).toHaveBeenCalledWith("/g/home/r/onion-soup");
+  });
+
   test("nothing in the pantry and no leftovers: the screen as before, Done records the cooking", async () => {
     const wrapper = await render({ scale: 2 });
 

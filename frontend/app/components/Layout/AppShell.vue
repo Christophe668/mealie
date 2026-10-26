@@ -1,5 +1,5 @@
 <template>
-  <v-app class="ds-shell">
+  <v-app class="ds-shell" :class="{ 'ds-shell--fab': showFab }">
     <TheSnackbar />
     <AnnouncementDialog v-if="loggedIn" v-model="announcementsOpen" />
     <LanguageDialog v-model="languageOpen" />
@@ -9,7 +9,7 @@
         class="ds-desktop-only"
         :brand-name="brandName"
         :home-to="todayPath"
-        :items="railItems"
+        :items="primaryItems"
         :secondary-items="secondaryItems"
         :user-name="loggedIn ? auth.user.value?.fullName || '' : undefined"
         :user-items="userItems"
@@ -42,16 +42,32 @@
     <AppShellTabBar
       class="ds-mobile-only"
       :items="primaryItems"
-      :add-items="addItems"
     />
+
+    <!-- Mobile create menu: floats above the tab bar, which keeps its width for the five destinations. -->
+    <AppShellMenu
+      v-if="showFab"
+      class="ds-shell__fab ds-mobile-only"
+      :items="addItems"
+      :label="$t('app-shell.add')"
+      :trigger-label="$t('app-shell.add')"
+      trigger-class="ds-shell__fab-button ds-focus"
+      placement="top-end"
+    >
+      <template #trigger>
+        <DsIcon name="createAlt" :size="26" />
+      </template>
+    </AppShellMenu>
   </v-app>
 </template>
 
 <script setup lang="ts">
+import AppShellMenu from "./AppShellMenu.vue";
 import AppShellRail from "./AppShellRail.vue";
 import AppShellTabBar from "./AppShellTabBar.vue";
 import AppShellTopBar from "./AppShellTopBar.vue";
 import TheSnackbar from "~/components/Layout/LayoutParts/TheSnackbar.vue";
+import DsIcon from "~/components/Design/DsIcon.vue";
 import AnnouncementDialog from "~/components/Domain/Announcement/AnnouncementDialog.vue";
 import LanguageDialog from "~/components/global/LanguageDialog.vue";
 import { useStorage } from "@vueuse/core";
@@ -139,19 +155,11 @@ const primaryItems = computed<AppShellNavItem[]>(() => {
       icon: "cartCheck",
       active: isUnder(SHOP_PATH),
     },
-  ];
-});
-
-/** The rail adds Pantry after Shop; the mobile tab bar keeps the four primary destinations. */
-const railItems = computed<AppShellNavItem[]>(() => {
-  if (!isOwnGroup.value) {
-    return primaryItems.value;
-  }
-  return [
-    ...primaryItems.value,
     {
       key: "pantry",
       label: i18n.t("app-shell.pantry"),
+      // The mobile tab bar's five tabs share a 360 px phone: "Garde-manger" would not fit.
+      shortLabel: i18n.t("app-shell.pantry-short"),
       to: PANTRY_PATH,
       icon: "fridgeOutline",
       active: isUnder(PANTRY_PATH),
@@ -202,6 +210,20 @@ const addItems = computed<AppShellMenuItem[]>(() => {
     { key: "pantry", label: i18n.t("app-shell.add-to-pantry"), to: `${PANTRY_PATH}?add=1`, icon: "fridgeOutline" },
   );
   return items;
+});
+
+/**
+ * Pages that pin their own action above the tab bar (a shopping list's and the pantry's add field, a recipe's
+ * Start cooking, the editor's Save) keep that spot: the floating "+" would cover it.
+ */
+const showFab = computed(() => {
+  if (!addItems.value.length) {
+    return false;
+  }
+  const ownBottomAction = currentPath.value.startsWith(`${SHOP_PATH}/`)
+    || isUnder(PANTRY_PATH)
+    || isUnder(`${todayPath.value}/r`);
+  return !ownBottomAction;
 });
 
 const languageOpen = ref(false);
@@ -288,6 +310,7 @@ function search(query: string) {
   /* Room the floating mobile tab bar takes at the bottom (12 px inset + ~70 px bar + 14 px air). Pages pin
      their own floating actions at this offset. */
   --ds-tabbar-clearance: calc(var(--ds-space) * 12 + env(safe-area-inset-bottom));
+  --ds-shell-fab: calc(var(--ds-space) * 7);
 
   background: var(--ds-bg);
   color: var(--ds-text);
@@ -318,6 +341,33 @@ function search(query: string) {
     /* Bottom padding clears the floating tab bar. */
     padding: calc(var(--ds-space) * 2) calc(var(--ds-space) * 2) var(--ds-tabbar-clearance);
   }
+
+  /* ...and the floating "+" above it. */
+  .ds-shell--fab .ds-shell__column {
+    padding-bottom: calc(var(--ds-tabbar-clearance) + var(--ds-shell-fab) + var(--ds-space));
+  }
+}
+
+.ds-shell__fab {
+  position: fixed;
+  right: calc(var(--ds-space) * 2);
+  bottom: var(--ds-tabbar-clearance);
+  /* Same layer as the tab bar: above page content, below Vuetify overlays and dialogs. */
+  z-index: 1005;
+}
+
+/* Ink, not saffron: Home's Tonight board is the screen's single accent. */
+.ds-shell__fab :deep(.ds-shell__fab-button) {
+  display: grid;
+  place-items: center;
+  width: var(--ds-shell-fab);
+  height: var(--ds-shell-fab);
+  border: 0;
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-text);
+  color: var(--ds-bg);
+  box-shadow: var(--ds-shadow-float);
+  cursor: pointer;
 }
 </style>
 

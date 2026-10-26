@@ -35,10 +35,10 @@
         <kbd class="ds-topbar__kbd" :title="$t('app-shell.search-shortcut-hint', { shortcut: shortcutLabel })">{{ shortcutLabel }}</kbd>
       </form>
 
-      <!-- Desktop create menu; mobile has the same menu on the floating tab bar. -->
+      <!-- Desktop create menu; mobile has the same menu on a floating button above the tab bar. -->
       <AppShellMenu
         v-if="addItems.length"
-        class="ds-desktop-only"
+        class="ds-topbar__add ds-desktop-only"
         :items="addItems"
         :label="$t('app-shell.add')"
         :trigger-label="$t('app-shell.add')"

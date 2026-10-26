@@ -433,6 +433,62 @@ def test_record_given_entry_already_done(unique_user: TestUser):
         service.record(CookedMealCreate(recipe_id=recipe.id, cooked_on=TODAY, meal_plan_entry_id=entry.id))
 
 
+def test_record_amend_after_tick_adds_pantry_leftovers_and_feedback(unique_user: TestUser):
+    service = _service(unique_user)
+    food = _food(unique_user)
+    recipe = _recipe(unique_user, [food])
+    entry = _plan(unique_user, recipe, TODAY)
+    item = _item(unique_user, food.name, food)
+    service.mark_entry(entry.id, TODAY)
+    cooked_at = _entry(unique_user, entry.id).cooked_at
+
+    out = service.record(
+        CookedMealCreate(
+            recipe_id=recipe.id,
+            cooked_on=TODAY,
+            meal_plan_entry_id=entry.id,
+            pantry=[CookedPantryOutcome(pantry_item_id=item.id, outcome=PantryOutcome.used_up)],
+            leftovers=CookedLeftovers(portions=2),
+            feedback=CookedFeedback(verdict=FeedbackVerdict.loved),
+        ),
+        amend=True,
+    )
+
+    assert out.meal_plan_entry is None
+    assert out.removed_item_ids == [item.id]
+    assert out.leftover is not None and out.leftover.quantity == 2
+    assert out.feedback is not None and out.feedback.verdict == FeedbackVerdict.loved
+    assert _entry(unique_user, entry.id).cooked_at == cooked_at
+
+
+def test_record_amend_not_yet_cooked_marks_the_entry(unique_user: TestUser):
+    recipe = _recipe(unique_user)
+    yesterday = TODAY - timedelta(days=1)
+    entry = _plan(unique_user, recipe, yesterday)
+
+    out = _service(unique_user).record(
+        CookedMealCreate(recipe_id=recipe.id, cooked_on=yesterday, meal_plan_entry_id=entry.id), amend=True
+    )
+
+    assert out.meal_plan_entry is not None and out.meal_plan_entry.id == entry.id
+    assert _entry(unique_user, entry.id).cooked_at is not None
+    assert _last_made(unique_user, recipe) == _noon(yesterday)
+
+
+def test_record_amend_without_entry_after_a_cooking(unique_user: TestUser):
+    service = _service(unique_user)
+    recipe = _recipe(unique_user)
+    _plan(unique_user, recipe, TODAY)
+    service.record(CookedMealCreate(recipe_id=recipe.id, cooked_on=TODAY))
+
+    out = service.record(
+        CookedMealCreate(recipe_id=recipe.id, cooked_on=TODAY, leftovers=CookedLeftovers(portions=1)), amend=True
+    )
+
+    assert out.meal_plan_entry is None
+    assert out.leftover is not None
+
+
 def test_record_other_household_recipe(unique_user: TestUser, h2_user: TestUser):
     food = _food(h2_user)
     recipe = _recipe(h2_user, [food])

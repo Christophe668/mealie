@@ -38,8 +38,11 @@
           {{ lastMadeLine }}
         </p>
         <div class="home-board__actions">
-          <DsButton v-if="cookTo" variant="dark" :to="cookTo">
+          <DsButton v-if="cookTo && !cooked" variant="dark" :to="cookTo">
             {{ $t("home-today.start-cooking") }}
+          </DsButton>
+          <DsButton v-if="finishTo" :variant="cooked ? 'dark' : 'ghost'" :to="finishTo">
+            {{ $t("cook.how-was-it") }}
           </DsButton>
           <DsButton variant="ghost" icon="swapHorizontal" @click="emit('swap')">
             {{ $t("home-today.swap") }}
@@ -77,7 +80,7 @@ import { useId } from "vue";
 import DsButton from "~/components/Design/DsButton.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
 import { useStaticRoutes } from "~/composables/api";
-import { useTodayFormat } from "~/composables/use-today";
+import { howWasItTo, useTodayFormat } from "~/composables/use-today";
 import type { ReadPlanEntry } from "~/lib/api/types/meal-plan";
 
 const props = withDefaults(defineProps<{
@@ -116,6 +119,9 @@ const imageUrl = computed(() => (recipe.value?.id && recipe.value.image ? recipe
 watch(imageUrl, () => (imageFailed.value = false));
 
 const cookTo = computed(() => (recipe.value?.slug ? `/g/${props.groupSlug}/r/${recipe.value.slug}/cook` : ""));
+// Told later: after eating, or once it was ticked done. Once cooked it is the board's main action.
+const cooked = computed(() => !!props.entry?.cookedAt);
+const finishTo = computed(() => (props.entry ? howWasItTo(props.groupSlug, props.entry, props.today) : ""));
 const finderTo = computed(() => `/g/${props.groupSlug}/recipes/finder`);
 </script>
 

@@ -105,6 +105,38 @@ def test_record_and_conflict(api_client: TestClient, unique_user_fn_scoped: Test
     assert f"already recorded as cooked on {TODAY.isoformat()}" in response.text
 
 
+def test_record_amend_after_tick(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    food = random_string()
+    recipe = _create_recipe(api_client, user, food)
+    entry = _plan(api_client, user, TODAY, recipe["id"])
+    item = _pantry(api_client, user, food)
+    response = api_client.post(
+        api_routes.households_mealplans_item_id_cooked(entry["id"]),
+        params={"cooked_on": TODAY.isoformat()},
+        headers=user.token,
+    )
+    assert response.status_code == 200, response.text
+    payload = {
+        "recipeId": recipe["id"],
+        "cookedOn": TODAY.isoformat(),
+        "mealPlanEntryId": entry["id"],
+        "pantry": [{"pantryItemId": item["id"], "outcome": "some_left"}],
+        "feedback": {"verdict": "ok"},
+    }
+
+    response = api_client.post(api_routes.households_cooking, json=payload, headers=user.token)
+    assert response.status_code == 409
+
+    response = api_client.post(api_routes.households_cooking, params={"amend": True}, json=payload, headers=user.token)
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["mealPlanEntry"] is None
+    assert [i["id"] for i in body["keptItems"]] == [item["id"]]
+    assert body["keptItems"][0]["openedOn"] == TODAY.isoformat()
+    assert body["feedback"]["verdict"] == "ok"
+
+
 def test_record_pantry_item_not_in_recipe_is_400(api_client: TestClient, unique_user_fn_scoped: TestUser):
     user = unique_user_fn_scoped
     recipe = _create_recipe(api_client, user, random_string())

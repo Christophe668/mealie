@@ -17,6 +17,8 @@ export type SidebarLinks = Array<SideBarLink>;
 export interface AppShellNavItem {
   key: string;
   label: string;
+  /** What the mobile tab bar shows, when the label is too long for it. */
+  shortLabel?: string;
   to: string;
   icon: keyof Icon;
   active: boolean;
