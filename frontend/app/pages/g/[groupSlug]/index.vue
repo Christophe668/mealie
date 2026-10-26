@@ -33,6 +33,7 @@
       :group-slug="groupSlug"
       :planner-path="PLANNER_PATH"
       :loading="loading"
+      @move="moveEntry"
     />
 
     <HomeRecipeShelf
@@ -115,6 +116,7 @@ const {
   loadFailed,
   refresh,
   saveEntry,
+  moveEntry,
 } = useToday();
 const { duration, lastMadeLabel } = useTodayFormat();
 

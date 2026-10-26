@@ -14,6 +14,7 @@
           :group-slug="groupSlug"
           :planner-path="plannerPath"
           :loading="loading"
+          @move="emit('move', $event)"
         />
       </li>
     </ol>
@@ -24,6 +25,7 @@
 import { useTemplateRef } from "vue";
 import { isSameDay } from "date-fns";
 import HomeDayCard from "./HomeDayCard.vue";
+import type { HomeDayMove } from "./HomeDayCard.vue";
 import DsSectionTitle from "~/components/Design/DsSectionTitle.vue";
 import type { TodayDay } from "~/composables/use-today";
 
@@ -34,6 +36,11 @@ const props = defineProps<{
   /** The planner page; each empty day links to it with its own date. */
   plannerPath: string;
   loading: boolean;
+}>();
+
+const emit = defineEmits<{
+  /** An entry dragged onto another day. */
+  move: [move: HomeDayMove];
 }>();
 
 const strip = useTemplateRef<HTMLOListElement>("strip");
@@ -56,6 +63,8 @@ onMounted(() => {
 .home-week {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
+  /* Each day is as tall as its own meals; a busy day does not stretch the others. */
+  align-items: start;
   gap: calc(var(--ds-space) * 1.5);
   margin: 0;
   padding: 0;
@@ -63,13 +72,7 @@ onMounted(() => {
 }
 
 .home-week > li {
-  display: flex;
   min-width: 0;
-  flex-direction: column;
-}
-
-.home-week > li > * {
-  flex: 1;
 }
 
 @media (max-width: 1023px) {
