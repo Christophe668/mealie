@@ -18,6 +18,7 @@
           :recipe-slug="recipe.slug"
           :group-slug="groupSlug"
           :collapsible="isMobile"
+          :pantry="pantry"
         />
       </component>
 
@@ -205,6 +206,7 @@ import RecipeLastMade from "~/components/Domain/Recipe/RecipeLastMade.vue";
 import RecipeTimeline from "~/components/Domain/Recipe/RecipeTimeline.vue";
 import RecipePageComments from "~/components/Domain/Recipe/RecipePage/RecipePageParts/RecipePageComments.vue";
 import { useStaticRoutes, useUserApi } from "~/composables/api";
+import { useRecipePantry } from "~/composables/use-recipe-pantry";
 import { useDownloader } from "~/composables/api/use-downloader";
 import { useRecipePermissions } from "~/composables/recipes";
 import { useAddToShoppingListDialog } from "~/composables/shopping-list-page/use-add-to-shopping-list-dialog";
@@ -231,6 +233,8 @@ const { isOwnGroup } = useLoggedInState();
 const { household } = useHouseholdSelf();
 const { group, actions: groupActions } = useGroupSelf();
 const { recipeImage } = useStaticRoutes();
+// The household's pantry against the ingredients; members only, since the pantry is the household's.
+const { pantry } = useRecipePantry(() => recipe.value.id, () => isOwnGroup.value);
 
 const titleId = useId();
 const isMobile = useMediaQuery("(max-width: 1023px)");

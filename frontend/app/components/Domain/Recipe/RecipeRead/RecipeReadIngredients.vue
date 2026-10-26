@@ -18,6 +18,10 @@
     </h2>
 
     <div v-show="open || !collapsible" :id="listId" class="read-ingredients__list">
+      <p v-if="pantrySummary" class="read-ingredients__summary">
+        <DsIcon name="fridgeOutline" :size="18" />
+        {{ pantrySummary }}
+      </p>
       <div
         v-for="(section, sIndex) in sections"
         :key="sIndex"
@@ -46,6 +50,17 @@
               <span v-html="row.html" />
               <!-- eslint-disable-next-line vue/no-v-html -->
               <span v-if="row.note" class="read-ingredients__note" v-html="` ${row.note}`" />
+              <span
+                v-if="row.pantry"
+                class="read-ingredients__pantry"
+                :class="{
+                  'read-ingredients__pantry--have': row.pantry.have,
+                  'read-ingredients__pantry--urgent': row.pantry.urgent,
+                }"
+              >
+                <DsIcon :name="row.pantry.urgent ? 'alertCircle' : row.pantry.have ? 'checkboxMarkedCircle' : 'minusCircle'" :size="14" />
+                {{ row.pantry.text }}
+              </span>
             </label>
           </li>
         </ul>
@@ -57,6 +72,8 @@
 <script setup lang="ts">
 import { useId } from "vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
+import type { IngredientPantry } from "~/composables/use-recipe-pantry";
+import { DEFAULT_PANTRY_LOCATION, freshnessLine } from "~/lib/pantry/freshness";
 import { useIngredientTextParser } from "~/composables/recipes";
 import { marked } from "marked";
 import type { RecipeIngredient } from "~/lib/api/types/recipe";
@@ -70,11 +87,16 @@ const props = withDefaults(defineProps<{
   groupSlug?: string;
   /** Mobile: the heading becomes a disclosure button, open by default. */
   collapsible?: boolean;
+  /** The household's pantry per ingredient; null leaves the pantry out (unknown, or a visitor). */
+  pantry?: IngredientPantry | null;
 }>(), {
   scale: 1,
   groupSlug: "",
   collapsible: false,
+  pantry: null,
 });
+
+const i18n = useI18n();
 
 const headingId = useId();
 const listId = useId();
@@ -82,11 +104,39 @@ const open = ref(true);
 
 const { useParsedIngredientText } = useIngredientTextParser();
 
+interface PantryMark {
+  have: boolean;
+  /** "In pantry · Fridge", "In pantry · Fridge · Use by 27 October", "Not in pantry". */
+  text: string;
+  /** Past or near its use-by date. */
+  urgent: boolean;
+}
+
 interface Row {
   key: string;
   index: number;
   html: string;
   note: string;
+  /** Absent when the pantry is unknown or the ingredient names no food. */
+  pantry?: PantryMark;
+}
+
+function pantryMark(ingredient: RecipeIngredient): PantryMark | undefined {
+  const items = ingredient.referenceId ? props.pantry?.[ingredient.referenceId] : undefined;
+  if (!items) {
+    return undefined;
+  }
+  if (!items.length) {
+    return { have: false, text: i18n.t("recipe-read.not-in-pantry"), urgent: false };
+  }
+  const places = [...new Set(items.map(item => item.location ?? DEFAULT_PANTRY_LOCATION))]
+    .map(location => i18n.t(`pantry.location.${location}`));
+  // The soonest use-by tells whether it needs using up.
+  const fresh = items
+    .map(item => freshnessLine(item, new Date(), i18n.t, i18n.locale.value))
+    .find(line => line?.urgent);
+  const parts = [i18n.t("recipe-read.in-pantry"), places.join(", "), fresh?.text];
+  return { have: true, text: parts.filter(Boolean).join(" · "), urgent: !!fresh };
 }
 
 /** Notes are markdown upstream (SafeMarkdown); inline here so the line keeps flowing. */
@@ -123,9 +173,20 @@ const sections = computed(() => {
       key: ingredient.referenceId ? `ref:${ingredient.referenceId}` : `idx:${index}`,
       index,
       ...lineParts(ingredient),
+      pantry: pantryMark(ingredient),
     });
   });
   return result;
+});
+
+/** "4 of 6 in your pantry", over the ingredients that can be told (those naming a food). */
+const pantrySummary = computed(() => {
+  const marks = sections.value.flatMap(section => section.rows).map(row => row.pantry).filter(Boolean);
+  if (!marks.length) {
+    return "";
+  }
+  const have = marks.filter(mark => mark!.have).length;
+  return i18n.t("recipe-read.pantry-summary", { have, total: marks.length });
 });
 
 // Read again whenever the slug changes, so moving between recipes never carries ticks across.
@@ -255,6 +316,37 @@ export function ingredientTicksKey(recipeSlug: string): string {
 
 .read-ingredients__note {
   color: var(--ds-text-2);
+}
+
+.read-ingredients__summary {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 0.75);
+  margin: 0 0 var(--ds-space);
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-2);
+  font-weight: 500;
+}
+
+/* Its own line under the ingredient: quiet when missing, ink when there. Use soon gets a warning icon, not
+   saffron: the page's accent belongs to Start cooking. */
+.read-ingredients__pantry {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 0.5);
+  margin-top: 2px;
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-1);
+  line-height: 1.3;
+}
+
+.read-ingredients__pantry--have {
+  color: var(--ds-text);
+  font-weight: 600;
+}
+
+.read-ingredients__pantry--urgent {
+  font-weight: 700;
 }
 
 .read-ingredients__label :deep(a) {

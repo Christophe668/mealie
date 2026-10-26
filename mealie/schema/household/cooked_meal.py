@@ -54,7 +54,16 @@ class CookedMealOut(MealieModel):
     feedback: RecipeFeedbackOut | None = None
 
 
+class PantryIngredientMatch(MealieModel):
+    reference_id: UUID4
+    """The recipe ingredient's `reference_id`."""
+    pantry_item_ids: list[UUID4] = []
+    """Its pantry items, in pantry order; empty when the pantry has none of its food."""
+
+
 class PantryCheckOut(MealieModel):
     items: list[PantryItemOut]
     suggested_leftover_portions: int
     meal_plan_entry_id: int | None = None
+    ingredients: list[PantryIngredientMatch] = []
+    """One per ingredient that names a food; an ingredient without one can't be matched, so it is left out."""
