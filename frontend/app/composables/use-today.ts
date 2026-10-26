@@ -247,6 +247,22 @@ export function useToday() {
     return true;
   }
 
+  /**
+   * Moves an entry to another day of the week, keeping its meal type. The week reloads either way,
+   * so a failed move puts the entry back where it is saved.
+   */
+  async function moveEntry(move: { entryId: number; date: string }): Promise<boolean> {
+    const entry = plan.value.find(e => e.id === move.entryId);
+    if (!entry || entry.date === move.date) {
+      return false;
+    }
+    const saved = await saveEntry({ ...entry, date: move.date });
+    if (!saved) {
+      await reloadPlan();
+    }
+    return saved;
+  }
+
   // Household preferences can arrive (or change) after the first load; reframe the week when they do.
   watch(firstDayOfWeek, () => {
     if (!loading.value) {
@@ -277,6 +293,7 @@ export function useToday() {
     loadFailed,
     refresh,
     saveEntry,
+    moveEntry,
   };
 }
 
