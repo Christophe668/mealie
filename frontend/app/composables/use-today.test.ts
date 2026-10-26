@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { effectScope, ref } from "vue";
-import { relativeAgo, useToday } from "./use-today";
+import { howWasItTo, relativeAgo, useToday } from "./use-today";
 import type { ReadPlanEntry } from "~/lib/api/types/meal-plan";
 
 const api = vi.hoisted(() => ({
@@ -444,6 +444,37 @@ describe("useToday swap", () => {
   });
 });
 
+describe("useToday meals to review", () => {
+  test("yesterday's recipes not recorded as cooked are still to review", async () => {
+    const cooked = { ...entry("2026-10-23", "dinner", "Fish pie"), cookedAt: "2026-10-23T12:00:00" };
+    const pending = entry("2026-10-23", "lunch", "Pea soup");
+    const titleOnly = { ...entry("2026-10-23", "dinner", "Out"), recipe: undefined, recipeId: undefined };
+    mockPlan([cooked, pending, titleOnly, entry("2026-10-24", "dinner", "Roast chicken")]);
+
+    const today = await load();
+
+    expect(today.toReview.value.map(e => e.id)).toEqual([pending.id]);
+  });
+});
+
+describe("howWasItTo", () => {
+  const now = new Date(2026, 9, 24, 21, 0);
+
+  test("leads to the recipe's finish screen for the entry's day, its id and scale", () => {
+    const planned = { ...entry("2026-10-23", "dinner", "Fish pie"), recipeScale: 2 };
+    expect(howWasItTo("home", planned, now)).toBe(`/g/home/r/fish-pie/finish?on=2026-10-23&entry=${planned.id}&scale=2`);
+  });
+
+  test("never dates it after today, and leaves out the default scale", () => {
+    const planned = entry("2026-10-26", "dinner", "Fish pie");
+    expect(howWasItTo("home", planned, now)).toBe(`/g/home/r/fish-pie/finish?on=2026-10-24&entry=${planned.id}`);
+  });
+
+  test("an entry without a recipe has nowhere to go", () => {
+    expect(howWasItTo("home", { ...entry("2026-10-24", "dinner", "Out"), recipe: undefined }, now)).toBe("");
+  });
+});
+
 describe("useToday midnight rollover", () => {
   test("a tab that comes back on a new day reloads that day", async () => {
     mockPlan([
@@ -459,7 +490,8 @@ describe("useToday midnight rollover", () => {
     document.dispatchEvent(new Event("visibilitychange"));
 
     await vi.waitFor(() => expect(today.tonight.value?.recipe?.name).toBe("Sunday soup"));
-    expect(api.mealplans.getAll).toHaveBeenLastCalledWith(1, -1, { start_date: "2026-10-25", end_date: "2026-10-31" });
+    // From yesterday: the week starts today, and yesterday's meals can still be reviewed.
+    expect(api.mealplans.getAll).toHaveBeenLastCalledWith(1, -1, { start_date: "2026-10-24", end_date: "2026-10-31" });
   });
 
   test("nothing reloads while the day is the same", async () => {

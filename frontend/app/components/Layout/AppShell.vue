@@ -9,7 +9,7 @@
         class="ds-desktop-only"
         :brand-name="brandName"
         :home-to="todayPath"
-        :items="railItems"
+        :items="primaryItems"
         :secondary-items="secondaryItems"
         :user-name="loggedIn ? auth.user.value?.fullName || '' : undefined"
         :user-items="userItems"
@@ -104,6 +104,7 @@ const recipesActive = computed(() => {
   return ["recipes", "r", "cookbooks"].some(section => isUnder(`${group}/${section}`));
 });
 
+/** The short labels are for the mobile tab bar: five tabs and the add button share a 360 px phone. */
 const primaryItems = computed<AppShellNavItem[]>(() => {
   const recipes: AppShellNavItem = {
     key: "recipes",
@@ -120,6 +121,7 @@ const primaryItems = computed<AppShellNavItem[]>(() => {
     {
       key: "today",
       label: i18n.t("app-shell.today"),
+      shortLabel: i18n.t("app-shell.today-short"),
       to: todayPath.value,
       icon: "home",
       active: currentPath.value === todayPath.value,
@@ -128,6 +130,7 @@ const primaryItems = computed<AppShellNavItem[]>(() => {
     {
       key: "plan",
       label: i18n.t("app-shell.plan"),
+      shortLabel: i18n.t("app-shell.plan-short"),
       to: PLAN_PATH,
       icon: "calendar",
       active: isUnder("/household/mealplan"),
@@ -139,19 +142,10 @@ const primaryItems = computed<AppShellNavItem[]>(() => {
       icon: "cartCheck",
       active: isUnder(SHOP_PATH),
     },
-  ];
-});
-
-/** The rail adds Pantry after Shop; the mobile tab bar keeps the four primary destinations. */
-const railItems = computed<AppShellNavItem[]>(() => {
-  if (!isOwnGroup.value) {
-    return primaryItems.value;
-  }
-  return [
-    ...primaryItems.value,
     {
       key: "pantry",
       label: i18n.t("app-shell.pantry"),
+      shortLabel: i18n.t("app-shell.pantry-short"),
       to: PANTRY_PATH,
       icon: "fridgeOutline",
       active: isUnder(PANTRY_PATH),

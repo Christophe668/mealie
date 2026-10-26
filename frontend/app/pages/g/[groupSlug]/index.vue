@@ -27,6 +27,16 @@
       />
     </div>
 
+    <ul v-if="!loading && toReview.length" class="home__review">
+      <li v-for="entry in toReview" :key="entry.id">
+        <NuxtLink :to="howWasItTo(groupSlug, entry, today)" class="home__review-link ds-focus">
+          <DsIcon name="silverwareForkKnife" :size="18" />
+          <span>{{ $t("home-today.how-was-yesterdays", { name: entry.recipe?.name || entry.title }) }}</span>
+          <DsIcon name="chevronRight" :size="18" class="home__review-chevron" />
+        </NuxtLink>
+      </li>
+    </ul>
+
     <HomeWeekStrip
       :days="week"
       :today="today"
@@ -73,9 +83,10 @@ import HomeSideCards from "~/components/Domain/Home/HomeSideCards.vue";
 import HomeTonightBoard from "~/components/Domain/Home/HomeTonightBoard.vue";
 import HomeWeekStrip from "~/components/Domain/Home/HomeWeekStrip.vue";
 import GroupMealPlanEntryDialog from "~/components/Domain/Household/GroupMealPlanEntryDialog.vue";
+import DsIcon from "~/components/Design/DsIcon.vue";
 import { useAppShellTitle } from "~/composables/use-app-shell-title";
 import { useLoggedInState } from "~/composables/use-logged-in-state";
-import { useToday, useTodayFormat } from "~/composables/use-today";
+import { howWasItTo, useToday, useTodayFormat } from "~/composables/use-today";
 import type { RecipeSummary } from "~/lib/api/types/recipe";
 
 const PLANNER_PATH = "/household/mealplan/planner/view";
@@ -104,6 +115,7 @@ const {
   today,
   tonight,
   tonightLastMade,
+  toReview,
   lunch,
   week,
   weekStart,
@@ -151,6 +163,39 @@ onMounted(() => {
   grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
   gap: calc(var(--ds-space) * 3);
   align-items: stretch;
+}
+
+.home__review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space);
+  margin: calc(var(--ds-space) * 3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home__review-link {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 1.5);
+  min-height: 48px;
+  padding: var(--ds-space) calc(var(--ds-space) * 2);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-surface);
+  color: var(--ds-text);
+  font-size: var(--ds-t-3);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.home__review-link:hover {
+  border-color: var(--ds-text-2);
+}
+
+.home__review-chevron {
+  margin-left: auto;
+  color: var(--ds-text-2);
 }
 
 .home__error {

@@ -19,8 +19,9 @@ export class HouseholdCookingApi extends BaseAPI {
     return await this.requests.get<PantryCheckOut>(route(routes.pantryCheck(recipeId), params));
   }
 
-  async record(payload: CookedMealCreate) {
-    return await this.requests.post<CookedMealOut>(routes.cooking, payload);
+  /** `amend`: told later, so a cooking already recorded gets the pantry, leftovers and feedback added. */
+  async record(payload: CookedMealCreate, { amend = false }: { amend?: boolean } = {}) {
+    return await this.requests.post<CookedMealOut>(amend ? route(routes.cooking, { amend: true }) : routes.cooking, payload);
   }
 
   /** Ticks a meal plan entry done: a recipe entry is recorded as a cooking, a title-only entry just gets marked. */

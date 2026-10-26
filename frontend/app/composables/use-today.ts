@@ -34,6 +34,23 @@ export function startOfHouseholdWeek(today: Date, firstDayOfWeek: number): Date 
   return subDays(day, (day.getDay() - firstDayOfWeek + 7) % 7);
 }
 
+/**
+ * "How was it?" for a planned meal, told later: the day it was planned (never after today), its entry and scale.
+ * Empty for an entry without a recipe.
+ */
+export function howWasItTo(groupSlug: string, entry: ReadPlanEntry, today: Date): string {
+  const slug = entry.recipe?.slug;
+  if (!slug) {
+    return "";
+  }
+  const on = entry.date < ymd(today) ? entry.date : ymd(today);
+  const query = new URLSearchParams({ on, entry: String(entry.id) });
+  if (entry.recipeScale && entry.recipeScale !== 1) {
+    query.set("scale", String(entry.recipeScale));
+  }
+  return `/g/${groupSlug}/r/${slug}/finish?${query}`;
+}
+
 /** The entry a day card leads with: the dinner, else the first entry. */
 export function leadEntry(entries: ReadPlanEntry[]): ReadPlanEntry | null {
   return entries.find(e => e.entryType === "dinner") ?? entries[0] ?? null;
@@ -76,6 +93,10 @@ export function useToday() {
   );
 
   const todaysEntries = computed(() => plan.value.filter(e => e.date === ymd(today.value)));
+  /** Yesterday's recipes that were never recorded as cooked: "How was it?" can still be told. */
+  const toReview = computed(() =>
+    plan.value.filter(e => e.date === ymd(subDays(today.value, 1)) && !!e.recipe?.slug && !e.cookedAt),
+  );
   const lunch = computed(() => todaysEntries.value.find(e => e.entryType === "lunch") ?? null);
   // Lunch has its own card, so a lunch-only day has nothing for tonight.
   const tonight = computed(
@@ -99,8 +120,10 @@ export function useToday() {
    */
   async function loadPlan(): Promise<() => Promise<void>> {
     const stamp = ++seq.plan;
+    // From yesterday when the week starts today, for the meals still to review.
+    const yesterday = subDays(today.value, 1);
     const { data, error } = await api.mealplans.getAll(1, -1, {
-      start_date: ymd(weekStart.value),
+      start_date: ymd(yesterday < weekStart.value ? yesterday : weekStart.value),
       end_date: ymd(addDays(weekStart.value, 6)),
     });
     if (stamp !== seq.plan) {
@@ -281,6 +304,7 @@ export function useToday() {
     today,
     tonight,
     tonightLastMade,
+    toReview,
     lunch,
     week,
     weekStart,

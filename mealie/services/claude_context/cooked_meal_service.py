@@ -149,13 +149,17 @@ class CookedMealService(BaseService):
 
     # ------------------------------------------------------------------ writes
 
-    def record(self, data: CookedMealCreate, today: date | None = None) -> CookedMealOut:
+    def record(self, data: CookedMealCreate, today: date | None = None, *, amend: bool = False) -> CookedMealOut:
         """Record a cooking, all or nothing.
+
+        With `amend`, a cooking already recorded (that day, or on the given entry) is not refused: what comes with
+        it (pantry outcomes, leftovers, feedback) is added and no entry is marked. This is "How was it?" told later,
+        after the meal was ticked done or cook mode was skipped.
 
         Raises, writing nothing: `FutureMadeOnError` (cooked_on later than the server's tomorrow), `NoEntryFound`
         (recipe outside the group, entry or pantry item outside the household, or an entry for another recipe),
-        `AlreadyCookedError`, `PantryItemNotInRecipeError` (items not matching the recipe, or listed twice) and
-        `ValueError` (leftover portions or location out of range).
+        `AlreadyCookedError` (without `amend`), `PantryItemNotInRecipeError` (items not matching the recipe, or
+        listed twice) and `ValueError` (leftover portions or location out of range).
         """
         today = today or datetime.now().astimezone().date()
         latest = today + timedelta(days=1)
@@ -164,8 +168,10 @@ class CookedMealService(BaseService):
                 f"cooked_on cannot be later than {latest.isoformat()}, got {data.cooked_on.isoformat()}."
             )
         recipe = self._get_recipe_or_raise(data.recipe_id)
-        self._refuse_if_already_cooked(data.recipe_id, data.cooked_on)
-        entry = self._entry_to_mark(data.recipe_id, data)
+        already_cooked = self._cooked_on(data.recipe_id, data.cooked_on)
+        if already_cooked and not amend:
+            raise AlreadyCookedError(data.cooked_on)
+        entry = None if already_cooked else self._entry_to_mark(data.recipe_id, data, amend=amend)
         outcomes = self._checked_outcomes(recipe, data)
         if data.leftovers is not None:
             self._check_leftovers(data.leftovers)
@@ -239,19 +245,20 @@ class CookedMealService(BaseService):
 
     # ------------------------------------------------------------------ helpers
 
-    def _refuse_if_already_cooked(self, recipe_id: UUID, cooked_on: date) -> None:
+    def _cooked_on(self, recipe_id: UUID, cooked_on: date) -> bool:
         start = datetime.combine(cooked_on, time()).astimezone()
         end = datetime.combine(cooked_on + timedelta(days=1), time()).astimezone()
-        if self.repos.meals.cooked_between(recipe_id, start, end):
-            raise AlreadyCookedError(cooked_on)
+        return bool(self.repos.meals.cooked_between(recipe_id, start, end))
 
-    def _entry_to_mark(self, recipe_id: UUID, data: CookedMealCreate) -> ReadPlanEntry | None:
+    def _entry_to_mark(self, recipe_id: UUID, data: CookedMealCreate, *, amend: bool = False) -> ReadPlanEntry | None:
         if data.meal_plan_entry_id is None:
             return self.find_entry(recipe_id, data.cooked_on)
         entry = self.repos.meals.get_one(data.meal_plan_entry_id)  # household-scoped
         if entry is None or entry.recipe_id is None or str(entry.recipe_id) != str(recipe_id):
             raise NoEntryFound("Meal plan entry not found for this recipe.")
         if entry.cooked_at is not None:
+            if amend:
+                return None
             raise AlreadyCookedError(_local_day(entry.cooked_at))
         return entry
 

@@ -143,11 +143,14 @@ describe("AppShell", () => {
     expect(link(wrapper, ".ds-rail", "Shop").attributes("aria-current")).toBeUndefined();
   });
 
-  test("the tab bar carries the four primary destinations", () => {
+  test("the tab bar carries the five primary destinations, Pantry included", async () => {
+    route.path = "/household/pantry";
     const wrapper = render();
 
     const labels = wrapper.findAll(".ds-tabbar a").map(a => a.text().trim());
-    expect(labels).toEqual(["Today", "Recipes", "Plan", "Shop"]);
+    expect(labels).toEqual(["Today", "Recipes", "Plan", "Shop", "Pantry"]);
+    expect(link(wrapper, ".ds-tabbar", "Pantry").attributes("href")).toBe("/household/pantry");
+    expect(link(wrapper, ".ds-tabbar", "Pantry").attributes("aria-current")).toBe("page");
   });
 
   test("marks only the active destination with aria-current=page", () => {
