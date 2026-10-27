@@ -596,12 +596,32 @@ async def test_record_meal_cooked_quantity_and_substitute(
     ref = str(recipe.recipe_ingredient[0].reference_id)
     _as_user(monkeypatch, session, user)
 
+    # without the substitute reference the item is not in the recipe
+    with pytest.raises(McpToolError, match="pantry items not in this recipe"):
+        await record_meal_cooked(recipe.slug, pantry=[{"id": other, "outcome": "some_left", "quantity": 3.5}])
+
     result = await record_meal_cooked(
         recipe.slug, pantry=[{"id": other, "outcome": "some_left", "quantity": 3.5, "replaces_reference_id": ref}]
     )
 
-    assert result["kept"] == [next(i["name"] for i in (await get_pantry())["items"] if i["id"] == other)]
-    assert next(i["quantity"] for i in (await get_pantry())["items"] if i["id"] == other) == 3.5
+    items = {i["id"]: i for i in (await get_pantry())["items"]}
+    assert result["kept"] == [items[other]["name"]]
+    assert items[other]["quantity"] == 3.5
+
+
+@pytest.mark.asyncio
+async def test_record_meal_cooked_wrong_replaces_reference_is_a_tool_error(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe, _, _ = _stocked(user)
+    other = _add(user, name=random_string(12), quantity=5)
+    _as_user(monkeypatch, session, user)
+
+    with pytest.raises(McpToolError):
+        await record_meal_cooked(
+            recipe.slug, pantry=[{"id": other, "outcome": "some_left", "replaces_reference_id": str(uuid4())}]
+        )
 
 
 @pytest.mark.asyncio

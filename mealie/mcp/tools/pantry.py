@@ -368,7 +368,7 @@ def record_meal_cooked_impl(
         raise McpToolError(
             f"{e}. If the user wants to change the pantry or add leftovers anyway, use update_pantry."
         ) from e
-    except (PantryItemNotInRecipeError, NoEntryFound) as e:
+    except (PantryItemNotInRecipeError, NoEntryFound, ValueError) as e:
         raise McpToolError(str(e)) from e
 
     entry = result.meal_plan_entry
