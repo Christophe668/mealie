@@ -267,7 +267,7 @@ def get_recipe_impl(
                 "used": proposals[item.id].used,
                 "proposed_quantity": proposals[item.id].proposed_quantity,
                 "proposed_outcome": proposals[item.id].proposed_outcome.value,
-                "reason": proposals[item.id].reason.value if proposals[item.id].reason else None,
+                "reason": r.value if (r := proposals[item.id].reason) else None,
                 "replaces_reference_id": str(r) if (r := proposals[item.id].replaces_reference_id) else None,
             }
             for item in check.items

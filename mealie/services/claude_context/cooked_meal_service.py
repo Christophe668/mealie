@@ -183,7 +183,7 @@ class CookedMealService(BaseService):
             items.append(item)
             proposals.append(propose_substitute(line, item, scale))
 
-        replaced = {line.reference_id for line, _ in checked}
+        replaced = {line.reference_id for line, _ in checked if line.reference_id is not None}
         return PantryCheckOut(
             items=items,
             proposals=proposals,
@@ -211,9 +211,7 @@ class CookedMealService(BaseService):
                 by_item[str(proposal.pantry_item_id)] = proposal
         return [by_item[str(item.id)] for item in items]
 
-    def _unmatched(
-        self, recipe: Recipe, pantry: list[PantryItemOut], replaced: set[UUID | None]
-    ) -> list[UnmatchedIngredient]:
+    def _unmatched(self, recipe: Recipe, pantry: list[PantryItemOut], replaced: set[UUID]) -> list[UnmatchedIngredient]:
         unmatched: list[UnmatchedIngredient] = []
         for line in recipe.recipe_ingredient:
             if line.food is None or line.reference_id is None or line.reference_id in replaced:
