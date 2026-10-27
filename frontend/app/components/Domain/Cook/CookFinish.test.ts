@@ -388,6 +388,69 @@ describe("CookFinish", () => {
       });
     });
 
+    test("told later: proposals are shown but nothing is pre-selected, so a pantry already reduced is not reduced again", async () => {
+      pantryCheck.mockResolvedValue(check({
+        items: [flour, oil],
+        proposals: [proposal(), proposal({ pantryItemId: "p-oil", proposedQuantity: 0, proposedOutcome: "used_up" })],
+      }));
+      const wrapper = await render({ cookedOn: "2026-10-23", amend: true });
+
+      expect(wrapper.findAll(".cook-pantry__item button").every(b => b.attributes("aria-pressed") === "false")).toBe(true);
+      expect(itemRow(wrapper, "Flour").text()).not.toContain("→");
+      await button(wrapper, "Done").trigger("click");
+      await flushPromises();
+      expect(record.mock.calls[0]![0]).not.toHaveProperty("pantry");
+    });
+
+    test("told later: picking Some left still offers the proposed amount", async () => {
+      pantryCheck.mockResolvedValue(check({ items: [flour], proposals: [proposal()] }));
+      const wrapper = await render({ cookedOn: "2026-10-23", amend: true });
+
+      await button(itemRow(wrapper, "Flour"), "Some left").trigger("click");
+      expect(itemRow(wrapper, "Flour").text()).toContain("→ 800");
+      await button(wrapper, "Done").trigger("click");
+      await flushPromises();
+      expect(record).toHaveBeenCalledWith(
+        expect.objectContaining({ pantry: [{ pantryItemId: "p-flour", outcome: "some_left", quantity: 800 }] }),
+        { amend: true },
+      );
+    });
+
+    test("Done and Skip wait while a substitute is being checked", async () => {
+      pantryCheck.mockResolvedValueOnce(check({ items: [flour], proposals: [proposal()], unmatchedIngredients: [ghee] }));
+      getAll.mockResolvedValue({ data: { items: [flour, oil] }, error: null });
+      const wrapper = await render();
+
+      let resolve!: (value: ApiResult<PantryCheckOut>) => void;
+      pantryCheck.mockImplementationOnce(() => new Promise((r) => {
+        resolve = r;
+      }));
+      await button(wrapper, "Used something else?").trigger("click");
+      await wrapper.findAll(".cook-pantry__picker button").find(b => b.text() === "Olive oil")!.trigger("click");
+      await flushPromises();
+
+      expect(button(wrapper, "Done").attributes("aria-disabled")).toBe("true");
+      expect(button(wrapper, "Skip").attributes("aria-disabled")).toBe("true");
+      await button(wrapper, "Done").trigger("click");
+      await button(wrapper, "Skip").trigger("click");
+      await flushPromises();
+      expect(record).not.toHaveBeenCalled();
+
+      resolve(check({
+        items: [flour, oil],
+        proposals: [proposal(), proposal({ pantryItemId: "p-oil", proposedQuantity: 450, replacesReferenceId: "ref-1" })],
+      }));
+      await flushPromises();
+
+      expect(button(wrapper, "Done").attributes("aria-disabled")).toBeUndefined();
+      await button(wrapper, "Done").trigger("click");
+      await flushPromises();
+      expect(record.mock.calls[0]![0]).toHaveProperty("pantry", [
+        { pantryItemId: "p-flour", outcome: "some_left", quantity: 800 },
+        { pantryItemId: "p-oil", outcome: "some_left", quantity: 450, replacesReferenceId: "ref-1" },
+      ]);
+    });
+
     describe("a substitute pick refetches the check", () => {
       const sugar: PantryItemOut = { ...item("p-sugar", "Sugar"), quantity: 400 };
       const both = () => check({

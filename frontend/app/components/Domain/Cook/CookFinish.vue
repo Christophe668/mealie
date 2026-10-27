@@ -44,10 +44,10 @@
         :disabled="busy"
       />
       <div class="cook-finish__choices cook-finish__actions">
-        <DsButton variant="dark" size="lg" :disabled="busy" @click="save(true)">
+        <DsButton variant="dark" size="lg" :disabled="busy || checking > 0" @click="save(true)">
           {{ $t("cook.done") }}
         </DsButton>
-        <DsButton variant="ghost" size="lg" class="cook-finish__skip" :disabled="busy" @click="save(false)">
+        <DsButton variant="ghost" size="lg" class="cook-finish__skip" :disabled="busy || checking > 0" @click="save(false)">
           {{ $t("cook.skip") }}
         </DsButton>
       </div>
@@ -119,8 +119,14 @@ let checkedSubstitutes: Record<string, string> = {};
 let latestCheck = 0;
 /** Items already given their proposed choice: a refetch never redoes what the cook has since changed or cleared. */
 const seeded = new Set<string>();
+/** Pantry checks in flight: Done waits for them, or a substitute just picked would be left out. */
+const checking = ref(0);
 
-/** Pre-selects what the server proposes, for the items not seen before; drops choices for items no longer listed. */
+/**
+ * Pre-selects what the server proposes, for the items not seen before; drops choices for items no longer listed.
+ * Told later, nothing is pre-selected: the pantry may already have been reduced for this cooking, so one tap on
+ * Done would take the recipe from it twice. The proposals still show, and "Some left" starts from them.
+ */
 function seed(data: PantryCheckOut) {
   const listed = new Set(data.items.map(item => item.id));
   // An item that left the list gets its proposal again if it comes back.
@@ -136,6 +142,9 @@ function seed(data: PantryCheckOut) {
       continue;
     }
     seeded.add(proposal.pantryItemId);
+    if (props.amend) {
+      continue;
+    }
     if (proposal.proposedOutcome === "used_up") {
       outcomes[proposal.pantryItemId] = "used_up";
     }
@@ -153,6 +162,7 @@ async function loadCheck() {
   const request = ++latestCheck;
   const substitutes = { ...choices.value.substitutes };
   const first = check.value === null;
+  checking.value++;
   try {
     const cooking = useUserApi().householdCooking;
     const { data } = Object.keys(substitutes).length
@@ -173,6 +183,9 @@ async function loadCheck() {
   }
   catch {
     // Finishing never depends on the pantry check.
+  }
+  finally {
+    checking.value--;
   }
   if (request === latestCheck) {
     // Keep the previous check; the substitute that could not be checked is dropped.
@@ -264,7 +277,7 @@ function cookedMeal(withFeedback: boolean): CookedMealCreate {
  * Skip sends the same without the verdict. A failure stays here so it can be retried.
  */
 async function save(withFeedback: boolean) {
-  if (busy.value) {
+  if (busy.value || checking.value > 0) {
     return;
   }
   busy.value = true;
