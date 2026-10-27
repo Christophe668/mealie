@@ -15,6 +15,43 @@ class PantryOutcome(StrEnum):
     some_left = "some_left"
 
 
+class ProposedOutcome(StrEnum):
+    used_up = "used_up"
+    some_left = "some_left"
+    none = "none"
+    """The recipe takes nothing from this pantry item (an earlier item of the same food covered it)."""
+
+
+class ProposalReason(StrEnum):
+    subtracted = "subtracted"
+    """Same unit on both sides: the recipe's amount was taken off."""
+    converted = "converted"
+    """Different but compatible units, converted into the pantry item's unit."""
+    weight_from_note = "weight_from_note"
+    """Pieces turned into weight with a `200 g` found in the ingredient's note."""
+    weight_from_food = "weight_from_food"
+    """Pieces and weight turned into each other with the food's `grams_each`."""
+    units_differ = "units_differ"
+    """No way to compare the recipe's unit with the pantry item's: nothing is subtracted."""
+    small_amount = "small_amount"
+    """The recipe takes under 5% of the item, so the quantity is left alone."""
+    no_quantity = "no_quantity"
+    """The recipe or the pantry item has no quantity to work with."""
+
+
+class PantryProposal(MealieModel):
+    pantry_item_id: UUID4
+    used: float | None = None
+    """What the recipe takes, in the pantry item's unit; `None` when it can't be worked out."""
+    proposed_quantity: float | None = None
+    """The quantity left to suggest; `None` only when the pantry item has no quantity."""
+    proposed_outcome: ProposedOutcome
+    reason: ProposalReason | None = None
+    """`None` only with the outcome `none`."""
+    replaces_reference_id: UUID4 | None = None
+    """Set when the item stands in for this recipe ingredient (a substitute), not the ingredient's own food."""
+
+
 class CookedPantryOutcome(MealieModel):
     pantry_item_id: UUID4
     outcome: PantryOutcome
