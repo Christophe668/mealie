@@ -135,6 +135,23 @@ def test_record_and_conflict(api_client: TestClient, unique_user_fn_scoped: Test
     assert f"already recorded as cooked on {TODAY.isoformat()}" in response.text
 
 
+def test_record_quantity_roundtrip(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    food = random_string()
+    recipe = _create_recipe(api_client, user, food)
+    item = _pantry(api_client, user, food, quantity=1000)
+    payload = {
+        "recipeId": recipe["id"],
+        "cookedOn": TODAY.isoformat(),
+        "pantry": [{"pantryItemId": item["id"], "outcome": "some_left", "quantity": 800}],
+    }
+
+    response = api_client.post(api_routes.households_cooking, json=payload, headers=user.token)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["keptItems"][0]["quantity"] == 800
+
+
 def test_record_amend_after_tick(api_client: TestClient, unique_user_fn_scoped: TestUser):
     user = unique_user_fn_scoped
     food = random_string()

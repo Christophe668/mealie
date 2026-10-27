@@ -236,7 +236,8 @@ class CookedMealService(BaseService):
         self, recipe: Recipe, pairs: list[tuple[UUID, UUID]], pantry: list[PantryItemOut]
     ) -> list[tuple[RecipeIngredient, PantryItemOut]]:
         """Each (ingredient reference, pantry item) pair resolved, or refused: an unknown reference (`ValueError`),
-        an item outside the household (`NoEntryFound`), an item matching a recipe food or used twice
+        an ingredient whose own food has pantry items ("used instead" is for unmatched ingredients only,
+        `ValueError`), an item outside the household (`NoEntryFound`), an item matching a recipe food or used twice
         (`PantryItemNotInRecipeError`)."""
         lines = {str(i.reference_id): i for i in recipe.recipe_ingredient if i.food is not None and i.reference_id}
         unknown = [str(ref) for ref, _ in pairs if str(ref) not in lines]
@@ -257,6 +258,14 @@ class CookedMealService(BaseService):
         already = [item_id for item_id in item_ids if item_id in matching]
         if already:
             raise PantryItemNotInRecipeError(already, reason="pantry items already match a food of this recipe")
+
+        matched_refs = []
+        for ref, _ in pairs:
+            food = lines[str(ref)].food
+            if food is not None and any(self._food_matcher([food])(item) for item in pantry):
+                matched_refs.append(str(ref))
+        if matched_refs:
+            raise ValueError(f"ingredients already in the pantry, nothing to use instead: {', '.join(matched_refs)}")
 
         return [(lines[str(ref)], in_household[str(item_id)]) for ref, item_id in pairs]
 
@@ -312,12 +321,15 @@ class CookedMealService(BaseService):
 
             removed_ids: list[UUID] = []
             kept: list[PantryItemOut] = []
-            for item, outcome in outcomes:
+            for item, outcome, quantity in outcomes:
                 if outcome == PantryOutcome.used_up:
                     removed_ids.append(pantry.remove_item(item.id).id)
-                elif item.opened_on is None:
+                elif item.opened_on is None or quantity is not None:
                     update = PantryItemUpdate(**item.model_dump(include=set(PantryItemUpdate.model_fields)))
-                    update.opened_on = data.cooked_on
+                    if item.opened_on is None:
+                        update.opened_on = data.cooked_on
+                    if quantity is not None:
+                        update.quantity = quantity
                     kept.append(pantry.update_item(item.id, update))
                 else:
                     kept.append(item)
@@ -375,11 +387,15 @@ class CookedMealService(BaseService):
             raise AlreadyCookedError(_local_day(entry.cooked_at))
         return entry
 
-    def _checked_outcomes(self, recipe: Recipe, data: CookedMealCreate) -> list[tuple[PantryItemOut, PantryOutcome]]:
+    def _checked_outcomes(
+        self, recipe: Recipe, data: CookedMealCreate
+    ) -> list[tuple[PantryItemOut, PantryOutcome, float | None]]:
         ids = [str(outcome.pantry_item_id) for outcome in data.pantry]
         repeated = sorted(item_id for item_id, count in Counter(ids).items() if count > 1)
         if repeated:
             raise PantryItemNotInRecipeError(repeated, reason="pantry items listed more than once")
+        if any(o.outcome == PantryOutcome.used_up and o.quantity is not None for o in data.pantry):
+            raise ValueError("a quantity goes with some_left only")
 
         pantry = self.repos.pantry_items.ordered()  # household-scoped
         in_household = {str(item.id) for item in pantry}
@@ -387,11 +403,27 @@ class CookedMealService(BaseService):
         if missing:
             raise NoEntryFound(f"pantry items not found: {', '.join(missing)}")
 
+        # substitutes: same refusals as the pantry check
+        pairs = [(o.replaces_reference_id, o.pantry_item_id) for o in data.pantry if o.replaces_reference_id]
+        self._checked_substitutes(recipe, pairs, pantry)
+
         matched = {str(item.id): item for item in self._matching_items(recipe, pantry)}
-        not_in_recipe = [item_id for item_id in ids if item_id not in matched]
+        by_id = {str(item.id): item for item in pantry}
+        not_in_recipe = [
+            item_id
+            for item_id, o in zip(ids, data.pantry, strict=True)
+            if o.replaces_reference_id is None and item_id not in matched
+        ]
         if not_in_recipe:
             raise PantryItemNotInRecipeError(not_in_recipe)
-        return [(matched[str(outcome.pantry_item_id)], outcome.outcome) for outcome in data.pantry]
+        return [
+            (
+                by_id[str(o.pantry_item_id)] if o.replaces_reference_id else matched[str(o.pantry_item_id)],
+                o.outcome,
+                o.quantity,
+            )
+            for o in data.pantry
+        ]
 
     @staticmethod
     def _check_leftovers(leftovers: CookedLeftovers) -> None:

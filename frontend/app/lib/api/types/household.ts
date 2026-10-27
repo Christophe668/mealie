@@ -44,6 +44,8 @@ export interface CookedMealCreate {
 export interface CookedPantryOutcome {
   pantryItemId: string;
   outcome: PantryOutcome;
+  quantity?: number | null;
+  replacesReferenceId?: string | null;
 }
 export interface CookedMealOut {
   mealPlanEntry?: ReadPlanEntry | null;

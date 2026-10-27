@@ -227,6 +227,16 @@ def test_pantry_check_refuses_bad_substitutes(unique_user: TestUser, unique_user
         service.pantry_check(recipe.id, TODAY, substitutes={ref: foreign.id})
 
 
+def test_pantry_check_refuses_substitute_for_ingredient_in_pantry(unique_user: TestUser):
+    food = _food(unique_user)
+    recipe = _lines_recipe(unique_user, [RecipeIngredient(note="", food=food, quantity=1)])
+    _item(unique_user, food.name, food)
+    stranger = _item(unique_user, random_string(8))
+
+    with pytest.raises(ValueError, match="already in the pantry"):
+        _service(unique_user).pantry_check(recipe.id, TODAY, substitutes={_reference(recipe, food): stranger.id})
+
+
 def test_pantry_check_matches_food_and_name_variants(unique_user: TestUser):
     tag = random_string(8)
     spaghetti = _food(unique_user, f"{tag} spaghetti")
@@ -438,6 +448,131 @@ def test_record_some_left_keeps_opened_on(unique_user: TestUser):
     assert out.meal_plan_entry is None  # no entry: nothing marked, not an error
     assert out.feedback is None
     assert _last_made(unique_user, recipe) == _noon(TODAY)  # moved without feedback too
+
+
+def _cook(service: CookedMealService, recipe: Recipe, *outcomes: CookedPantryOutcome) -> Any:
+    return service.record(CookedMealCreate(recipe_id=recipe.id, cooked_on=TODAY, pantry=list(outcomes)))
+
+
+def test_record_some_left_with_quantity(unique_user: TestUser):
+    food = _food(unique_user)
+    recipe = _recipe(unique_user, [food])
+    item = _item(unique_user, food.name, food, quantity=1000)
+
+    out = _cook(
+        _service(unique_user),
+        recipe,
+        CookedPantryOutcome(pantry_item_id=item.id, outcome=PantryOutcome.some_left, quantity=800),
+    )
+
+    stored = unique_user.repos.pantry_items.get_one(item.id)
+    assert stored is not None and stored.quantity == 800 and stored.opened_on == TODAY
+    assert [i.quantity for i in out.kept_items] == [800]
+
+
+def test_record_some_left_without_quantity_keeps_it(unique_user: TestUser):
+    food = _food(unique_user)
+    recipe = _recipe(unique_user, [food])
+    item = _item(unique_user, food.name, food, quantity=1000)
+
+    _cook(_service(unique_user), recipe, CookedPantryOutcome(pantry_item_id=item.id, outcome=PantryOutcome.some_left))
+
+    stored = unique_user.repos.pantry_items.get_one(item.id)
+    assert stored is not None and stored.quantity == 1000 and stored.opened_on == TODAY
+
+
+def test_record_used_up_with_quantity_refused(unique_user: TestUser):
+    food = _food(unique_user)
+    recipe = _recipe(unique_user, [food])
+    item = _item(unique_user, food.name, food, quantity=1000)
+    entry = _plan(unique_user, recipe, TODAY)
+
+    with pytest.raises(ValueError):
+        _cook(
+            _service(unique_user),
+            recipe,
+            CookedPantryOutcome(pantry_item_id=item.id, outcome=PantryOutcome.used_up, quantity=5),
+        )
+
+    stored = unique_user.repos.pantry_items.get_one(item.id)
+    assert stored is not None and stored.quantity == 1000
+    assert _entry(unique_user, entry.id).cooked_at is None
+
+
+def test_record_substitute(unique_user: TestUser):
+    gram = _gram(unique_user)
+    lardon = _food(unique_user)
+    sausage = _food(unique_user)
+    recipe = _lines_recipe(unique_user, [RecipeIngredient(note="", food=lardon, quantity=150, unit=gram)])
+    item = _item(unique_user, sausage.name, sausage, quantity=300, unit_id=gram.id)
+
+    out = _cook(
+        _service(unique_user),
+        recipe,
+        CookedPantryOutcome(
+            pantry_item_id=item.id,
+            outcome=PantryOutcome.some_left,
+            quantity=150,
+            replaces_reference_id=_reference(recipe, lardon),
+        ),
+    )
+
+    stored = unique_user.repos.pantry_items.get_one(item.id)
+    assert stored is not None and stored.quantity == 150 and stored.opened_on == TODAY
+    assert [i.id for i in out.kept_items] == [item.id]
+
+
+def test_record_substitute_refusals(unique_user: TestUser):
+    lardon = _food(unique_user)
+    other = _food(unique_user)
+    recipe = _lines_recipe(
+        unique_user,
+        [RecipeIngredient(note="", food=lardon, quantity=1), RecipeIngredient(note="", food=other, quantity=1)],
+    )
+    ref = _reference(recipe, lardon)
+    stranger = _item(unique_user, random_string(8), quantity=3)
+    matching = _item(unique_user, other.name, other, quantity=3)
+    entry = _plan(unique_user, recipe, TODAY)
+    service = _service(unique_user)
+
+    def outcome(item: PantryItemOut, reference: Any) -> CookedPantryOutcome:
+        return CookedPantryOutcome(
+            pantry_item_id=item.id, outcome=PantryOutcome.some_left, quantity=1, replaces_reference_id=reference
+        )
+
+    with pytest.raises(ValueError):
+        _cook(service, recipe, outcome(stranger, uuid4()))
+    with pytest.raises(PantryItemNotInRecipeError):
+        _cook(service, recipe, outcome(matching, ref))
+
+    for item in (stranger, matching):
+        stored = unique_user.repos.pantry_items.get_one(item.id)
+        assert stored is not None and stored.quantity == 3 and stored.opened_on is None
+    assert _entry(unique_user, entry.id).cooked_at is None
+
+
+def test_record_substitute_for_ingredient_in_pantry_refused(unique_user: TestUser):
+    food = _food(unique_user)
+    recipe = _recipe(unique_user, [food])
+    _item(unique_user, food.name, food)
+    stranger = _item(unique_user, random_string(8), quantity=3)
+    entry = _plan(unique_user, recipe, TODAY)
+
+    with pytest.raises(ValueError):
+        _cook(
+            _service(unique_user),
+            recipe,
+            CookedPantryOutcome(
+                pantry_item_id=stranger.id,
+                outcome=PantryOutcome.some_left,
+                quantity=1,
+                replaces_reference_id=_reference(unique_user.repos.recipes.get_one(recipe.id, "id"), food),
+            ),
+        )
+
+    stored = unique_user.repos.pantry_items.get_one(stranger.id)
+    assert stored is not None and stored.quantity == 3
+    assert _entry(unique_user, entry.id).cooked_at is None
 
 
 def test_record_freezer_use_by(unique_user: TestUser):

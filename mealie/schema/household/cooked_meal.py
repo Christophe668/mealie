@@ -56,6 +56,10 @@ class PantryProposal(MealieModel):
 class CookedPantryOutcome(MealieModel):
     pantry_item_id: UUID4
     outcome: PantryOutcome
+    quantity: Annotated[float | None, Field(ge=0)] = None
+    """The quantity left, for `some_left` only; `None` keeps the item's current one."""
+    replaces_reference_id: UUID4 | None = None
+    """Set when the item stands in for this recipe ingredient (a substitute), not the ingredient's own food."""
 
 
 class CookedLeftovers(MealieModel):
