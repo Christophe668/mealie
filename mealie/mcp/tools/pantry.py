@@ -12,6 +12,7 @@ from mealie.mcp.context import McpContext
 from mealie.mcp.errors import McpToolError, not_found
 from mealie.mcp.server import mcp_server
 from mealie.mcp.tools import _clock, run_in_context
+from mealie.mcp.tools._validation import check_keys, parse_uuid
 from mealie.mcp.tools.recipes import _find_recipe
 from mealie.schema.household.cooked_meal import (
     CookedLeftovers,
@@ -38,7 +39,7 @@ _UPDATE_KEYS = _ADD_KEYS | {"id"}
 _SHELF_LIFE_KEYS = ("shelf_life_days_opened", "shelf_life_days_unopened")
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _OUTCOMES = ", ".join(o.value for o in PantryOutcome)
-_PANTRY_OUTCOME_KEYS = frozenset({"id", "outcome"})
+_PANTRY_OUTCOME_KEYS = frozenset({"id", "outcome", "quantity", "replaces_reference_id"})
 
 
 def _parse_id(kind: str, value: str) -> UUID:
@@ -107,15 +108,6 @@ def _pantry_items(ctx: McpContext, location: PantryLocation | None = None) -> li
 
 
 # ---------------------------------------------------------------------- validation
-
-
-def _check_keys(entry: Any, allowed: frozenset[str], where: str) -> dict[str, Any]:
-    if not isinstance(entry, dict):
-        raise McpToolError(f"{where}: expected an object")
-    unknown = sorted(set(entry) - allowed)
-    if unknown:
-        raise McpToolError(f"{where}: unknown key(s) {', '.join(unknown)}; allowed: {', '.join(sorted(allowed))}")
-    return dict(entry)
 
 
 class _UnitLookup:
@@ -201,7 +193,7 @@ def update_pantry_impl(
     updates: list[tuple[UUID, PantryItemUpdate]] = []
     for n, entry in enumerate(update or []):
         where = f"update[{n}]"
-        fields = _check_keys(entry, _UPDATE_KEYS, where)
+        fields = check_keys(entry, _UPDATE_KEYS, where)
         if "id" not in fields:
             raise McpToolError(f"{where}: missing id")
         raw_id = fields.pop("id")
@@ -223,7 +215,7 @@ def update_pantry_impl(
     adds: list[PantryItemCreate] = []
     for n, entry in enumerate(add or []):
         where = f"add[{n}]"
-        fields = _check_keys(entry, _ADD_KEYS, where)
+        fields = check_keys(entry, _ADD_KEYS, where)
         units.resolve(fields, where)
         data = _validate(PantryItemCreate, fields, where)
         _check_references(ctx, data, where)
@@ -297,14 +289,30 @@ def _parse_outcomes(pantry: list[dict[str, Any]] | None) -> list[CookedPantryOut
     outcomes: list[CookedPantryOutcome] = []
     for n, entry in enumerate(pantry or []):
         where = f"pantry[{n}]"
-        fields = _check_keys(entry, _PANTRY_OUTCOME_KEYS, where)
+        fields = check_keys(entry, _PANTRY_OUTCOME_KEYS, where)
         if "id" not in fields or "outcome" not in fields:
             raise McpToolError(f"{where}: needs id and outcome ({_OUTCOMES})")
         try:
             outcome = PantryOutcome(fields["outcome"])
         except ValueError as e:
             raise McpToolError(f"{where}: outcome must be one of {_OUTCOMES}, got {fields['outcome']!r}") from e
-        outcomes.append(CookedPantryOutcome(pantry_item_id=_parse_id("pantry_item", fields["id"]), outcome=outcome))
+        quantity = fields.get("quantity")
+        if "quantity" in fields:
+            if isinstance(quantity, bool) or not isinstance(quantity, int | float) or quantity < 0:
+                raise McpToolError(f"{where}: quantity must be a non-negative number, got {quantity!r}")
+            if outcome is not PantryOutcome.some_left:
+                raise McpToolError(f"{where}: quantity only goes with some_left")
+        replaces = fields.get("replaces_reference_id")
+        outcomes.append(
+            CookedPantryOutcome(
+                pantry_item_id=_parse_id("pantry_item", fields["id"]),
+                outcome=outcome,
+                quantity=quantity,
+                replaces_reference_id=(
+                    parse_uuid(where, "replaces_reference_id", replaces) if replaces is not None else None
+                ),
+            )
+        )
     return outcomes
 
 
@@ -454,9 +462,14 @@ async def record_meal_cooked(
     for this recipe on that day or the day before, or `meal_plan_entry_id`) and moves the recipe's last made
     date forward. Ask the user about the `in_pantry` items that get_recipe lists and about leftovers, unless
     their own instructions say otherwise; nothing in the pantry changes without an explicit answer.
-    pantry: [{id, outcome: "used_up"|"some_left"}] for items listed in get_recipe's in_pantry: used_up removes
-    the item, some_left keeps it (and sets opened_on to the cooking date if it was not opened). Leave an item
-    out to leave it alone. leftover_portions (1-50, get_recipe's suggested_leftover_portions is a starting
+    pantry: [{id, outcome: "used_up"|"some_left", quantity?, replaces_reference_id?}] for items listed in
+    get_recipe's in_pantry. Show the user the proposed changes (each item's proposed_quantity and
+    proposed_outcome) before recording, and record what they confirm or correct: used_up removes the item,
+    some_left keeps it (and sets opened_on to the cooking date if it was not opened) and, with `quantity`
+    (the amount left, in the item's unit, 0 or more; send it from proposed_quantity or the user's correction),
+    sets the item's quantity. Leave an item out to leave it alone, which is what a proposed_outcome of "none"
+    means. When the item stood in for a recipe ingredient (a substitute), send that ingredient's `ref` as
+    replaces_reference_id. leftover_portions (1-50, get_recipe's suggested_leftover_portions is a starting
     point) adds a "Leftover <recipe>" pantry item in leftover_location (fridge, default, or freezer) with
     leftover_use_by (ISO date; default 3 days after cooking for the fridge, 90 for the freezer). Call
     record_recipe_feedback only if the user said how it went. Returns {meal_plan_entry: {id, date, title} or

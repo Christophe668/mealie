@@ -5,6 +5,7 @@ from uuid import UUID
 from slugify import slugify
 from sqlalchemy.exc import MultipleResultsFound
 
+from mealie.core.exceptions import NoEntryFound
 from mealie.mcp.auth import require_scope
 from mealie.mcp.context import McpContext, cross_household_repos
 from mealie.mcp.errors import McpToolError, not_found
@@ -21,6 +22,7 @@ from mealie.mcp.tools._summaries import (
     summary_dict,
     time_text,
 )
+from mealie.mcp.tools._validation import check_keys, parse_uuid
 from mealie.repos.repository_generic import GroupRepositoryGeneric
 from mealie.schema.recipe.recipe import Recipe
 from mealie.schema.response.pagination import OrderByNullPosition, OrderDirection, PaginationQuery
@@ -162,7 +164,33 @@ def _find_recipe(ctx: McpContext, slug_or_id: str) -> Recipe | None:
     return repo.get_one(recipe_id, "id")
 
 
-def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
+_SUBSTITUTE_KEYS = frozenset({"reference_id", "pantry_item_id"})
+
+
+def _parse_substitutes(substitutes: list[dict[str, str]] | None) -> dict[UUID, UUID]:
+    """Maps each ingredient `reference_id` to the pantry item standing in for it."""
+    parsed: dict[UUID, UUID] = {}
+    for n, entry in enumerate(substitutes or []):
+        where = f"substitutes[{n}]"
+        fields = check_keys(entry, _SUBSTITUTE_KEYS, where)
+        if not _SUBSTITUTE_KEYS <= set(fields):
+            raise McpToolError(f"{where}: needs reference_id and pantry_item_id")
+        reference_id = parse_uuid(where, "reference_id", fields["reference_id"])
+        if reference_id in parsed:
+            raise McpToolError(f"{where}: reference_id {reference_id} is listed more than once")
+        parsed[reference_id] = parse_uuid(where, "pantry_item_id", fields["pantry_item_id"])
+    return parsed
+
+
+def get_recipe_impl(
+    ctx: McpContext,
+    slug_or_id: str,
+    scale: float | None = None,
+    substitutes: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    if scale is not None and (isinstance(scale, bool) or not isinstance(scale, int | float) or not scale > 0):
+        raise McpToolError(f"scale must be greater than 0, got {scale!r}")
+    substitute_items = _parse_substitutes(substitutes)
     recipe = _find_recipe(ctx, slug_or_id)
     if recipe is None or recipe.id is None:
         raise not_found("recipe", slug_or_id)
@@ -174,7 +202,13 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
     # link rows have no stored order (PostgreSQL returns them in any order):
     # list them as the recipe lists its ingredients
     position = {str(i.reference_id): n for n, i in enumerate(recipe.recipe_ingredient)}
-    check = CookedMealService(ctx.repos, ctx.user, ctx.household).pantry_check(recipe_id, _clock.today())
+    try:
+        check = CookedMealService(ctx.repos, ctx.user, ctx.household).pantry_check(
+            recipe_id, _clock.today(), scale=scale, substitutes=substitute_items
+        )
+    except (ValueError, NoEntryFound) as e:
+        raise McpToolError(str(e)) from e
+    proposals = {p.pantry_item_id: p for p in check.proposals}
     return {
         "id": str(recipe.id),
         "name": recipe.name,
@@ -230,8 +264,22 @@ def get_recipe_impl(ctx: McpContext, slug_or_id: str) -> dict[str, Any]:
                 "location": item.location.value,
                 "opened_on": item.opened_on.isoformat() if item.opened_on else None,
                 "use_by": item.use_by.isoformat() if item.use_by else None,
+                "used": proposals[item.id].used,
+                "proposed_quantity": proposals[item.id].proposed_quantity,
+                "proposed_outcome": proposals[item.id].proposed_outcome.value,
+                "reason": proposals[item.id].reason.value if proposals[item.id].reason else None,
+                "replaces_reference_id": str(r) if (r := proposals[item.id].replaces_reference_id) else None,
             }
             for item in check.items
+        ],
+        # ingredients no pantry item covers: ask whether something else was used, then call again with substitutes
+        "unmatched_ingredients": [
+            {
+                "ref": str(u.reference_id),
+                "food": u.food.name,
+                "substitute_food_ids": [str(f) for f in u.substitute_food_ids],
+            }
+            for u in check.unmatched_ingredients
         ],
         "suggested_leftover_portions": check.suggested_leftover_portions,
     }
@@ -276,12 +324,22 @@ async def search_recipes(
 
 @mcp_server.tool()
 @require_scope("recipes:read")
-async def get_recipe(slug_or_id: str) -> dict[str, Any]:
+async def get_recipe(
+    slug_or_id: str, scale: float | None = None, substitutes: list[dict[str, str]] | None = None
+) -> dict[str, Any]:
     """Fetch one recipe in full by slug or id (as returned by search_recipes): servings, times,
     ingredients, instructions, tags, categories, tools, notes, source URL and the Mealie page URL,
     plus this household's `feedback` (latest 5, newest first) and `feedback_summary` (last verdict,
     last made on, counts per verdict; null when there is none). Also `in_pantry` (the household's pantry
-    items matching the recipe's foods: id, name, quantity, unit, location, opened_on, use_by) and
-    `suggested_leftover_portions`; these feed record_meal_cooked. Use it before planning or shopping
-    for a recipe."""
-    return await run_in_context(get_recipe_impl, slug_or_id)
+    items matching the recipe's foods: id, name, quantity, unit, location, opened_on, use_by) with what
+    cooking it would leave: `used` (what the recipe takes, in the item's unit), `proposed_quantity` (the
+    quantity left), `proposed_outcome` (used_up, some_left, or none: the recipe takes nothing from this item,
+    leave it out), `reason` and `replaces_reference_id` (set when the item stands in for another ingredient),
+    and `suggested_leftover_portions`; these feed record_meal_cooked. Show the user the proposed changes before
+    recording them. `unmatched_ingredients` ([{ref, food, substitute_food_ids}]) are ingredients no pantry
+    item covers: after cooking, ask "did you use something else for <food>?" and, if so, call get_recipe again
+    with `substitutes` [{reference_id: the ingredient's ref, pantry_item_id}] so the stand-in is proposed too.
+    `scale` (above 0) multiplies the quantities used when the meal was made for more or fewer people than
+    planned; it defaults to the meal plan entry's scale, else 1. Use it before planning or shopping for a
+    recipe."""
+    return await run_in_context(get_recipe_impl, slug_or_id, scale, substitutes)
