@@ -1,4 +1,5 @@
 /* tslint:disable */
+/* eslint-disable */
 
 /**
 /* This file was automatically generated from pydantic models by running pydantic2ts.
