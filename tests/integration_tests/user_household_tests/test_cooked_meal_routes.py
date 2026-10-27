@@ -67,6 +67,18 @@ def test_pantry_check(api_client: TestClient, unique_user_fn_scoped: TestUser):
     assert response.status_code == 200
 
 
+def test_pantry_check_scale_must_be_positive(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    recipe = _create_recipe(api_client, user, random_string())
+    for bad in ("0", "-1", "nan", "inf"):
+        response = api_client.get(
+            api_routes.households_cooking_recipe_id_pantry_check(recipe["id"]),
+            params={"cooked_on": TODAY.isoformat(), "scale": bad},
+            headers=user.token,
+        )
+        assert response.status_code == 422, (bad, response.text)
+
+
 def test_pantry_check_substitute_param(api_client: TestClient, unique_user_fn_scoped: TestUser):
     user = unique_user_fn_scoped
     recipe = _create_recipe(api_client, user, random_string())

@@ -203,6 +203,40 @@ def test_pantry_check_with_substitute(unique_user: TestUser):
     assert check.unmatched_ingredients == []
 
 
+def test_pantry_check_food_on_two_lines_listed_once_and_substituted_for_both(unique_user: TestUser):
+    gram = _gram(unique_user)
+    lardon = _food(unique_user)
+    sausage = _food(unique_user)
+    recipe = _lines_recipe(
+        unique_user,
+        [
+            RecipeIngredient(note="", food=lardon, quantity=150, unit=gram),
+            RecipeIngredient(note="", food=lardon, quantity=100, unit=gram),
+        ],
+    )
+    first, second = (i.reference_id for i in recipe.recipe_ingredient)
+    item = unique_user.repos.pantry_items.create(
+        PantryItemCreate(name=sausage.name, food_id=sausage.id, quantity=600, unit_id=gram.id)
+    )
+    service = _service(unique_user)
+
+    [unmatched] = service.pantry_check(recipe.id, TODAY).unmatched_ingredients
+    assert unmatched.reference_id == first
+
+    for ref in (first, second):
+        check = service.pantry_check(recipe.id, TODAY, substitutes={ref: item.id})
+        [proposal] = check.proposals
+        assert (proposal.used, proposal.proposed_quantity, proposal.replaces_reference_id) == (250, 350, ref)
+        assert check.unmatched_ingredients == []
+
+    [proposal] = service.pantry_check(recipe.id, TODAY, scale=2, substitutes={first: item.id}).proposals
+    assert (proposal.used, proposal.proposed_quantity) == (500, 100)
+
+    other = _item(unique_user, random_string(8))
+    with pytest.raises(ValueError, match="more than one substitute"):
+        service.pantry_check(recipe.id, TODAY, substitutes={first: item.id, second: other.id})
+
+
 def test_pantry_check_refuses_bad_substitutes(unique_user: TestUser, unique_user_fn_scoped: TestUser):
     lardon = _food(unique_user)
     other = _food(unique_user)

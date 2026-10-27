@@ -180,10 +180,11 @@ class CookedMealService(BaseService):
         items = self._matching_items(recipe, pantry)
         proposals = self._food_proposals(recipe, items, scale)
         for line, item in checked:
+            # the substitute stands in for the food, so it is charged for every line of it
             items.append(item)
-            proposals.append(propose_substitute(line, item, scale))
+            proposals.append(propose_substitute(self._lines_of(recipe, line), item, scale, line.reference_id))
 
-        replaced = {line.reference_id for line, _ in checked if line.reference_id is not None}
+        replaced = {str(line.food.id) for line, _ in checked if line.food is not None}
         return PantryCheckOut(
             items=items,
             proposals=proposals,
@@ -211,11 +212,24 @@ class CookedMealService(BaseService):
                 by_item[str(proposal.pantry_item_id)] = proposal
         return [by_item[str(item.id)] for item in items]
 
-    def _unmatched(self, recipe: Recipe, pantry: list[PantryItemOut], replaced: set[UUID]) -> list[UnmatchedIngredient]:
+    @staticmethod
+    def _lines_of(recipe: Recipe, line: RecipeIngredient) -> list[RecipeIngredient]:
+        """Every line of the recipe naming `line`'s food."""
+        if line.food is None:
+            return [line]
+        return [i for i in recipe.recipe_ingredient if i.food is not None and str(i.food.id) == str(line.food.id)]
+
+    def _unmatched(
+        self, recipe: Recipe, pantry: list[PantryItemOut], replaced_foods: set[str]
+    ) -> list[UnmatchedIngredient]:
+        """One entry per food nothing in the pantry matches (the reference of its first line), leaving out the foods
+        a substitute stands in for."""
         unmatched: list[UnmatchedIngredient] = []
+        seen = set(replaced_foods)
         for line in recipe.recipe_ingredient:
-            if line.food is None or line.reference_id is None or line.reference_id in replaced:
+            if line.food is None or line.reference_id is None or str(line.food.id) in seen:
                 continue
+            seen.add(str(line.food.id))
             matches = self._food_matcher([line.food])
             if any(matches(item) for item in pantry):
                 continue
@@ -235,8 +249,8 @@ class CookedMealService(BaseService):
     ) -> list[tuple[RecipeIngredient, PantryItemOut]]:
         """Each (ingredient reference, pantry item) pair resolved, or refused: an unknown reference (`ValueError`),
         an ingredient whose own food has pantry items ("used instead" is for unmatched ingredients only,
-        `ValueError`), an item outside the household (`NoEntryFound`), an item matching a recipe food or used twice
-        (`PantryItemNotInRecipeError`)."""
+        `ValueError`), two substitutes for one food (`ValueError`), an item outside the household (`NoEntryFound`), an
+        item matching a recipe food or used twice (`PantryItemNotInRecipeError`)."""
         lines = {str(i.reference_id): i for i in recipe.recipe_ingredient if i.food is not None and i.reference_id}
         unknown = [str(ref) for ref, _ in pairs if str(ref) not in lines]
         if unknown:
@@ -251,6 +265,11 @@ class CookedMealService(BaseService):
         repeated = sorted(item_id for item_id, count in Counter(item_ids).items() if count > 1)
         if repeated:
             raise PantryItemNotInRecipeError(repeated, reason="pantry items used as substitute more than once")
+
+        # a substitute is charged for every line of its food, so a second one for the same food would charge twice
+        foods = Counter(str(food.id) for ref, _ in pairs if (food := lines[str(ref)].food) is not None)
+        if any(count > 1 for count in foods.values()):
+            raise ValueError("more than one substitute for the same ingredient")
 
         matching = {str(item.id) for item in self._matching_items(recipe, pantry)}
         already = [item_id for item_id in item_ids if item_id in matching]

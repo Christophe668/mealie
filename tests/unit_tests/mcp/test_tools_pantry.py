@@ -605,7 +605,7 @@ async def test_record_meal_cooked_quantity_and_substitute(
     )
 
     items = {i["id"]: i for i in (await get_pantry())["items"]}
-    assert result["kept"] == [items[other]["name"]]
+    assert result["kept"] == [{"name": items[other]["name"], "quantity": 3.5, "unit": None}]
     assert items[other]["quantity"] == 3.5
 
 

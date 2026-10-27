@@ -336,8 +336,8 @@ async def get_recipe(
     quantity left), `proposed_outcome` (used_up, some_left, or none: the recipe takes nothing from this item,
     leave it out), `reason` and `replaces_reference_id` (set when the item stands in for another ingredient),
     and `suggested_leftover_portions`; these feed record_meal_cooked. Show the user the proposed changes before
-    recording them. `unmatched_ingredients` ([{ref, food, substitute_food_ids}]) are ingredients no pantry
-    item covers: after cooking, ask "did you use something else for <food>?" and, if so, call get_recipe again
+    recording them. `unmatched_ingredients` ([{ref, food, substitute_food_ids}], one per food) are foods no
+    pantry item covers: after cooking, ask "did you use something else for <food>?" and, if so, call get_recipe again
     with `substitutes` [{reference_id: the ingredient's ref, pantry_item_id}] so the stand-in is proposed too.
     `scale` (above 0) multiplies the quantities used when the meal was made for more or fewer people than
     planned; it defaults to the meal plan entry's scale, else 1. Use it before planning or shopping for a

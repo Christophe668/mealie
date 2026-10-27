@@ -84,7 +84,7 @@ def test_sausage_substitute():
     lardon = _food("lardon")
     saucisse = _food("saucisse de porc")
     line = _line(lardon, 150, GRAMME)
-    p = propose_substitute(line, _item(saucisse, 300, GRAMME), 1)
+    p = propose_substitute([line], _item(saucisse, 300, GRAMME), 1, line.reference_id)
     assert (p.used, p.proposed_quantity, p.replaces_reference_id) == (150, 150, line.reference_id)
 
 
@@ -164,3 +164,58 @@ def test_item_after_need_covered_gets_none_even_if_units_differ():
     [first, second] = propose_for_food([_line(food, 100, GRAMME)], items, 1)
     assert first.proposed_outcome == "used_up"
     assert (second.proposed_outcome, second.used, second.proposed_quantity) == ("none", None, None)
+
+
+ML = IngredientUnit(id=uuid4(), name="millilitre", abbreviation="ml")
+CUP = IngredientUnit(id=uuid4(), name="cup", abbreviation="c")
+BAG = IngredientUnit(id=uuid4(), name="bag")
+PINCH = IngredientUnit(id=uuid4(), name="pinch")
+
+
+def test_cup_abbreviated_c_converts_through_its_name():
+    food = _food("lait")
+    [p] = propose_for_food([_line(food, 1, CUP)], [_item(food, 1000, ML)], 1)
+    assert p.reason == "converted"
+    assert p.used == pytest.approx(236.588, abs=0.01)
+
+
+@pytest.mark.parametrize("unit", [BAG, PINCH])
+def test_unit_names_pint_misreads_do_not_compare(unit: IngredientUnit):
+    food = _food("épinards")
+    [p] = propose_for_food([_line(food, 1, unit)], [_item(food, 500, GRAMME)], 1)
+    assert (p.proposed_outcome, p.proposed_quantity, p.reason) == ("some_left", 500, "units_differ")
+
+
+def test_note_weight_is_the_total_for_several_pieces():
+    food = _food("pomme de terre")
+    [p] = propose_for_food([_line(food, 4, None, "environ 800 g")], [_item(food, 1, KG)], 1)
+    assert (p.used, p.proposed_quantity, p.reason) == (0.8, 0.2, "weight_from_note")
+
+
+@pytest.mark.parametrize("note", ["150 g chacune", "150 g Chacun", "150 g each", "150 g la pièce", "150 g par pièce"])
+def test_note_weight_each_is_per_piece(note: str):
+    food = _food("pomme de terre")
+    [p] = propose_for_food([_line(food, 2, None, note)], [_item(food, 1000, GRAMME)], 1)
+    assert (p.used, p.proposed_quantity) == (300, 700)
+
+
+def test_note_total_weight_scales():
+    food = _food("pomme de terre")
+    [p] = propose_for_food([_line(food, 4, None, "environ 800 g")], [_item(food, 2000, GRAMME)], 2)
+    assert (p.used, p.proposed_quantity) == (1600, 400)
+
+
+def test_note_fraction_is_not_read_as_its_denominator():
+    assert weight_from_note("1/2 kg") in (500, None)
+    assert weight_from_note("environ 1/2 kg") in (500, None)
+
+
+def test_t_is_never_a_metric_ton():
+    food = _food("sel")
+    teaspoon = IngredientUnit(id=uuid4(), name="teaspoon", abbreviation="t")
+    [p] = propose_for_food([_line(food, 1, teaspoon)], [_item(food, 50, ML)], 1)
+    assert p.reason == "converted"
+    assert p.used == pytest.approx(4.929, abs=0.01)
+
+    [p] = propose_for_food([_line(food, 1, IngredientUnit(id=uuid4(), name="T"))], [_item(food, 500, GRAMME)], 1)
+    assert p.reason == "units_differ"

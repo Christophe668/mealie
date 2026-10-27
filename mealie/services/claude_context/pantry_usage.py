@@ -12,7 +12,13 @@ SMALL_AMOUNT_RATIO = 0.05
 """A recipe that takes less than this share of a pantry item leaves its quantity alone."""
 
 _EPSILON = 1e-9
-_WEIGHT_IN_NOTE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(kg|g)\b")
+# a number not part of a fraction's denominator (`1/2 kg` is half a kilo, never 2 kg), optionally `a/b`
+_WEIGHT_IN_NOTE = re.compile(r"(?<![\d/.,])(\d+(?:[.,]\d+)?)(?:\s*/\s*(\d+))?\s*(kg|g)\b")
+_EACH_IN_NOTE = re.compile(r"\b(chacune?|each)\b|\b(la|par)\s+pi[eè]ce\b", re.IGNORECASE)
+
+# pint reads these as units nobody means in a recipe: a "bag" is a mass unit, "t" a metric ton
+_NOT_UNITS = frozenset({"bag", "t"})
+_UNIT_DIMENSIONS = ("[mass]", "[length] ** 3")
 
 # Most derived first: when lines mix, the reason returned is the first of these that any line used.
 _REASON_PRECEDENCE = (
@@ -24,7 +30,7 @@ _REASON_PRECEDENCE = (
 
 
 def weight_from_note(note: str | None) -> float | None:
-    """Grams from the first `200 g` / `1,5 kg` in an ingredient's note, if any."""
+    """Grams from the first `200 g` / `1,5 kg` / `1/2 kg` in an ingredient's note, if any."""
     if not note:
         return None
 
@@ -33,7 +39,17 @@ def weight_from_note(note: str | None) -> float | None:
         return None
 
     amount = float(match.group(1).replace(",", "."))
-    return amount * 1000 if match.group(2) == "kg" else amount
+    if match.group(2) is not None:
+        denominator = int(match.group(2))
+        if not denominator:
+            return None
+        amount /= denominator
+    return amount * 1000 if match.group(3) == "kg" else amount
+
+
+def note_weight_is_each(note: str | None) -> bool:
+    """Whether the note gives its weight per piece: `150 g chacune`, `each`, `la pièce`, `par pièce`."""
+    return bool(note and _EACH_IN_NOTE.search(note))
 
 
 def grams_each(food: IngredientFood | None) -> float | None:
@@ -49,20 +65,31 @@ def grams_each(food: IngredientFood | None) -> float | None:
     return grams if grams > 0 else None
 
 
+def _as_quantity(text: str, converter: UnitConverter) -> Quantity | None:
+    """One of the unit `text` names, as pint reads it, when that is a weight or a volume; `None` otherwise.
+
+    pint answers confidently for many words that aren't kitchen units ("c" is the speed of light, "pinch" a
+    picoinch), so anything that isn't a mass or a volume is no answer at all.
+    """
+    text = text.strip()
+    if not text or text.casefold() in _NOT_UNITS:
+        return None
+    parsed = converter.parse(text)
+    if isinstance(parsed, str):
+        return None
+    quantity = 1 * parsed
+    return quantity if quantity.dimensionality in _UNIT_DIMENSIONS else None
+
+
 def _unit_quantity(unit: CreateIngredientUnit, converter: UnitConverter) -> Quantity | None:
-    """What one of this unit is, as a pint quantity; `None` when pint has no idea."""
+    """What one of this unit is, as a pint quantity of weight or volume; `None` when pint has no idea."""
     if unit.standard_quantity and unit.standard_unit:
-        parsed = converter.parse(unit.standard_unit)
-        if isinstance(parsed, str):
-            return None
-        return unit.standard_quantity * parsed
+        standard = _as_quantity(unit.standard_unit, converter)
+        return unit.standard_quantity * standard if standard is not None else None
 
     for text in (unit.abbreviation, unit.name, unit.plural_name):
-        if not text or not text.strip():
-            continue
-        parsed = converter.parse(text.strip())
-        if not isinstance(parsed, str):
-            return 1 * parsed
+        if text and (quantity := _as_quantity(text, converter)) is not None:
+            return quantity
 
     return None
 
@@ -92,16 +119,18 @@ def _line_amount(
         return float((quantity * line_q / item_q).to("dimensionless").magnitude), ProposalReason.converted
 
     if line_unit is None and item_q is not None and _is_mass(item_q):
-        # pieces into weight
-        per_piece = weight_from_note(line.note)
-        reason = ProposalReason.weight_from_note
-        if per_piece is None:
-            per_piece = grams_each(line.food)
-            reason = ProposalReason.weight_from_food
+        # pieces into weight: the note's weight is per piece for one piece or when it says so ("chacune"), else
+        # it is what all the pieces weigh ("4 pommes de terre, environ 800 g")
+        note_grams = weight_from_note(line.note)
+        if note_grams is not None:
+            per_line = note_grams * (quantity if line.quantity == 1 or note_weight_is_each(line.note) else scale)
+            grams = per_line * converter.ureg.gram
+            return float((grams / item_q).to("dimensionless").magnitude), ProposalReason.weight_from_note
+        per_piece = grams_each(line.food)
         if per_piece is None:
             return None
         grams = quantity * per_piece * converter.ureg.gram
-        return float((grams / item_q).to("dimensionless").magnitude), reason
+        return float((grams / item_q).to("dimensionless").magnitude), ProposalReason.weight_from_food
 
     if item_unit is None and line_q is not None and _is_mass(line_q):
         # weight into pieces
@@ -205,7 +234,9 @@ def propose_for_food(lines: list[RecipeIngredient], items: list[PantryItemOut], 
     return proposals
 
 
-def propose_substitute(line: RecipeIngredient, item: PantryItemOut, scale: float) -> PantryProposal:
-    """The proposal for an item that stands in for this ingredient; no spill to other items."""
-    need, reason = amount_in_item([line], item, scale)
-    return _proposal(item, need, reason, 1.0, replaces=line.reference_id)
+def propose_substitute(
+    lines: list[RecipeIngredient], item: PantryItemOut, scale: float, replaces: UUID | None
+) -> PantryProposal:
+    """The proposal for an item that stands in for a food: all the recipe's `lines` of it, no spill to other items."""
+    need, reason = amount_in_item(lines, item, scale)
+    return _proposal(item, need, reason, 1.0, replaces=replaces)

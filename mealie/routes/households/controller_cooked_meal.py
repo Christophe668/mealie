@@ -67,9 +67,14 @@ class _CookedMealControllerBase(BaseUserController):
 class HouseholdCookingController(_CookedMealControllerBase):
     @router.get("/{recipe_id}/pantry-check", response_model=PantryCheckOut)
     def pantry_check(
-        self, recipe_id: UUID4, cooked_on: date, scale: float | None = None, substitute: list[str] = Query([])
+        self,
+        recipe_id: UUID4,
+        cooked_on: date,
+        scale: float | None = Query(None, gt=0, allow_inf_nan=False),
+        substitute: list[str] = Query([]),
     ):
-        """`substitute`: `<reference_id>:<pantry_item_id>`, repeatable; the item stands in for that ingredient."""
+        """`scale`: positive and finite. `substitute`: `<reference_id>:<pantry_item_id>`, repeatable; the item stands
+        in for that ingredient."""
         with _service_errors():
             return self.service.pantry_check(recipe_id, cooked_on, scale, _parse_substitutes(substitute))
 

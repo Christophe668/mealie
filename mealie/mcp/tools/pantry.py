@@ -382,7 +382,10 @@ def record_meal_cooked_impl(
         if entry
         else None,
         "removed": [names[item_id] for item_id in result.removed_item_ids if item_id in names],
-        "kept": [item.name for item in result.kept_items],
+        "kept": [
+            {"name": item.name, "quantity": item.quantity, "unit": item.unit.name if item.unit else None}
+            for item in result.kept_items
+        ],
         "leftover": {
             "id": str(leftover.id),
             "name": leftover.name,
@@ -473,7 +476,7 @@ async def record_meal_cooked(
     point) adds a "Leftover <recipe>" pantry item in leftover_location (fridge, default, or freezer) with
     leftover_use_by (ISO date; default 3 days after cooking for the fridge, 90 for the freezer). Call
     record_recipe_feedback only if the user said how it went. Returns {meal_plan_entry: {id, date, title} or
-    null, removed: [names], kept: [names], leftover: {id, name, portions, location, use_by} or null};
+    null, removed: [names], kept: [{name, quantity, unit}], leftover: {id, name, portions, location, use_by} or null};
     meal_plan_entry null means no plan entry was found, which is not an error. Nothing is written when an
     argument is refused."""
     return await run_in_context(
