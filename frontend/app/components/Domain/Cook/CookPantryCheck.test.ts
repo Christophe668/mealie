@@ -1,6 +1,7 @@
 import { mount } from "@vue/test-utils";
 import type { DOMWrapper } from "@vue/test-utils";
 import { describe, expect, test } from "vitest";
+import { nextTick } from "vue";
 import CookPantryCheck from "./CookPantryCheck.vue";
 import type { PantryChoices } from "./CookPantryCheck.vue";
 import type { PantryItemOut, PantryProposal, UnmatchedIngredient } from "~/lib/api/types/household";
@@ -167,6 +168,44 @@ describe("CookPantryCheck", () => {
       await input.setValue("650");
 
       expect(model(wrapper).quantities).toEqual({ "p-flour": 650 });
+    });
+
+    test("a cleared some-left proposal shows no change", async () => {
+      const wrapper = render(
+        { outcomes: { "p-flour": "some_left" }, quantities: { "p-flour": 800 } },
+        { items: [flour], proposals: [proposal()] },
+      );
+      expect(row(wrapper, "Flour").text()).toContain("→");
+
+      await button(row(wrapper, "Flour"), "Some left").trigger("click");
+
+      expect(row(wrapper, "Flour").text()).not.toContain("→");
+      expect(row(wrapper, "Flour").text()).toContain("1,000 g");
+    });
+
+    test("editing focuses the input, Enter returns focus to the amount", async () => {
+      const wrapper = render(
+        { outcomes: { "p-flour": "some_left" }, quantities: { "p-flour": 800 } },
+        { items: [flour], proposals: [proposal()] },
+      );
+      wrapper.unmount();
+      const attached = mount(CookPantryCheck, {
+        attachTo: document.body,
+        props: {
+          items: [flour],
+          proposals: [proposal()],
+          modelValue: { outcomes: { "p-flour": "some_left" }, quantities: { "p-flour": 800 }, substitutes: {}, portions: 0, location: "fridge" },
+        },
+        global: { stubs },
+      });
+
+      await attached.find(".cook-pantry__amount-edit").trigger("click");
+      await nextTick();
+      expect(document.activeElement).toBe(attached.find("input").element);
+      await attached.find("input").trigger("keydown", { key: "Enter" });
+      await nextTick();
+      expect(document.activeElement).toBe(attached.find(".cook-pantry__amount-edit").element);
+      attached.unmount();
     });
 
     test("a units_differ row shows the hint", () => {

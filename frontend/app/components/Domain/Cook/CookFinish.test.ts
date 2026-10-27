@@ -387,5 +387,71 @@ describe("CookFinish", () => {
         pantry: [{ pantryItemId: "p-flour", outcome: "some_left" }],
       });
     });
+
+    describe("a substitute pick refetches the check", () => {
+      const sugar: PantryItemOut = { ...item("p-sugar", "Sugar"), quantity: 400 };
+      const both = () => check({
+        items: [flour, sugar],
+        proposals: [proposal(), proposal({ pantryItemId: "p-sugar", proposedQuantity: 300 })],
+        unmatchedIngredients: [ghee],
+      });
+      const withOil = () => check({
+        items: [flour, sugar, oil],
+        proposals: [
+          proposal(),
+          proposal({ pantryItemId: "p-sugar", proposedQuantity: 300 }),
+          proposal({ pantryItemId: "p-oil", proposedQuantity: 450, replacesReferenceId: "ref-1" }),
+        ],
+      });
+      const pickOil = async (wrapper: Awaited<ReturnType<typeof render>>) => {
+        await button(wrapper, "Used something else?").trigger("click");
+        await wrapper.findAll(".cook-pantry__picker button").find(b => b.text() === "Olive oil")!.trigger("click");
+        await flushPromises();
+      };
+
+      test("a cleared chip and an edited quantity survive it", async () => {
+        pantryCheck.mockResolvedValueOnce(both());
+        getAll.mockResolvedValue({ data: { items: [flour, sugar, oil] }, error: null });
+        const wrapper = await render();
+
+        await button(itemRow(wrapper, "Flour"), "Some left").trigger("click");
+        expect(itemRow(wrapper, "Flour").text()).not.toContain("→");
+        await itemRow(wrapper, "Sugar").find(".cook-pantry__amount-edit").trigger("click");
+        await itemRow(wrapper, "Sugar").find("input").setValue("250");
+        await itemRow(wrapper, "Sugar").find("input").trigger("keydown", { key: "Enter" });
+
+        pantryCheck.mockResolvedValueOnce(withOil());
+        await pickOil(wrapper);
+
+        expect(button(itemRow(wrapper, "Flour"), "Some left").attributes("aria-pressed")).toBe("false");
+        expect(itemRow(wrapper, "Flour").text()).not.toContain("→");
+        expect(itemRow(wrapper, "Sugar").text()).toContain("400 → 250");
+        await button(wrapper, "Done").trigger("click");
+        await flushPromises();
+        expect(record.mock.calls[0]![0]).toHaveProperty("pantry", [
+          { pantryItemId: "p-sugar", outcome: "some_left", quantity: 250 },
+          { pantryItemId: "p-oil", outcome: "some_left", quantity: 450, replacesReferenceId: "ref-1" },
+        ]);
+      });
+
+      test("undoing a substitute and picking it again preselects its proposal again", async () => {
+        pantryCheck.mockResolvedValueOnce(both());
+        getAll.mockResolvedValue({ data: { items: [flour, sugar, oil] }, error: null });
+        const wrapper = await render();
+
+        pantryCheck.mockResolvedValueOnce(withOil());
+        await pickOil(wrapper);
+        expect(button(itemRow(wrapper, "Olive oil"), "Some left").attributes("aria-pressed")).toBe("true");
+
+        pantryCheck.mockResolvedValueOnce(both());
+        await itemRow(wrapper, "Olive oil").find(".cook-pantry__undo").trigger("click");
+        await flushPromises();
+        expect(wrapper.text()).not.toContain("Olive oil: ");
+
+        pantryCheck.mockResolvedValueOnce(withOil());
+        await pickOil(wrapper);
+        expect(button(itemRow(wrapper, "Olive oil"), "Some left").attributes("aria-pressed")).toBe("true");
+      });
+    });
   });
 });

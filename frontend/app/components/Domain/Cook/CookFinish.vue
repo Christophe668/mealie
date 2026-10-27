@@ -123,6 +123,12 @@ const seeded = new Set<string>();
 /** Pre-selects what the server proposes, for the items not seen before; drops choices for items no longer listed. */
 function seed(data: PantryCheckOut) {
   const listed = new Set(data.items.map(item => item.id));
+  // An item that left the list gets its proposal again if it comes back.
+  for (const id of [...seeded]) {
+    if (!listed.has(id)) {
+      seeded.delete(id);
+    }
+  }
   const outcomes = Object.fromEntries(Object.entries(choices.value.outcomes).filter(([id]) => listed.has(id)));
   const quantities = Object.fromEntries(Object.entries(choices.value.quantities).filter(([id]) => listed.has(id)));
   for (const proposal of data.proposals ?? []) {

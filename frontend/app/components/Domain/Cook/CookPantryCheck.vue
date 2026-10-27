@@ -1,5 +1,5 @@
 <template>
-  <div class="cook-pantry">
+  <div ref="root" class="cook-pantry">
     <section v-if="items.length" class="cook-pantry__section" :aria-labelledby="pantryId">
       <h3 :id="pantryId" class="cook-pantry__heading">
         {{ $t("cook.from-your-pantry") }}
@@ -27,11 +27,12 @@
                 step="any"
                 min="0"
                 inputmode="decimal"
+                :data-amount-input="item.id"
                 :aria-label="$t('cook.amount-left')"
                 :value="model.quantities[item.id]"
                 @input="setQuantity(item.id, ($event.target as HTMLInputElement).value)"
-                @blur="editingId = null"
-                @keydown.enter="editingId = null"
+                @blur="stopEditing(item.id, false)"
+                @keydown.enter.prevent="stopEditing(item.id, true)"
               >
               {{ unitName(item, model.quantities[item.id]) }}
             </span>
@@ -39,6 +40,7 @@
               v-else-if="model.outcomes[item.id] === 'some_left' && amount(item)"
               type="button"
               class="cook-pantry__amount cook-pantry__amount-edit ds-focus"
+              :data-amount-edit="item.id"
               :aria-disabled="disabled ? 'true' : undefined"
               @click="startEditing(item.id)"
             >
@@ -186,6 +188,7 @@ const pantryId = useId();
 const leftoversId = useId();
 const i18n = useI18n();
 
+const root = ref<HTMLElement | null>(null);
 const editingId = ref<string | null>(null);
 const pickerFor = ref<string | null>(null);
 
@@ -217,8 +220,8 @@ function format(item: PantryItemOut, quantity: number) {
 
 /** The amount left once cooked: the cook's own figure, else the proposal's; none after "Used up". */
 function target(item: PantryItemOut) {
-  const outcome = model.value.outcomes[item.id];
-  if (outcome === "used_up") {
+  // Nothing chosen (or cleared) means nothing will change, so there is no new amount to show.
+  if (model.value.outcomes[item.id] !== "some_left") {
     return null;
   }
   const proposal = proposalOf(item.id);
@@ -258,9 +261,28 @@ function toggleOutcome(item: PantryItemOut, outcome: PantryOutcome) {
   model.value = { ...model.value, outcomes, quantities };
 }
 
-function startEditing(itemId: string) {
-  if (!props.disabled) {
-    editingId.value = itemId;
+function focusAmount(attribute: string, itemId: string) {
+  root.value?.querySelector<HTMLElement>(`[${attribute}="${itemId}"]`)?.focus();
+}
+
+async function startEditing(itemId: string) {
+  if (props.disabled) {
+    return;
+  }
+  editingId.value = itemId;
+  await nextTick();
+  focusAmount("data-amount-input", itemId);
+}
+
+/** Enter hands focus back to the amount; a blur leaves it where the cook went. */
+async function stopEditing(itemId: string, refocus: boolean) {
+  if (editingId.value !== itemId) {
+    return;
+  }
+  editingId.value = null;
+  if (refocus) {
+    await nextTick();
+    focusAmount("data-amount-edit", itemId);
   }
 }
 
