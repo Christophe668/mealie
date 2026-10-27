@@ -214,3 +214,14 @@ If the computed `used` is under 5% of the pantry item's quantity, treat it as no
   current display).
 - The unrelated duplicate foods ("Gruyere" / "gruyère") are a data fix, not part of this slice. Mention it
   to Christophe; fixing it is a merge on the foods page.
+
+## 7. Implemented (2026-10-27)
+
+Branch `t3/update-pantry-after-cooking`, commits `c91f9eea8` to `a9da58d84` (proposal engine, pantry check, record, MCP, finish screen), plus `808aedfe7` (generated types header) and `697fab885` (mypy fixes). Changes from the design and plan during the build:
+
+- Spill: an item after the need is covered gets `none`, even if its unit doesn't compare with the line's.
+- A substitute for an ingredient whose own food is already in the pantry is refused.
+- Generated types needed `json2ts` outside the repo and `PRODUCTION=false`.
+- The MCP `get_recipe` tests live in `test_tools_pantry.py`. The shared MCP validation helpers moved to `mealie/mcp/tools/_validation.py`.
+- Blur on the amount input keeps focus where the cook moved it. Only Enter returns focus to the input.
+- No manual browser run: verified by route and component tests.
