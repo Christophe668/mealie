@@ -67,6 +67,36 @@ def test_pantry_check(api_client: TestClient, unique_user_fn_scoped: TestUser):
     assert response.status_code == 200
 
 
+def test_pantry_check_substitute_param(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    recipe = _create_recipe(api_client, user, random_string())
+    reference = recipe["recipeIngredient"][0]["referenceId"]
+    item = _pantry(api_client, user, random_string(), quantity=4)
+
+    response = api_client.get(
+        api_routes.households_cooking_recipe_id_pantry_check(recipe["id"]),
+        params={"cooked_on": TODAY.isoformat(), "substitute": f"{reference}:{item['id']}"},
+        headers=user.token,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [i["id"] for i in body["items"]] == [item["id"]]
+    assert body["proposals"][0]["replacesReferenceId"] == reference
+    assert body["unmatchedIngredients"] == []
+
+
+def test_pantry_check_malformed_substitute(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    recipe = _create_recipe(api_client, user, random_string())
+    for bad in ("no-colon", "not-a-uuid:also-not"):
+        response = api_client.get(
+            api_routes.households_cooking_recipe_id_pantry_check(recipe["id"]),
+            params={"cooked_on": TODAY.isoformat(), "substitute": bad},
+            headers=user.token,
+        )
+        assert response.status_code == 400, response.text
+
+
 def test_pantry_check_recipe_outside_group_is_404(api_client: TestClient, unique_user_fn_scoped: TestUser):
     response = api_client.get(
         api_routes.households_cooking_recipe_id_pantry_check(str(uuid4())),

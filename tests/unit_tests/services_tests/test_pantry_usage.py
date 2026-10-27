@@ -156,3 +156,11 @@ def test_unknown_unit_names_never_raise():
     food = _food("farine")
     [p] = propose_for_food([_line(food, 100, BARE_GRAMME)], [_item(food, 1, BARE_KG)], 1)
     assert (p.proposed_outcome, p.proposed_quantity, p.reason) == ("some_left", 1, "units_differ")
+
+
+def test_item_after_need_covered_gets_none_even_if_units_differ():
+    food = _food("farine")
+    items = [_item(food, 100, GRAMME), _item(food, 5, GOUSSE)]
+    [first, second] = propose_for_food([_line(food, 100, GRAMME)], items, 1)
+    assert first.proposed_outcome == "used_up"
+    assert (second.proposed_outcome, second.used, second.proposed_quantity) == ("none", None, None)

@@ -191,7 +191,8 @@ def propose_for_food(lines: list[RecipeIngredient], items: list[PantryItemOut], 
     for item in items:
         need, reason = amount_in_item(lines, item, scale)
 
-        if need is not None and remaining <= _EPSILON:
+        if remaining <= _EPSILON:
+            # an earlier item covered the need: nothing left for this one, whether or not its units compare
             proposals.append(PantryProposal(pantry_item_id=item.id, proposed_outcome=ProposedOutcome.none))
             continue
 

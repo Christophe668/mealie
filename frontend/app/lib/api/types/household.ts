@@ -13,6 +13,15 @@ export type PantrySource = "shopping" | "manual" | "leftover";
 export type GroupRecipeActionType = "link" | "post";
 export type WebhookType = "mealplan";
 export type Diet = "none" | "vegetarian" | "vegan" | "pescatarian" | "halal" | "kosher" | "other";
+export type ProposedOutcome = "used_up" | "some_left" | "none";
+export type ProposalReason =
+  | "subtracted"
+  | "converted"
+  | "weight_from_note"
+  | "weight_from_food"
+  | "units_differ"
+  | "small_amount"
+  | "no_quantity";
 
 export interface CookedFeedback {
   verdict: FeedbackVerdict;
@@ -532,10 +541,25 @@ export interface PantryCheckOut {
   suggestedLeftoverPortions: number;
   mealPlanEntryId?: number | null;
   ingredients?: PantryIngredientMatch[];
+  proposals?: PantryProposal[];
+  unmatchedIngredients?: UnmatchedIngredient[];
 }
 export interface PantryIngredientMatch {
   referenceId: string;
   pantryItemIds?: string[];
+}
+export interface PantryProposal {
+  pantryItemId: string;
+  used?: number | null;
+  proposedQuantity?: number | null;
+  proposedOutcome: ProposedOutcome;
+  reason?: ProposalReason | null;
+  replacesReferenceId?: string | null;
+}
+export interface UnmatchedIngredient {
+  referenceId: string;
+  food: IngredientFood;
+  substituteFoodIds?: string[];
 }
 export interface PantryItemCreate {
   name: string;

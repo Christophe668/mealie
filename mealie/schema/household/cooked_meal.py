@@ -8,6 +8,7 @@ from mealie.schema._mealie import MealieModel
 from mealie.schema.household.pantry import PantryItemOut
 from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedbackOut
 from mealie.schema.meal_plan.new_meal import ReadPlanEntry
+from mealie.schema.recipe.recipe_ingredient import IngredientFood
 
 
 class PantryOutcome(StrEnum):
@@ -98,9 +99,21 @@ class PantryIngredientMatch(MealieModel):
     """Its pantry items, in pantry order; empty when the pantry has none of its food."""
 
 
+class UnmatchedIngredient(MealieModel):
+    reference_id: UUID4
+    """The recipe ingredient's `reference_id`."""
+    food: IngredientFood
+    substitute_food_ids: list[UUID4] = []
+    """The foods the ingredient's food may be replaced by, in the order to offer them."""
+
+
 class PantryCheckOut(MealieModel):
     items: list[PantryItemOut]
     suggested_leftover_portions: int
     meal_plan_entry_id: int | None = None
     ingredients: list[PantryIngredientMatch] = []
     """One per ingredient that names a food; an ingredient without one can't be matched, so it is left out."""
+    proposals: list[PantryProposal] = []
+    """One per item in `items`, in the same order."""
+    unmatched_ingredients: list[UnmatchedIngredient] = []
+    """Ingredients naming a food that no pantry item matches and no substitute stands in for."""
