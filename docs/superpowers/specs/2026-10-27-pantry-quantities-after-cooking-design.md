@@ -225,3 +225,7 @@ Branch `t3/update-pantry-after-cooking`, commits `c91f9eea8` to `a9da58d84` (pro
 - The MCP `get_recipe` tests live in `test_tools_pantry.py`. The shared MCP validation helpers moved to `mealie/mcp/tools/_validation.py`.
 - Blur on the amount input keeps focus where the cook moved it. Only Enter returns focus to the input.
 - No manual browser run: verified by route and component tests.
+- Told later ("How was it?" with `amend`): proposals show but no outcome is pre-selected, since the pantry may already have been reduced for this cooking. "Some left" still starts from the proposed amount.
+- Unit names resolve through pint only to a weight (`[mass]`) or a volume (`[length] ** 3`), trying abbreviation, then name, then plural, so "c" for cup resolves through "cup". "bag" and "t" are never parsed.
+- A note weight is per piece when the line's quantity is 1 or the note says "chacun(e)", "each", "la pièce" or "par pièce"; otherwise it is the line's total. "1/2 kg" is half a kilo.
+- An unmatched food on several lines is listed once (first line's reference); its substitute is charged for all its lines, and a second substitute for the same food is refused.
