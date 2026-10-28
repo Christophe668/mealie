@@ -429,7 +429,20 @@ async def test_record_meal_cooked_happy_path(
 
     shown = await get_recipe(recipe.slug)
     assert [i["id"] for i in shown["in_pantry"]] == [str(item.id)]
-    assert set(shown["in_pantry"][0]) == {"id", "name", "quantity", "unit", "location", "opened_on", "use_by"}
+    assert set(shown["in_pantry"][0]) == {
+        "id",
+        "name",
+        "quantity",
+        "unit",
+        "location",
+        "opened_on",
+        "use_by",
+        "used",
+        "proposed_quantity",
+        "proposed_outcome",
+        "reason",
+        "replaces_reference_id",
+    }
     assert isinstance(shown["suggested_leftover_portions"], int)
 
     result = await record_meal_cooked(
@@ -463,6 +476,179 @@ async def test_get_recipe_in_pantry_comes_from_callers_household(
     shown = await get_recipe(recipe.slug)
 
     assert [i["id"] for i in shown["in_pantry"]] == [str(mine.id)]
+
+
+def _stocked(user: TestUser, stock: float | None = 5):
+    """A recipe taking 1 of a food, plus a pantry item of that food holding `stock`."""
+    recipe, food, _ = _cookable(user)
+    # replace the quantity-less item _cookable adds
+    for existing in user.repos.pantry_items.ordered():
+        if existing.food_id == food.id:
+            user.repos.pantry_items.delete(existing.id)
+    item = PantryService(user.repos).add_item(PantryItemCreate(name=food.name, food_id=food.id, quantity=stock))[0]
+    return recipe, food, item
+
+
+@pytest.mark.asyncio
+async def test_get_recipe_in_pantry_has_proposals(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    from mealie.mcp.tools.recipes import get_recipe
+
+    user = unique_user_fn_scoped
+    recipe, _, item = _stocked(user)
+    _as_user(monkeypatch, session, user)
+
+    shown = await get_recipe(recipe.slug)
+
+    [entry] = shown["in_pantry"]
+    assert entry["id"] == str(item.id)
+    assert entry["used"] == 1
+    assert entry["proposed_quantity"] == 4
+    assert entry["proposed_outcome"] == "some_left"
+    assert entry["reason"] == "subtracted"
+    assert entry["replaces_reference_id"] is None
+    assert shown["unmatched_ingredients"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_recipe_with_substitutes_and_scale(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    from mealie.mcp.tools.recipes import get_recipe
+
+    user = unique_user_fn_scoped
+    recipe, food, own = _stocked(user)
+    user.repos.pantry_items.delete(own.id)
+    other = _add(user, name=random_string(12), quantity=5)
+    ref = str(recipe.recipe_ingredient[0].reference_id)
+    _as_user(monkeypatch, session, user)
+
+    unmatched = (await get_recipe(recipe.slug))["unmatched_ingredients"]
+    assert unmatched == [{"ref": ref, "food": food.name, "substitute_food_ids": []}]
+
+    shown = await get_recipe(recipe.slug, scale=2, substitutes=[{"reference_id": ref, "pantry_item_id": other}])
+
+    [entry] = shown["in_pantry"]
+    assert entry["id"] == other
+    assert entry["replaces_reference_id"] == ref
+    assert entry["used"] == 2
+    assert entry["proposed_quantity"] == 3
+    assert shown["unmatched_ingredients"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"substitutes": [{"reference_id": "r", "pantry_item_id": "p", "extra": 1}]}, "unknown key"),
+        ({"substitutes": [{"reference_id": str(uuid4())}]}, "needs reference_id and pantry_item_id"),
+        ({"substitutes": [{"reference_id": "nope", "pantry_item_id": str(uuid4())}]}, "reference_id"),
+        ({"substitutes": ["x"]}, "expected an object"),
+        ({"scale": 0}, "scale must be greater than 0"),
+        ({"scale": True}, "scale must be greater than 0"),
+    ],
+)
+async def test_get_recipe_bad_substitute_key(
+    monkeypatch: pytest.MonkeyPatch,
+    session: Session,
+    unique_user_fn_scoped: TestUser,
+    kwargs: dict,
+    message: str,
+):
+    from mealie.mcp.tools.recipes import get_recipe
+
+    user = unique_user_fn_scoped
+    recipe, _, _ = _stocked(user)
+    _as_user(monkeypatch, session, user)
+
+    with pytest.raises(McpToolError, match=message):
+        await get_recipe(recipe.slug, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_get_recipe_substitute_listed_twice_or_refused(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    from mealie.mcp.tools.recipes import get_recipe
+
+    user = unique_user_fn_scoped
+    recipe, _, _ = _stocked(user)
+    other = _add(user, name=random_string(12), quantity=5)
+    ref = str(recipe.recipe_ingredient[0].reference_id)
+    _as_user(monkeypatch, session, user)
+
+    entry = {"reference_id": ref, "pantry_item_id": other}
+    with pytest.raises(McpToolError, match="more than once"):
+        await get_recipe(recipe.slug, substitutes=[entry, entry])
+    with pytest.raises(McpToolError):
+        await get_recipe(recipe.slug, substitutes=[{"reference_id": str(uuid4()), "pantry_item_id": other}])
+
+
+@pytest.mark.asyncio
+async def test_record_meal_cooked_quantity_and_substitute(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe, food, own = _stocked(user)
+    user.repos.pantry_items.delete(own.id)
+    other = _add(user, name=random_string(12), quantity=5)
+    ref = str(recipe.recipe_ingredient[0].reference_id)
+    _as_user(monkeypatch, session, user)
+
+    # without the substitute reference the item is not in the recipe
+    with pytest.raises(McpToolError, match="pantry items not in this recipe"):
+        await record_meal_cooked(recipe.slug, pantry=[{"id": other, "outcome": "some_left", "quantity": 3.5}])
+
+    result = await record_meal_cooked(
+        recipe.slug, pantry=[{"id": other, "outcome": "some_left", "quantity": 3.5, "replaces_reference_id": ref}]
+    )
+
+    items = {i["id"]: i for i in (await get_pantry())["items"]}
+    assert result["kept"] == [{"name": items[other]["name"], "quantity": 3.5, "unit": None}]
+    assert items[other]["quantity"] == 3.5
+
+
+@pytest.mark.asyncio
+async def test_record_meal_cooked_wrong_replaces_reference_is_a_tool_error(
+    monkeypatch: pytest.MonkeyPatch, session: Session, unique_user_fn_scoped: TestUser
+):
+    user = unique_user_fn_scoped
+    recipe, _, _ = _stocked(user)
+    other = _add(user, name=random_string(12), quantity=5)
+    _as_user(monkeypatch, session, user)
+
+    with pytest.raises(McpToolError):
+        await record_meal_cooked(
+            recipe.slug, pantry=[{"id": other, "outcome": "some_left", "replaces_reference_id": str(uuid4())}]
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entry", "message"),
+    [
+        ({"outcome": "some_left", "quantity": -1}, "quantity must be a non-negative number"),
+        ({"outcome": "some_left", "quantity": True}, "quantity must be a non-negative number"),
+        ({"outcome": "some_left", "quantity": "2"}, "quantity must be a non-negative number"),
+        ({"outcome": "used_up", "quantity": 1}, "quantity only goes with some_left"),
+        ({"outcome": "some_left", "replaces_reference_id": "nope"}, "replaces_reference_id"),
+    ],
+)
+async def test_record_meal_cooked_refuses_bad_quantity(
+    monkeypatch: pytest.MonkeyPatch,
+    session: Session,
+    unique_user_fn_scoped: TestUser,
+    entry: dict,
+    message: str,
+):
+    user = unique_user_fn_scoped
+    recipe, _, item = _stocked(user)
+    _as_user(monkeypatch, session, user)
+
+    with pytest.raises(McpToolError, match=message):
+        await record_meal_cooked(recipe.slug, pantry=[{"id": str(item.id), **entry}])
+    assert (await record_meal_cooked(recipe.slug))["meal_plan_entry"] is None
 
 
 @pytest.mark.asyncio

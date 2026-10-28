@@ -1,9 +1,10 @@
 import { mount } from "@vue/test-utils";
 import type { DOMWrapper } from "@vue/test-utils";
 import { describe, expect, test } from "vitest";
+import { nextTick } from "vue";
 import CookPantryCheck from "./CookPantryCheck.vue";
 import type { PantryChoices } from "./CookPantryCheck.vue";
-import type { PantryItemOut } from "~/lib/api/types/household";
+import type { PantryItemOut, PantryProposal, UnmatchedIngredient } from "~/lib/api/types/household";
 
 const stubs = { "v-icon": { template: "<i class=\"v-icon\" aria-hidden=\"true\" />" } };
 
@@ -20,11 +21,13 @@ const items = [
   item("p-onion", "Onions", { quantity: 3 }),
 ];
 
-function render(model: Partial<PantryChoices> = {}, props: Partial<{ items: PantryItemOut[]; disabled: boolean }> = {}) {
+type Props = Partial<{ items: PantryItemOut[]; proposals: PantryProposal[]; unmatched: UnmatchedIngredient[]; pantry: PantryItemOut[]; disabled: boolean }>;
+
+function render(model: Partial<PantryChoices> = {}, props: Props = {}) {
   const wrapper = mount(CookPantryCheck, {
     props: {
       "items": items,
-      "modelValue": { outcomes: {}, portions: 2, location: "fridge", ...model },
+      "modelValue": { outcomes: {}, quantities: {}, substitutes: {}, portions: 2, location: "fridge", ...model },
       "onUpdate:modelValue": (value: PantryChoices) => wrapper.setProps({ modelValue: value }),
       ...props,
     },
@@ -108,6 +111,155 @@ describe("CookPantryCheck", () => {
     await button(row(wrapper, "Butter"), "Used up").trigger("click");
     await wrapper.find("[aria-label='More portions']").trigger("click");
     await button(wrapper, "Freezer").trigger("click");
-    expect(model(wrapper)).toEqual({ outcomes: {}, portions: 2, location: "fridge" });
+    expect(model(wrapper)).toEqual({ outcomes: {}, quantities: {}, substitutes: {}, portions: 2, location: "fridge" });
+  });
+
+  describe("proposals", () => {
+    const grams = { id: "u-g", name: "g", pluralName: "g" };
+    const flour = item("p-flour", "Flour", { quantity: 1000, unit: grams, foodId: "f-flour" });
+    const proposal = (extra: Partial<PantryProposal> = {}): PantryProposal => ({
+      pantryItemId: "p-flour",
+      used: 200,
+      proposedQuantity: 800,
+      proposedOutcome: "some_left",
+      reason: "subtracted",
+      ...extra,
+    });
+
+    test("shows the proposed amount and preselects the proposed chip", () => {
+      const wrapper = render(
+        { outcomes: { "p-flour": "some_left" }, quantities: { "p-flour": 800 } },
+        { items: [flour], proposals: [proposal()] },
+      );
+
+      expect(row(wrapper, "Flour").text()).toContain("1,000 g → 800 g");
+      expect(button(row(wrapper, "Flour"), "Some left").attributes("aria-pressed")).toBe("true");
+      expect(button(row(wrapper, "Flour"), "Used up").attributes("aria-pressed")).toBe("false");
+    });
+
+    test("an unchanged proposed quantity shows only the current amount", () => {
+      const wrapper = render({}, { items: [flour], proposals: [proposal({ proposedQuantity: 1000 })] });
+
+      expect(row(wrapper, "Flour").text()).toContain("1,000 g");
+      expect(row(wrapper, "Flour").text()).not.toContain("→");
+    });
+
+    test("Some left on a used-up proposal starts from the current quantity", async () => {
+      const wrapper = render(
+        { outcomes: { "p-flour": "used_up" } },
+        { items: [flour], proposals: [proposal({ proposedOutcome: "used_up", proposedQuantity: null })] },
+      );
+
+      await button(row(wrapper, "Flour"), "Some left").trigger("click");
+
+      expect(model(wrapper).outcomes).toEqual({ "p-flour": "some_left" });
+      expect(model(wrapper).quantities).toEqual({ "p-flour": 1000 });
+    });
+
+    test("editing the amount updates quantities", async () => {
+      const wrapper = render(
+        { outcomes: { "p-flour": "some_left" }, quantities: { "p-flour": 800 } },
+        { items: [flour], proposals: [proposal()] },
+      );
+
+      await row(wrapper, "Flour").find(".cook-pantry__amount-edit").trigger("click");
+      const input = row(wrapper, "Flour").find("input[type=number]");
+      expect(input.attributes("min")).toBe("0");
+      await input.setValue("650");
+
+      expect(model(wrapper).quantities).toEqual({ "p-flour": 650 });
+    });
+
+    test("a cleared some-left proposal shows no change", async () => {
+      const wrapper = render(
+        { outcomes: { "p-flour": "some_left" }, quantities: { "p-flour": 800 } },
+        { items: [flour], proposals: [proposal()] },
+      );
+      expect(row(wrapper, "Flour").text()).toContain("→");
+
+      await button(row(wrapper, "Flour"), "Some left").trigger("click");
+
+      expect(row(wrapper, "Flour").text()).not.toContain("→");
+      expect(row(wrapper, "Flour").text()).toContain("1,000 g");
+    });
+
+    test("editing focuses the input, Enter returns focus to the amount", async () => {
+      const wrapper = render(
+        { outcomes: { "p-flour": "some_left" }, quantities: { "p-flour": 800 } },
+        { items: [flour], proposals: [proposal()] },
+      );
+      wrapper.unmount();
+      const attached = mount(CookPantryCheck, {
+        attachTo: document.body,
+        props: {
+          items: [flour],
+          proposals: [proposal()],
+          modelValue: { outcomes: { "p-flour": "some_left" }, quantities: { "p-flour": 800 }, substitutes: {}, portions: 0, location: "fridge" },
+        },
+        global: { stubs },
+      });
+
+      await attached.find(".cook-pantry__amount-edit").trigger("click");
+      await nextTick();
+      expect(document.activeElement).toBe(attached.find("input").element);
+      await attached.find("input").trigger("keydown", { key: "Enter" });
+      await nextTick();
+      expect(document.activeElement).toBe(attached.find(".cook-pantry__amount-edit").element);
+      attached.unmount();
+    });
+
+    test("a units_differ row shows the hint", () => {
+      const wrapper = render({}, { items: [flour], proposals: [proposal({ reason: "units_differ", proposedQuantity: 1000 })] });
+      const other = render({}, { items: [flour], proposals: [proposal()] });
+
+      expect(row(wrapper, "Flour").text()).toContain("Units don't compare, amount kept");
+      expect(row(other, "Flour").text()).not.toContain("Units don't compare");
+    });
+
+    test("a none proposal has no chip pressed", () => {
+      const wrapper = render(
+        {},
+        { items: [flour], proposals: [proposal({ proposedOutcome: "none", proposedQuantity: null, reason: "no_quantity" })] },
+      );
+
+      const pressed = row(wrapper, "Flour").findAll("button").map(b => b.attributes("aria-pressed"));
+      expect(pressed).toEqual(["false", "false"]);
+    });
+
+    test("picking a substitute sets substitutes[ref], oldest suggestions first", async () => {
+      const oil = item("p-oil", "Olive oil", { foodId: "f-oil" });
+      const butter = item("p-butter", "Butter", { foodId: "f-butter" });
+      const unmatched: UnmatchedIngredient = {
+        referenceId: "ref-1",
+        food: { id: "f-ghee", name: "Ghee" },
+        substituteFoodIds: ["f-oil"],
+      };
+      const wrapper = render({}, { items: [flour], unmatched: [unmatched], pantry: [flour, butter, oil] });
+
+      expect(wrapper.text()).toContain("Ghee: not in your pantry");
+      await button(wrapper, "Used something else?").trigger("click");
+      const options = wrapper.findAll(".cook-pantry__picker button").map(b => b.text());
+      expect(options).toEqual(["Olive oil", "Butter"]);
+
+      await wrapper.findAll(".cook-pantry__picker button")[0]!.trigger("click");
+
+      expect(model(wrapper).substitutes).toEqual({ "ref-1": "p-oil" });
+    });
+
+    test("a picked row says what it replaces and × undoes it", async () => {
+      const oil = item("p-oil", "Olive oil", { quantity: 500 });
+      const unmatched: UnmatchedIngredient = { referenceId: "ref-1", food: { id: "f-ghee", name: "Ghee" } };
+      const wrapper = render({ substitutes: { "ref-1": "p-oil" } }, { items: [], unmatched: [unmatched], pantry: [oil] });
+      await wrapper.setProps({
+        items: [oil],
+        unmatched: [],
+        proposals: [proposal({ pantryItemId: "p-oil", replacesReferenceId: "ref-1", proposedQuantity: null, proposedOutcome: "none" })],
+      });
+
+      expect(row(wrapper, "Olive oil").text()).toContain("instead of Ghee");
+      await row(wrapper, "Olive oil").find(".cook-pantry__undo").trigger("click");
+
+      expect(model(wrapper).substitutes).toEqual({});
+    });
   });
 });

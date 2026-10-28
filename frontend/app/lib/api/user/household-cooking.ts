@@ -1,5 +1,6 @@
 import { BaseAPI } from "../base/base-clients";
 import { route } from "../base/route";
+import type { QueryValue } from "../base/route";
 import type { CookedMealCreate, CookedMealOut, PantryCheckOut, ReadPlanEntry } from "~/lib/api/types/household";
 
 const prefix = "/api";
@@ -13,9 +14,16 @@ const routes = {
 /** Recording a cooked meal. Dates are the cook's own local day (`YYYY-MM-DD`). */
 export class HouseholdCookingApi extends BaseAPI {
   /** The pantry items matching the recipe, the suggested leftover portions and the entry a cooking would mark. */
-  async pantryCheck(recipeId: string, cookedOn: string, scale?: number) {
+  async pantryCheck(recipeId: string, cookedOn: string, scale?: number, substitutes: Record<string, string> = {}) {
     // `route` stringifies every value, so a missing scale must be left out rather than passed as undefined
-    const params = scale === undefined ? { cooked_on: cookedOn } : { cooked_on: cookedOn, scale };
+    const params: Record<string, QueryValue> = { cooked_on: cookedOn };
+    if (scale !== undefined) {
+      params.scale = scale;
+    }
+    const pairs = Object.entries(substitutes).map(([reference, itemId]) => `${reference}:${itemId}`);
+    if (pairs.length) {
+      params.substitute = pairs;
+    }
     return await this.requests.get<PantryCheckOut>(route(routes.pantryCheck(recipeId), params));
   }
 

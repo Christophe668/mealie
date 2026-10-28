@@ -18,7 +18,13 @@ from mealie.schema.household.pantry import PantryItemCreate, PantryItemOut, Pant
 from mealie.schema.household.recipe_feedback import FeedbackVerdict
 from mealie.schema.meal_plan.new_meal import ReadPlanEntry, SavePlanEntry
 from mealie.schema.recipe.recipe import Recipe
-from mealie.schema.recipe.recipe_ingredient import IngredientFood, RecipeIngredient, SaveIngredientFood
+from mealie.schema.recipe.recipe_ingredient import (
+    CreateIngredientFoodSubstitution,
+    IngredientFood,
+    RecipeIngredient,
+    SaveIngredientFood,
+    SaveIngredientUnit,
+)
 from mealie.schema.user.user import PrivateUser
 from mealie.services.claude_context.cooked_meal_service import (
     AlreadyCookedError,
@@ -107,6 +113,162 @@ def _snapshot(user: TestUser, recipe: Recipe, entry_ids: list[int]) -> dict[str,
 
 
 # ------------------------------------------------------------------ pantry check
+
+
+def _gram(user: TestUser) -> Any:
+    return user.repos.ingredient_units.create(
+        SaveIngredientUnit(name=random_string(10), abbreviation="g", group_id=user.group_id)
+    )
+
+
+def _lines_recipe(user: TestUser, lines: list[RecipeIngredient]) -> Recipe:
+    recipe = user.repos.recipes.create(
+        Recipe(
+            name=random_string(10),
+            user_id=user.user_id,
+            group_id=user.group_id,
+            household_id=user.household_id,
+            recipe_ingredient=lines,
+        )
+    )
+    return user.repos.recipes.get_one(recipe.id, "id") or recipe
+
+
+def _reference(recipe: Recipe, food: IngredientFood) -> Any:
+    return next(i.reference_id for i in recipe.recipe_ingredient if i.food and i.food.id == food.id)
+
+
+def test_pantry_check_proposals_follow_items(unique_user: TestUser):
+    gram = _gram(unique_user)
+    potato = _food(unique_user)
+    recipe = _lines_recipe(unique_user, [RecipeIngredient(note="environ 200 g", food=potato, quantity=1)])
+    item = unique_user.repos.pantry_items.create(
+        PantryItemCreate(name=potato.name, food_id=potato.id, quantity=1000, unit_id=gram.id)
+    )
+
+    check = _service(unique_user).pantry_check(recipe.id, TODAY)
+
+    assert len(check.proposals) == len(check.items) == 1
+    assert check.proposals[0].pantry_item_id == item.id
+    assert check.proposals[0].proposed_quantity == 800
+    assert check.unmatched_ingredients == []
+
+
+def test_pantry_check_lists_unmatched_with_substitute_foods(unique_user: TestUser):
+    sausage = _food(unique_user)
+    lardon = unique_user.repos.ingredient_foods.create(
+        SaveIngredientFood(
+            name=random_string(10),
+            group_id=unique_user.group_id,
+            substitutions=[CreateIngredientFoodSubstitution(substitute_food_id=sausage.id)],
+        )
+    )
+    note_only = unique_user.repos.ingredient_foods.create(
+        SaveIngredientFood(
+            name=random_string(10),
+            group_id=unique_user.group_id,
+            substitutions=[CreateIngredientFoodSubstitution(note="water")],
+        )
+    )
+    recipe = _lines_recipe(
+        unique_user,
+        [RecipeIngredient(note="", food=lardon, quantity=150), RecipeIngredient(note="", food=note_only, quantity=1)],
+    )
+
+    check = _service(unique_user).pantry_check(recipe.id, TODAY)
+
+    assert check.items == [] and check.proposals == []
+    by_food = {u.food.id: u for u in check.unmatched_ingredients}
+    assert by_food[lardon.id].reference_id == _reference(recipe, lardon)
+    assert by_food[lardon.id].substitute_food_ids == [sausage.id]
+    assert by_food[note_only.id].substitute_food_ids == []
+
+
+def test_pantry_check_with_substitute(unique_user: TestUser):
+    gram = _gram(unique_user)
+    lardon = _food(unique_user)
+    sausage = _food(unique_user)
+    recipe = _lines_recipe(unique_user, [RecipeIngredient(note="", food=lardon, quantity=150, unit=gram)])
+    ref = _reference(recipe, lardon)
+    item = unique_user.repos.pantry_items.create(
+        PantryItemCreate(name=sausage.name, food_id=sausage.id, quantity=300, unit_id=gram.id)
+    )
+
+    check = _service(unique_user).pantry_check(recipe.id, TODAY, substitutes={ref: item.id})
+
+    assert [i.id for i in check.items] == [item.id]
+    [proposal] = check.proposals
+    assert proposal.proposed_quantity == 150
+    assert proposal.replaces_reference_id == ref
+    assert check.unmatched_ingredients == []
+
+
+def test_pantry_check_food_on_two_lines_listed_once_and_substituted_for_both(unique_user: TestUser):
+    gram = _gram(unique_user)
+    lardon = _food(unique_user)
+    sausage = _food(unique_user)
+    recipe = _lines_recipe(
+        unique_user,
+        [
+            RecipeIngredient(note="", food=lardon, quantity=150, unit=gram),
+            RecipeIngredient(note="", food=lardon, quantity=100, unit=gram),
+        ],
+    )
+    first, second = (i.reference_id for i in recipe.recipe_ingredient)
+    item = unique_user.repos.pantry_items.create(
+        PantryItemCreate(name=sausage.name, food_id=sausage.id, quantity=600, unit_id=gram.id)
+    )
+    service = _service(unique_user)
+
+    [unmatched] = service.pantry_check(recipe.id, TODAY).unmatched_ingredients
+    assert unmatched.reference_id == first
+
+    for ref in (first, second):
+        check = service.pantry_check(recipe.id, TODAY, substitutes={ref: item.id})
+        [proposal] = check.proposals
+        assert (proposal.used, proposal.proposed_quantity, proposal.replaces_reference_id) == (250, 350, ref)
+        assert check.unmatched_ingredients == []
+
+    [proposal] = service.pantry_check(recipe.id, TODAY, scale=2, substitutes={first: item.id}).proposals
+    assert (proposal.used, proposal.proposed_quantity) == (500, 100)
+
+    other = _item(unique_user, random_string(8))
+    with pytest.raises(ValueError, match="more than one substitute"):
+        service.pantry_check(recipe.id, TODAY, substitutes={first: item.id, second: other.id})
+
+
+def test_pantry_check_refuses_bad_substitutes(unique_user: TestUser, unique_user_fn_scoped: TestUser):
+    lardon = _food(unique_user)
+    other = _food(unique_user)
+    recipe = _lines_recipe(
+        unique_user,
+        [RecipeIngredient(note="", food=lardon, quantity=1), RecipeIngredient(note="", food=other, quantity=1)],
+    )
+    ref = _reference(recipe, lardon)
+    other_ref = _reference(recipe, other)
+    stranger = _item(unique_user, random_string(8))
+    matching = _item(unique_user, other.name, other)
+    foreign = _item(unique_user_fn_scoped, random_string(8))
+    service = _service(unique_user)
+
+    with pytest.raises(ValueError):
+        service.pantry_check(recipe.id, TODAY, substitutes={uuid4(): stranger.id})
+    with pytest.raises(PantryItemNotInRecipeError):
+        service.pantry_check(recipe.id, TODAY, substitutes={ref: matching.id})
+    with pytest.raises(PantryItemNotInRecipeError):
+        service.pantry_check(recipe.id, TODAY, substitutes={ref: stranger.id, other_ref: stranger.id})
+    with pytest.raises(NoEntryFound):
+        service.pantry_check(recipe.id, TODAY, substitutes={ref: foreign.id})
+
+
+def test_pantry_check_refuses_substitute_for_ingredient_in_pantry(unique_user: TestUser):
+    food = _food(unique_user)
+    recipe = _lines_recipe(unique_user, [RecipeIngredient(note="", food=food, quantity=1)])
+    _item(unique_user, food.name, food)
+    stranger = _item(unique_user, random_string(8))
+
+    with pytest.raises(ValueError, match="already in the pantry"):
+        _service(unique_user).pantry_check(recipe.id, TODAY, substitutes={_reference(recipe, food): stranger.id})
 
 
 def test_pantry_check_matches_food_and_name_variants(unique_user: TestUser):
@@ -320,6 +482,131 @@ def test_record_some_left_keeps_opened_on(unique_user: TestUser):
     assert out.meal_plan_entry is None  # no entry: nothing marked, not an error
     assert out.feedback is None
     assert _last_made(unique_user, recipe) == _noon(TODAY)  # moved without feedback too
+
+
+def _cook(service: CookedMealService, recipe: Recipe, *outcomes: CookedPantryOutcome) -> Any:
+    return service.record(CookedMealCreate(recipe_id=recipe.id, cooked_on=TODAY, pantry=list(outcomes)))
+
+
+def test_record_some_left_with_quantity(unique_user: TestUser):
+    food = _food(unique_user)
+    recipe = _recipe(unique_user, [food])
+    item = _item(unique_user, food.name, food, quantity=1000)
+
+    out = _cook(
+        _service(unique_user),
+        recipe,
+        CookedPantryOutcome(pantry_item_id=item.id, outcome=PantryOutcome.some_left, quantity=800),
+    )
+
+    stored = unique_user.repos.pantry_items.get_one(item.id)
+    assert stored is not None and stored.quantity == 800 and stored.opened_on == TODAY
+    assert [i.quantity for i in out.kept_items] == [800]
+
+
+def test_record_some_left_without_quantity_keeps_it(unique_user: TestUser):
+    food = _food(unique_user)
+    recipe = _recipe(unique_user, [food])
+    item = _item(unique_user, food.name, food, quantity=1000)
+
+    _cook(_service(unique_user), recipe, CookedPantryOutcome(pantry_item_id=item.id, outcome=PantryOutcome.some_left))
+
+    stored = unique_user.repos.pantry_items.get_one(item.id)
+    assert stored is not None and stored.quantity == 1000 and stored.opened_on == TODAY
+
+
+def test_record_used_up_with_quantity_refused(unique_user: TestUser):
+    food = _food(unique_user)
+    recipe = _recipe(unique_user, [food])
+    item = _item(unique_user, food.name, food, quantity=1000)
+    entry = _plan(unique_user, recipe, TODAY)
+
+    with pytest.raises(ValueError):
+        _cook(
+            _service(unique_user),
+            recipe,
+            CookedPantryOutcome(pantry_item_id=item.id, outcome=PantryOutcome.used_up, quantity=5),
+        )
+
+    stored = unique_user.repos.pantry_items.get_one(item.id)
+    assert stored is not None and stored.quantity == 1000
+    assert _entry(unique_user, entry.id).cooked_at is None
+
+
+def test_record_substitute(unique_user: TestUser):
+    gram = _gram(unique_user)
+    lardon = _food(unique_user)
+    sausage = _food(unique_user)
+    recipe = _lines_recipe(unique_user, [RecipeIngredient(note="", food=lardon, quantity=150, unit=gram)])
+    item = _item(unique_user, sausage.name, sausage, quantity=300, unit_id=gram.id)
+
+    out = _cook(
+        _service(unique_user),
+        recipe,
+        CookedPantryOutcome(
+            pantry_item_id=item.id,
+            outcome=PantryOutcome.some_left,
+            quantity=150,
+            replaces_reference_id=_reference(recipe, lardon),
+        ),
+    )
+
+    stored = unique_user.repos.pantry_items.get_one(item.id)
+    assert stored is not None and stored.quantity == 150 and stored.opened_on == TODAY
+    assert [i.id for i in out.kept_items] == [item.id]
+
+
+def test_record_substitute_refusals(unique_user: TestUser):
+    lardon = _food(unique_user)
+    other = _food(unique_user)
+    recipe = _lines_recipe(
+        unique_user,
+        [RecipeIngredient(note="", food=lardon, quantity=1), RecipeIngredient(note="", food=other, quantity=1)],
+    )
+    ref = _reference(recipe, lardon)
+    stranger = _item(unique_user, random_string(8), quantity=3)
+    matching = _item(unique_user, other.name, other, quantity=3)
+    entry = _plan(unique_user, recipe, TODAY)
+    service = _service(unique_user)
+
+    def outcome(item: PantryItemOut, reference: Any) -> CookedPantryOutcome:
+        return CookedPantryOutcome(
+            pantry_item_id=item.id, outcome=PantryOutcome.some_left, quantity=1, replaces_reference_id=reference
+        )
+
+    with pytest.raises(ValueError):
+        _cook(service, recipe, outcome(stranger, uuid4()))
+    with pytest.raises(PantryItemNotInRecipeError):
+        _cook(service, recipe, outcome(matching, ref))
+
+    for item in (stranger, matching):
+        stored = unique_user.repos.pantry_items.get_one(item.id)
+        assert stored is not None and stored.quantity == 3 and stored.opened_on is None
+    assert _entry(unique_user, entry.id).cooked_at is None
+
+
+def test_record_substitute_for_ingredient_in_pantry_refused(unique_user: TestUser):
+    food = _food(unique_user)
+    recipe = _recipe(unique_user, [food])
+    _item(unique_user, food.name, food)
+    stranger = _item(unique_user, random_string(8), quantity=3)
+    entry = _plan(unique_user, recipe, TODAY)
+
+    with pytest.raises(ValueError):
+        _cook(
+            _service(unique_user),
+            recipe,
+            CookedPantryOutcome(
+                pantry_item_id=stranger.id,
+                outcome=PantryOutcome.some_left,
+                quantity=1,
+                replaces_reference_id=_reference(unique_user.repos.recipes.get_one(recipe.id, "id"), food),
+            ),
+        )
+
+    stored = unique_user.repos.pantry_items.get_one(stranger.id)
+    assert stored is not None and stored.quantity == 3
+    assert _entry(unique_user, entry.id).cooked_at is None
 
 
 def test_record_freezer_use_by(unique_user: TestUser):

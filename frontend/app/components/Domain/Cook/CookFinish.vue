@@ -35,16 +35,19 @@
         </DsButton>
       </div>
       <CookPantryCheck
-        v-if="check && (check.items.length || check.suggestedLeftoverPortions > 0)"
+        v-if="check && (check.items.length || check.unmatchedIngredients?.length || check.suggestedLeftoverPortions > 0)"
         v-model="choices"
         :items="check.items"
+        :proposals="check.proposals ?? []"
+        :unmatched="check.unmatchedIngredients ?? []"
+        :pantry="pantry"
         :disabled="busy"
       />
       <div class="cook-finish__choices cook-finish__actions">
-        <DsButton variant="dark" size="lg" :disabled="busy" @click="save(true)">
+        <DsButton variant="dark" size="lg" :disabled="busy || checking > 0" @click="save(true)">
           {{ $t("cook.done") }}
         </DsButton>
-        <DsButton variant="ghost" size="lg" class="cook-finish__skip" :disabled="busy" @click="save(false)">
+        <DsButton variant="ghost" size="lg" class="cook-finish__skip" :disabled="busy || checking > 0" @click="save(false)">
           {{ $t("cook.skip") }}
         </DsButton>
       </div>
@@ -71,7 +74,7 @@ import DsButton from "~/components/Design/DsButton.vue";
 import { useUserApi } from "~/composables/api";
 import { alert } from "~/composables/use-toast";
 import { apiErrorInfo } from "~/lib/api/error-info";
-import type { CookedMealCreate, FeedbackVerdict, PantryCheckOut } from "~/lib/api/types/household";
+import type { CookedMealCreate, CookedPantryOutcome, FeedbackVerdict, PantryCheckOut, PantryItemOut } from "~/lib/api/types/household";
 import { FEEDBACK_EFFORTS, FEEDBACK_VERDICTS, effortLabelKey, verdictLabelKey } from "~/lib/recipe/recipe-feedback";
 import type { FeedbackEffort } from "~/lib/recipe/recipe-feedback";
 
@@ -104,24 +107,112 @@ let retrying = false;
 
 /** Null until the pantry check answers; a failed check just leaves the pantry part out. */
 const check = ref<PantryCheckOut | null>(null);
-const choices = ref<PantryChoices>({ outcomes: {}, portions: 0, location: "fridge" });
+const choices = ref<PantryChoices>({ outcomes: {}, quantities: {}, substitutes: {}, portions: 0, location: "fridge" });
+/** The whole pantry, for "Used something else?". */
+const pantry = ref<PantryItemOut[]>([]);
 
 // The cook's own day, not the server's: a container on UTC would date a late dinner the day before.
 const cookedOn = () => props.cookedOn || format(new Date(), "yyyy-MM-dd");
+
+/** The substitutes the last good check was made with; `latestCheck` makes an older, slower answer lose. */
+let checkedSubstitutes: Record<string, string> = {};
+let latestCheck = 0;
+/** Items already given their proposed choice: a refetch never redoes what the cook has since changed or cleared. */
+const seeded = new Set<string>();
+/** Pantry checks in flight: Done waits for them, or a substitute just picked would be left out. */
+const checking = ref(0);
+
+/**
+ * Pre-selects what the server proposes, for the items not seen before; drops choices for items no longer listed.
+ * Told later, nothing is pre-selected: the pantry may already have been reduced for this cooking, so one tap on
+ * Done would take the recipe from it twice. The proposals still show, and "Some left" starts from them.
+ */
+function seed(data: PantryCheckOut) {
+  const listed = new Set(data.items.map(item => item.id));
+  // An item that left the list gets its proposal again if it comes back.
+  for (const id of [...seeded]) {
+    if (!listed.has(id)) {
+      seeded.delete(id);
+    }
+  }
+  const outcomes = Object.fromEntries(Object.entries(choices.value.outcomes).filter(([id]) => listed.has(id)));
+  const quantities = Object.fromEntries(Object.entries(choices.value.quantities).filter(([id]) => listed.has(id)));
+  for (const proposal of data.proposals ?? []) {
+    if (seeded.has(proposal.pantryItemId) || !listed.has(proposal.pantryItemId)) {
+      continue;
+    }
+    seeded.add(proposal.pantryItemId);
+    if (props.amend) {
+      continue;
+    }
+    if (proposal.proposedOutcome === "used_up") {
+      outcomes[proposal.pantryItemId] = "used_up";
+    }
+    else if (proposal.proposedOutcome === "some_left") {
+      outcomes[proposal.pantryItemId] = "some_left";
+      if (proposal.proposedQuantity !== null && proposal.proposedQuantity !== undefined) {
+        quantities[proposal.pantryItemId] = proposal.proposedQuantity;
+      }
+    }
+  }
+  choices.value = { ...choices.value, outcomes, quantities };
+}
+
+async function loadCheck() {
+  const request = ++latestCheck;
+  const substitutes = { ...choices.value.substitutes };
+  const first = check.value === null;
+  checking.value++;
+  try {
+    const cooking = useUserApi().householdCooking;
+    const { data } = Object.keys(substitutes).length
+      ? await cooking.pantryCheck(props.recipeId, cookedOn(), props.scale, substitutes)
+      : await cooking.pantryCheck(props.recipeId, cookedOn(), props.scale);
+    if (request !== latestCheck) {
+      return;
+    }
+    if (data) {
+      check.value = data;
+      checkedSubstitutes = substitutes;
+      seed(data);
+      if (first) {
+        choices.value = { ...choices.value, portions: data.suggestedLeftoverPortions };
+      }
+      return;
+    }
+  }
+  catch {
+    // Finishing never depends on the pantry check.
+  }
+  finally {
+    checking.value--;
+  }
+  if (request === latestCheck) {
+    // Keep the previous check; the substitute that could not be checked is dropped.
+    choices.value = { ...choices.value, substitutes: { ...checkedSubstitutes } };
+  }
+}
+
+async function loadPantry() {
+  try {
+    const { data } = await useUserApi().householdPantry.getAll();
+    pantry.value = data?.items ?? [];
+  }
+  catch {
+    // Without the pantry there is just no "Used something else?" to pick from.
+  }
+}
 
 onMounted(async () => {
   if (!props.loggedIn) {
     return;
   }
-  try {
-    const { data } = await useUserApi().householdCooking.pantryCheck(props.recipeId, cookedOn(), props.scale);
-    if (data) {
-      check.value = data;
-      choices.value = { ...choices.value, portions: data.suggestedLeftoverPortions };
-    }
-  }
-  catch {
-    // Finishing never depends on the pantry check.
+  await Promise.all([loadCheck(), loadPantry()]);
+});
+
+watch(() => JSON.stringify(choices.value.substitutes), (now) => {
+  if (props.loggedIn && now !== JSON.stringify(checkedSubstitutes)) {
+    loadCheck();
   }
 });
 
@@ -144,15 +235,30 @@ function goBack() {
   router.replace(props.backTo);
 }
 
+/** An amount only when "Some left" differs from what the pantry holds; the substitute's ingredient when it stands in for one. */
+function pantryEntry(pantryItemId: string, outcome: CookedPantryOutcome["outcome"]): CookedPantryOutcome {
+  const entry: CookedPantryOutcome = { pantryItemId, outcome };
+  const quantity = choices.value.quantities[pantryItemId];
+  const current = check.value?.items.find(item => item.id === pantryItemId)?.quantity;
+  if (outcome === "some_left" && quantity !== undefined && quantity !== current) {
+    entry.quantity = quantity;
+  }
+  const replaces = check.value?.proposals?.find(proposal => proposal.pantryItemId === pantryItemId)?.replacesReferenceId;
+  if (replaces) {
+    entry.replacesReferenceId = replaces;
+  }
+  return entry;
+}
+
 function cookedMeal(withFeedback: boolean): CookedMealCreate {
   const body: CookedMealCreate = { recipeId: props.recipeId, cookedOn: cookedOn(), scale: props.scale };
   const entryId = props.mealPlanEntryId ?? check.value?.mealPlanEntryId;
   if (entryId) {
     body.mealPlanEntryId = entryId;
   }
-  const pantry = Object.entries(choices.value.outcomes).map(([pantryItemId, outcome]) => ({ pantryItemId, outcome }));
-  if (pantry.length) {
-    body.pantry = pantry;
+  const entries = Object.entries(choices.value.outcomes).map(([pantryItemId, outcome]) => pantryEntry(pantryItemId, outcome));
+  if (entries.length) {
+    body.pantry = entries;
   }
   if (choices.value.portions > 0) {
     body.leftovers = { portions: choices.value.portions, location: choices.value.location };
@@ -171,7 +277,7 @@ function cookedMeal(withFeedback: boolean): CookedMealCreate {
  * Skip sends the same without the verdict. A failure stays here so it can be retried.
  */
 async function save(withFeedback: boolean) {
-  if (busy.value) {
+  if (busy.value || checking.value > 0) {
     return;
   }
   busy.value = true;

@@ -8,6 +8,10 @@ from .cooked_meal import (
     PantryCheckOut,
     PantryIngredientMatch,
     PantryOutcome,
+    PantryProposal,
+    ProposalReason,
+    ProposedOutcome,
+    UnmatchedIngredient,
 )
 from .group_events import (
     GroupEventNotifierCreate,
@@ -95,6 +99,7 @@ from .pantry import (
     PantrySource,
     PutAwayRequest,
     PutAwayResult,
+    _PantryItemFields,
 )
 from .recipe_feedback import (
     FeedbackVerdict,
@@ -133,6 +138,10 @@ __all__ = [
     "PantryCheckOut",
     "PantryIngredientMatch",
     "PantryOutcome",
+    "PantryProposal",
+    "ProposalReason",
+    "ProposedOutcome",
+    "UnmatchedIngredient",
     "HouseholdStatistics",
     "Diet",
     "HouseholdProfileOut",
@@ -203,4 +212,5 @@ __all__ = [
     "PantrySource",
     "PutAwayRequest",
     "PutAwayResult",
+    "_PantryItemFields",
 ]

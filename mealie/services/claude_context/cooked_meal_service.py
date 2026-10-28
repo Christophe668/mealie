@@ -16,6 +16,8 @@ from mealie.schema.household.cooked_meal import (
     PantryCheckOut,
     PantryIngredientMatch,
     PantryOutcome,
+    PantryProposal,
+    UnmatchedIngredient,
 )
 from mealie.schema.household.household import HouseholdInDB
 from mealie.schema.household.pantry import (
@@ -28,10 +30,11 @@ from mealie.schema.household.pantry import (
 from mealie.schema.household.recipe_feedback import RecipeFeedbackCreate, RecipeFeedbackOut
 from mealie.schema.meal_plan.new_meal import ReadPlanEntry
 from mealie.schema.recipe.recipe import Recipe
-from mealie.schema.recipe.recipe_ingredient import IngredientFood
+from mealie.schema.recipe.recipe_ingredient import IngredientFood, RecipeIngredient
 from mealie.schema.user.user import PrivateUser
 from mealie.services._base_service import BaseService
 from mealie.services.claude_context.pantry_service import PantryService
+from mealie.services.claude_context.pantry_usage import propose_for_food, propose_substitute
 from mealie.services.claude_context.recipe_feedback_service import (
     FutureMadeOnError,
     RecipeFeedbackService,
@@ -154,23 +157,134 @@ class CookedMealService(BaseService):
         candidates.sort(key=lambda entry: (abs((cooked_on - entry.date).days), entry.id))
         return candidates[0] if candidates else None
 
-    def pantry_check(self, recipe_id: UUID, cooked_on: date, scale: float | None = None) -> PantryCheckOut:
-        """The pantry items matching the recipe (also per ingredient), the suggested leftover portions and the entry
-        a cooking would mark.
+    def pantry_check(
+        self,
+        recipe_id: UUID,
+        cooked_on: date,
+        scale: float | None = None,
+        substitutes: dict[UUID, UUID] | None = None,
+    ) -> PantryCheckOut:
+        """The pantry items matching the recipe (also per ingredient) with a proposed quantity left for each, the
+        ingredients nothing in the pantry matches, the suggested leftover portions and the entry a cooking would mark.
 
-        The scale is the given one, else the matching entry's `recipe_scale`, else 1.
+        `substitutes` maps an ingredient's `reference_id` to a pantry item standing in for it; those items follow the
+        matched ones in `items`. The scale is the given one, else the matching entry's `recipe_scale`, else 1.
         """
         recipe = self._get_recipe_or_raise(recipe_id)
         entry = self.find_entry(recipe_id, cooked_on)
         if scale is None:
             scale = entry.recipe_scale if entry else 1.0
         pantry = self.repos.pantry_items.ordered()
+        checked = self._checked_substitutes(recipe, list((substitutes or {}).items()), pantry)
+
+        items = self._matching_items(recipe, pantry)
+        proposals = self._food_proposals(recipe, items, scale)
+        for line, item in checked:
+            # the substitute stands in for the food, so it is charged for every line of it
+            items.append(item)
+            proposals.append(propose_substitute(self._lines_of(recipe, line), item, scale, line.reference_id))
+
+        replaced = {str(line.food.id) for line, _ in checked if line.food is not None}
         return PantryCheckOut(
-            items=self._matching_items(recipe, pantry),
+            items=items,
+            proposals=proposals,
             ingredients=self._ingredient_matches(recipe, pantry),
+            unmatched_ingredients=self._unmatched(recipe, pantry, replaced),
             suggested_leftover_portions=self._suggested_portions(recipe, scale),
             meal_plan_entry_id=entry.id if entry else None,
         )
+
+    def _food_proposals(self, recipe: Recipe, items: list[PantryItemOut], scale: float) -> list[PantryProposal]:
+        """A proposal per matched item, in `items` order: the lines of a food spill over that food's items."""
+        lines_by_food: dict[str, list[RecipeIngredient]] = {}
+        for line in recipe.recipe_ingredient:
+            if line.food is not None:
+                lines_by_food.setdefault(str(line.food.id), []).append(line)
+
+        claimed: set[str] = set()
+        by_item: dict[str, PantryProposal] = {}
+        for lines in lines_by_food.values():
+            matches = self._food_matcher([lines[0].food] if lines[0].food else [])
+            # an item matching two foods is proposed once, for the first food
+            food_items = [item for item in items if matches(item) and str(item.id) not in claimed]
+            claimed.update(str(item.id) for item in food_items)
+            for proposal in propose_for_food(lines, food_items, scale):
+                by_item[str(proposal.pantry_item_id)] = proposal
+        return [by_item[str(item.id)] for item in items]
+
+    @staticmethod
+    def _lines_of(recipe: Recipe, line: RecipeIngredient) -> list[RecipeIngredient]:
+        """Every line of the recipe naming `line`'s food."""
+        if line.food is None:
+            return [line]
+        return [i for i in recipe.recipe_ingredient if i.food is not None and str(i.food.id) == str(line.food.id)]
+
+    def _unmatched(
+        self, recipe: Recipe, pantry: list[PantryItemOut], replaced_foods: set[str]
+    ) -> list[UnmatchedIngredient]:
+        """One entry per food nothing in the pantry matches (the reference of its first line), leaving out the foods
+        a substitute stands in for."""
+        unmatched: list[UnmatchedIngredient] = []
+        seen = set(replaced_foods)
+        for line in recipe.recipe_ingredient:
+            if line.food is None or line.reference_id is None or str(line.food.id) in seen:
+                continue
+            seen.add(str(line.food.id))
+            matches = self._food_matcher([line.food])
+            if any(matches(item) for item in pantry):
+                continue
+            unmatched.append(
+                UnmatchedIngredient(
+                    reference_id=line.reference_id,
+                    food=line.food,
+                    substitute_food_ids=[
+                        sub.substitute_food_id for sub in line.food.substitutions if sub.substitute_food_id
+                    ],
+                )
+            )
+        return unmatched
+
+    def _checked_substitutes(
+        self, recipe: Recipe, pairs: list[tuple[UUID, UUID]], pantry: list[PantryItemOut]
+    ) -> list[tuple[RecipeIngredient, PantryItemOut]]:
+        """Each (ingredient reference, pantry item) pair resolved, or refused: an unknown reference (`ValueError`),
+        an ingredient whose own food has pantry items ("used instead" is for unmatched ingredients only,
+        `ValueError`), two substitutes for one food (`ValueError`), an item outside the household (`NoEntryFound`), an
+        item matching a recipe food or used twice (`PantryItemNotInRecipeError`)."""
+        lines = {str(i.reference_id): i for i in recipe.recipe_ingredient if i.food is not None and i.reference_id}
+        unknown = [str(ref) for ref, _ in pairs if str(ref) not in lines]
+        if unknown:
+            raise ValueError(f"not ingredients of this recipe: {', '.join(unknown)}")
+
+        item_ids = [str(item_id) for _, item_id in pairs]
+        in_household = {str(item.id): item for item in pantry}
+        missing = [item_id for item_id in item_ids if item_id not in in_household]
+        if missing:
+            raise NoEntryFound(f"pantry items not found: {', '.join(missing)}")
+
+        repeated = sorted(item_id for item_id, count in Counter(item_ids).items() if count > 1)
+        if repeated:
+            raise PantryItemNotInRecipeError(repeated, reason="pantry items used as substitute more than once")
+
+        # a substitute is charged for every line of its food, so a second one for the same food would charge twice
+        foods = Counter(str(food.id) for ref, _ in pairs if (food := lines[str(ref)].food) is not None)
+        if any(count > 1 for count in foods.values()):
+            raise ValueError("more than one substitute for the same ingredient")
+
+        matching = {str(item.id) for item in self._matching_items(recipe, pantry)}
+        already = [item_id for item_id in item_ids if item_id in matching]
+        if already:
+            raise PantryItemNotInRecipeError(already, reason="pantry items already match a food of this recipe")
+
+        matched_refs = []
+        for ref, _ in pairs:
+            food = lines[str(ref)].food
+            if food is not None and any(self._food_matcher([food])(item) for item in pantry):
+                matched_refs.append(str(ref))
+        if matched_refs:
+            raise ValueError(f"ingredients already in the pantry, nothing to use instead: {', '.join(matched_refs)}")
+
+        return [(lines[str(ref)], in_household[str(item_id)]) for ref, item_id in pairs]
 
     # ------------------------------------------------------------------ writes
 
@@ -224,12 +338,15 @@ class CookedMealService(BaseService):
 
             removed_ids: list[UUID] = []
             kept: list[PantryItemOut] = []
-            for item, outcome in outcomes:
+            for item, outcome, quantity in outcomes:
                 if outcome == PantryOutcome.used_up:
                     removed_ids.append(pantry.remove_item(item.id).id)
-                elif item.opened_on is None:
+                elif item.opened_on is None or quantity is not None:
                     update = PantryItemUpdate(**item.model_dump(include=set(PantryItemUpdate.model_fields)))
-                    update.opened_on = data.cooked_on
+                    if item.opened_on is None:
+                        update.opened_on = data.cooked_on
+                    if quantity is not None:
+                        update.quantity = quantity
                     kept.append(pantry.update_item(item.id, update))
                 else:
                     kept.append(item)
@@ -287,11 +404,15 @@ class CookedMealService(BaseService):
             raise AlreadyCookedError(_local_day(entry.cooked_at))
         return entry
 
-    def _checked_outcomes(self, recipe: Recipe, data: CookedMealCreate) -> list[tuple[PantryItemOut, PantryOutcome]]:
+    def _checked_outcomes(
+        self, recipe: Recipe, data: CookedMealCreate
+    ) -> list[tuple[PantryItemOut, PantryOutcome, float | None]]:
         ids = [str(outcome.pantry_item_id) for outcome in data.pantry]
         repeated = sorted(item_id for item_id, count in Counter(ids).items() if count > 1)
         if repeated:
             raise PantryItemNotInRecipeError(repeated, reason="pantry items listed more than once")
+        if any(o.outcome == PantryOutcome.used_up and o.quantity is not None for o in data.pantry):
+            raise ValueError("a quantity goes with some_left only")
 
         pantry = self.repos.pantry_items.ordered()  # household-scoped
         in_household = {str(item.id) for item in pantry}
@@ -299,11 +420,27 @@ class CookedMealService(BaseService):
         if missing:
             raise NoEntryFound(f"pantry items not found: {', '.join(missing)}")
 
+        # substitutes: same refusals as the pantry check
+        pairs = [(o.replaces_reference_id, o.pantry_item_id) for o in data.pantry if o.replaces_reference_id]
+        self._checked_substitutes(recipe, pairs, pantry)
+
         matched = {str(item.id): item for item in self._matching_items(recipe, pantry)}
-        not_in_recipe = [item_id for item_id in ids if item_id not in matched]
+        by_id = {str(item.id): item for item in pantry}
+        not_in_recipe = [
+            item_id
+            for item_id, o in zip(ids, data.pantry, strict=True)
+            if o.replaces_reference_id is None and item_id not in matched
+        ]
         if not_in_recipe:
             raise PantryItemNotInRecipeError(not_in_recipe)
-        return [(matched[str(outcome.pantry_item_id)], outcome.outcome) for outcome in data.pantry]
+        return [
+            (
+                by_id[str(o.pantry_item_id)] if o.replaces_reference_id else matched[str(o.pantry_item_id)],
+                o.outcome,
+                o.quantity,
+            )
+            for o in data.pantry
+        ]
 
     @staticmethod
     def _check_leftovers(leftovers: CookedLeftovers) -> None:
