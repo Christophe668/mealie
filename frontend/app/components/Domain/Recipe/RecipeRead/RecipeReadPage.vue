@@ -19,6 +19,7 @@
           :group-slug="groupSlug"
           :collapsible="isMobile"
           :pantry="pantry"
+          :can-act="isOwnGroup && pantry !== null"
         />
       </component>
 
