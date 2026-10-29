@@ -142,6 +142,20 @@ def test_put_away_route(api_client: TestClient, unique_user_fn_scoped: TestUser)
     assert sorted(item["name"] for item in response.json()["items"]) == ["Apples", "Pasta"]
 
 
+def test_put_away_route_location(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    list_id = _create_list(api_client, user)
+    item_id = _add_list_item(api_client, user, list_id, "Peas", checked=True)
+
+    response = api_client.post(
+        api_routes.households_shopping_lists_list_id_put_away(list_id),
+        json={"itemIds": [item_id], "location": "freezer"},
+        headers=user.token,
+    )
+    assert response.status_code == 200
+    assert response.json()["created"][0]["location"] == "freezer"
+
+
 def test_put_away_unchecked_ids_422(api_client: TestClient, unique_user_fn_scoped: TestUser):
     user = unique_user_fn_scoped
     list_id = _create_list(api_client, user)

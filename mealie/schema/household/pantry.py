@@ -90,6 +90,8 @@ class PantryItemPagination(PaginationBase):
 class PutAwayRequest(MealieModel):
     item_ids: list[UUID4] | None = None
     """Shopping list item ids to put away; `None` means every checked item."""
+    location: PantryLocation | None = None
+    """Where the new rows go; `None` picks one per item from its label. A merge keeps the existing row's place."""
 
 
 class PutAwayResult(MealieModel):

@@ -126,4 +126,4 @@ class HouseholdPutAwayController(_PantryControllerBase):
     @put_away_router.post("/{list_id}/put-away", response_model=PutAwayResult)
     def put_away(self, list_id: UUID4, data: PutAwayRequest):
         with _service_errors():
-            return self.service.put_away(list_id, data.item_ids)
+            return self.service.put_away(list_id, data.item_ids, location=data.location)
