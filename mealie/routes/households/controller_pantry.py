@@ -11,6 +11,8 @@ from mealie.routes._base.base_controllers import BaseUserController
 from mealie.routes._base.controller import controller
 from mealie.routes._base.routers import UserAPIRouter
 from mealie.schema.household.pantry import (
+    AlreadyHaveRequest,
+    AlreadyHaveResult,
     PantryItemCreate,
     PantryItemOut,
     PantryItemPagination,
@@ -127,3 +129,13 @@ class HouseholdPutAwayController(_PantryControllerBase):
     def put_away(self, list_id: UUID4, data: PutAwayRequest):
         with _service_errors():
             return self.service.put_away(list_id, data.item_ids, location=data.location)
+
+    @put_away_router.get("/{list_id}/items/{item_id}/pantry-match", response_model=PantryItemOut | None)
+    def pantry_match(self, list_id: UUID4, item_id: UUID4):
+        with _service_errors():
+            return self.service.pantry_match(list_id, item_id)
+
+    @put_away_router.post("/{list_id}/items/{item_id}/already-have", response_model=AlreadyHaveResult)
+    def already_have(self, list_id: UUID4, item_id: UUID4, data: AlreadyHaveRequest):
+        with _service_errors():
+            return self.service.already_have(list_id, item_id, data.location)
