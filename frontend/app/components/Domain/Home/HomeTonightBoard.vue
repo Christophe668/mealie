@@ -7,7 +7,15 @@
     :aria-busy="loading ? 'true' : undefined"
     :aria-labelledby="loading ? undefined : titleId"
   >
-    <div class="home-board__photo" :class="{ 'home-board__photo--empty': !loading && (!imageUrl || imageFailed) }">
+    <!-- The photo opens the recipe like the title; out of the tab order so the board has one recipe link. -->
+    <component
+      :is="recipeTo ? NuxtLinkComponent : 'div'"
+      :to="recipeTo || undefined"
+      :tabindex="recipeTo ? -1 : undefined"
+      :aria-hidden="recipeTo ? 'true' : undefined"
+      class="home-board__photo"
+      :class="{ 'home-board__photo--empty': !loading && (!imageUrl || imageFailed) }"
+    >
       <img
         v-if="imageUrl && !imageFailed"
         :src="imageUrl"
@@ -15,7 +23,7 @@
         @error="imageFailed = true"
       >
       <DsIcon v-else-if="!loading" name="silverwareForkKnife" :size="40" class="home-board__placeholder-icon" />
-    </div>
+    </component>
 
     <div class="home-board__body">
       <p class="home-board__label">
@@ -29,7 +37,10 @@
 
       <template v-else-if="entry">
         <h2 :id="titleId" class="home-board__title ds-display">
-          {{ title }}
+          <NuxtLink v-if="recipeTo" :to="recipeTo" class="home-board__title-link ds-focus">{{ title }}</NuxtLink>
+          <template v-else>
+            {{ title }}
+          </template>
         </h2>
         <p v-if="timeLine" class="home-board__fact">
           {{ timeLine }}
@@ -118,6 +129,8 @@ const imageFailed = ref(false);
 const imageUrl = computed(() => (recipe.value?.id && recipe.value.image ? recipeImage(recipe.value.id, recipe.value.image) : ""));
 watch(imageUrl, () => (imageFailed.value = false));
 
+const NuxtLinkComponent = resolveComponent("NuxtLink");
+const recipeTo = computed(() => (recipe.value?.slug ? `/g/${props.groupSlug}/r/${recipe.value.slug}` : ""));
 const cookTo = computed(() => (recipe.value?.slug ? `/g/${props.groupSlug}/r/${recipe.value.slug}/cook` : ""));
 // Told later: after eating, or once it was ticked done. Once cooked it is the board's main action.
 const cooked = computed(() => !!props.entry?.cookedAt);
@@ -166,6 +179,10 @@ let entrancePlayed = false;
   background: color-mix(in srgb, var(--ds-accent-text) 10%, transparent);
 }
 
+a.home-board__photo {
+  color: inherit;
+}
+
 .home-board__photo img {
   width: 100%;
   height: 100%;
@@ -197,6 +214,17 @@ let entrancePlayed = false;
   -webkit-line-clamp: 3;
   line-clamp: 3;
   overflow-wrap: anywhere;
+}
+
+.home-board__title-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.home-board__title-link:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
 }
 
 .home-board__fact {
