@@ -63,6 +63,22 @@ describe("design tokens", () => {
     expect(declarations(tokens, ".ds-cook")).toEqual(declarations(tokens, ".v-theme--dark"));
   });
 
+  test("pantry status tokens in both modes, never the accent", () => {
+    expect(declarations(tokens, ":root")).toMatchObject({
+      "--ds-have": "#2f7a4f",
+      "--ds-have-surface": "#e5f1e9",
+      "--ds-missing": "#a9432f",
+      "--ds-missing-surface": "#f8e6e1",
+      "--ds-soon": "#9a6512",
+      "--ds-soon-surface": "#fbefd6",
+      "--ds-soon-bar": "#d49a2a",
+    });
+    const dark = declarations(tokens, ".v-theme--dark");
+    for (const key of ["have", "have-surface", "missing", "missing-surface", "soon", "soon-surface", "soon-bar"]) {
+      expect(dark[`--ds-${key}`]).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
   test("a scrim for each mode", () => {
     expect(declarations(tokens, ":root")["--ds-scrim"]).toBe("rgb(23 32 27 / 40%)");
     expect(declarations(tokens, ".v-theme--dark")["--ds-scrim"]).toBe("rgb(0 0 0 / 55%)");
