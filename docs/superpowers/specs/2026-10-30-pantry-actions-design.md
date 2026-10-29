@@ -149,8 +149,11 @@ shows the recipe as the reason, as upstream's "add to shopping list" does. One s
 
 ### 4.4 Shopping list item sheet
 
-The tick box keeps its current behaviour (`toggle`, with Undo). A tap on the item's name, or on a new "⋯"
-button at the row's end, opens the item sheet instead of the editor. Header: the item's display text, and when
+The tick keeps its current behaviour (`toggle`, with Undo): today a tap anywhere on the row ticks it
+(`ShopItemRow.vue`, the whole row is the checkbox's label), and that stays, since it is the in-store
+gesture. The row's existing "⋯" button and its long press, which open the editor today, open the item
+sheet instead; the editor moves into the sheet as **Edit**. (Corrected 2026-10-30 while planning: the
+first draft assumed a tap opened the editor.) Header: the item's display text, and when
 it comes from recipes, "For Roast chicken (Thu)" (recipe names from the item's recipe references; the meal
 plan day when known is the builder's call, recipe names alone are enough).
 
@@ -233,8 +236,8 @@ label for the pantry is "Réserve".
 - "Already in the pantry" creates the pantry item when the pantry doesn't list it (he answered "ok" to an
   either/or question; this keeps the pantry truthful).
 - Tick boxes leave the recipe page; cook mode keeps them.
-- The shopping list tick box stays as the one-tap "bought"; tapping the name opens the sheet, replacing
-  tap-to-edit.
+- The shopping list row tap stays the one-tap "bought"; "⋯" and long press open the sheet, replacing
+  the direct editor.
 - Green, red and amber status colours are new to the palette; saffron is not used for them.
 - "Bought, put it away" needs a small backend addition (optional location on put-away) rather than
   reimplementing the merge rule in the frontend. When it merges, the existing row's place wins.
