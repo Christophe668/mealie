@@ -247,3 +247,43 @@ label for the pantry is "Réserve".
   recipe; "Add N to list" does add it as the recipe. Quantities follow the scale shown on the page.
 - "Already in the pantry" uses the recipe page's matching rule, through two small shopping-list endpoints,
   so both screens agree.
+
+## 8. Implemented
+
+Shipped on `t3/pantry-actions` (2026-10-30), commits `e470be469..7b1cd4e56`. Where the code differs from the sections above, or settles something they left open:
+
+**What shipped**
+
+- **Backend.** `PutAwayRequest` takes an optional `location`, which overrides the label-based guess for every item in the request (`e470be469`). `GET /households/shopping/lists/{list_id}/items/{item_id}/pantry-match` returns the matching pantry item or `null`; `POST .../already-have` deletes the list item and creates the pantry row when nothing matched, returning `{ removedItem, createdPantryItem }`. Both use the matching rule shared with the recipe page (`pantry_matching.py`, extracted from `CookedMealService`) and are household-scoped (`18e35deca`).
+- **API client and types.** `putAway(listId, ids, location?)`, `pantryMatch`, `alreadyHave` in `household-pantry.ts`; the TypeScript types in `types/household.ts` are hand-written in the generator's style (`6b5aad6c0`).
+- **Design system.** Status tokens (have, soon, missing) with light and dark values, plus `DsSheet` (bottom sheet on mobile, dialog on desktop) and `DsPlaceChips` (`84beccf09`, `4ebcdf49b`).
+- **Recipe page.** `use-recipe-pantry` and `lib/pantry/ingredient-status.ts` give each ingredient a visible status; the tick boxes are gone (cook mode keeps its own). `RecipeReadIngredients` rows open `RecipeIngredientSheet`, driven by `use-ingredient-pantry-actions` (I have it, running low, opened today, used up, edit, add to list, add N missing to list) (`7b107cf65`, `d8400c863`).
+- **Shopping list.** `ShopItemSheet`, opened from the row's "⋯" and long press: mark as bought, bought and put it away, already in the pantry, edit, remove. Strings in `en-US.json` and `fr-FR.json` only (`2bcaacc1f`).
+- **Final review fixes** (`7b1cd4e56`): used-up undo no longer duplicates a row, focus is restored after shopping-sheet actions, quantity-less ingredients default to 1 (Ruling F), and five small fixes.
+
+**Deviations from this spec**
+
+- **Row tap (§4.4, corrected during planning).** The row tap stays the one-tap "bought"; only "⋯" and long press open the sheet.
+- **Ruling C.** When `pantryMatch` returns a row, "Bought, put it away" sends `location = match.location`, so the row lands in the place the sheet names even if the server's merge rule (same food or exact name) would not merge a name variant. Cost: such a variant can end as a second row in that place.
+- **Ruling D.** The TypeScript types are hand-written because codegen does not run in this environment; a later real regeneration may reorder two interfaces.
+- **Ruling E.** Light `--ds-soon` is `#8f5d0e` instead of the mockup's `#9a6512`, which gave 4.34:1 on `#fbefd6`, below AA for the 11.5 px tag text. A contrast test pins it.
+- **Ruling F.** A quantity-less ingredient is added to a list as quantity 1 at any scale, as "defaults to 1 like the list's own default" says (the plan's formula would have given the scale).
+- **Ruling G.** This wrap-up ran after the final review fix wave, so these notes describe what ships.
+- **Ruling H.** Undo of "I have it" that the server merged into an existing pantry row restores that row (`updateOne`) instead of deleting it, which §4.3 literally says. Deleting would destroy the user's pre-existing row.
+
+**Known limitations that ship**
+
+- If the local item list is stale, undoing a merged "I have it" deletes the row rather than restoring it (the client cannot detect the merge).
+- `refresh()` has an early-return race on focus, and the sheet stays busy during the reload.
+- The sub-recipe link is an `<a>` inside the row `<button>` (nested interactive; a link click also opens the sheet).
+- `allUnits` is chosen once at setup.
+- The list-picker hint lacks the scaled quantity (§4.3's "2 lemons").
+- "Add N" with no shopping lists opens upstream's whole-recipe dialog.
+- No `RecipeReadPage` wiring test.
+- Screen readers are not told why the pantry buttons are disabled while the match loads.
+- French "celui" is gendered, and the English "Adds to the one in the other" wording is awkward.
+- Server-side leftovers: no route test for an invalid `location` (422) or a food-less already-have create; `AlreadyHaveResult.created_pantry_item` docstring says "created or merged into" though it is only created; the already-have insert and delete are not one transaction (retry is idempotent).
+
+**Owed**
+
+- Manual browser check of the real Vuetify sheet (overlay, focus trap, Escape) and the 360 px French layout (chip wrapping). Component tests cover the behaviour, not the real overlay.
