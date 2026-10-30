@@ -1510,6 +1510,28 @@
     "restart": "Relancer",
     "settings": "Thermomix : {summary}"
   },
+  "recipe-ingredient-sheet": {
+    "i-have-it": "Je l'ai",
+    "i-have-it-hint": "Le mettre au garde-manger",
+    "add-to-list": "Ajouter à la liste de courses",
+    "running-low": "Bientôt fini",
+    "running-low-hint": "L’ajouter à une liste de courses",
+    "opened-today": "Ouvert aujourd'hui",
+    "edit": "Modifier lieu ou date",
+    "used-up": "Fini / plus là",
+    "used-up-hint": "Le retirer du garde-manger",
+    "not-in-pantry": "Pas au garde-manger",
+    "add-use-by": "+ à consommer avant",
+    "use-by-label": "À consommer avant",
+    "pick-list": "Quelle liste ?",
+    "added-to-pantry": "{name} est au garde-manger",
+    "removed-from-pantry": "{name} retiré du garde-manger",
+    "marked-opened": "{name} ouvert aujourd'hui",
+    "updated-in-pantry": "{name} modifié",
+    "added-to-list": "{item} → {list}",
+    "added-missing": "{count} ingrédient ajouté à {list} | {count} ingrédients ajoutés à {list}",
+    "undo-failed": "Impossible d’annuler. Réessayez."
+  },
   "recipe-read": {
     "ingredients": "Ingrédients",
     "pantry-summary": "{counts} au garde-manger",
@@ -1680,6 +1702,7 @@
     "put-away-label": "Ranger {count} article acheté dans le garde-manger | Ranger {count} articles achetés dans le garde-manger",
     "put-away-done": "{count} article rangé | {count} articles rangés",
     "open-pantry": "Ouvrir le garde-manger",
+    "open-list": "Ouvrir la liste",
     "put-away-failed": "Impossible de ranger ces articles. Réessayez.",
     "put-away-unsynced": "Certains articles cochés n’ont pas encore pu être enregistrés. Réessayez dans un instant."
   },

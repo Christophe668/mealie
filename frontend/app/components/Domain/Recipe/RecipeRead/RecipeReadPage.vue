@@ -20,6 +20,8 @@
           :collapsible="isMobile"
           :pantry="pantry"
           :can-act="isOwnGroup && pantry !== null"
+          @open-ingredient="openIngredient"
+          @add-missing="openAddMissing"
         />
       </component>
 
@@ -136,6 +138,28 @@
       :shopping-lists="shoppingLists"
       @list-created="addShoppingList"
     />
+    <RecipeIngredientSheet
+      v-if="isOwnGroup"
+      v-model="sheet.open"
+      :ingredient="sheet.ingredient"
+      :items="sheetItems"
+      :lists="shoppingLists || []"
+      :busy="pantryActions.busy.value"
+      @i-have-it="(place, useBy) => act(ingredient => pantryActions.iHaveIt(ingredient, place, useBy))"
+      @add-to-list="listId => act(ingredient => pantryActions.addToList(ingredient, listId))"
+      @running-low="listId => act(ingredient => pantryActions.addToList(ingredient, listId))"
+      @opened-today="item => act(ingredient => pantryActions.openedToday(ingredient, item))"
+      @used-up="item => act(ingredient => pantryActions.usedUp(ingredient, item))"
+      @edit="editPantryItem"
+      @add-missing="addMissingTo"
+    />
+    <PantryItemDialog
+      v-if="isOwnGroup"
+      v-model="pantryEditor.open"
+      :item="pantryEditor.item"
+      :units="allUnits || []"
+      :save-item="savePantryItem"
+    />
     <RecipeDialogShare v-if="isOwnGroup" v-model="shareDialog" :recipe-id="recipe.id" :name="recipe.name" />
     <BaseDialog
       v-model="deleteDialog"
@@ -191,6 +215,7 @@ import { useClipboard, useElementSize, useMediaQuery, useShare, useWindowSize } 
 import RecipeReadActions from "./RecipeReadActions.vue";
 import RecipeReadFacts from "./RecipeReadFacts.vue";
 import RecipeReadFeedback from "./RecipeReadFeedback.vue";
+import RecipeIngredientSheet from "./RecipeIngredientSheet.vue";
 import RecipeReadHero from "./RecipeReadHero.vue";
 import RecipeReadIngredients from "./RecipeReadIngredients.vue";
 import RecipeReadNutrition from "./RecipeReadNutrition.vue";
@@ -199,6 +224,7 @@ import RecipeReadSteps from "./RecipeReadSteps.vue";
 import DsButton from "~/components/Design/DsButton.vue";
 import DsChip from "~/components/Design/DsChip.vue";
 import SafeMarkdown from "~/components/global/SafeMarkdown.vue";
+import PantryItemDialog from "~/components/Domain/Pantry/PantryItemDialog.vue";
 import MealPlanAddRecipeDialog from "~/components/Domain/Mealplan/MealPlanAddRecipeDialog.vue";
 import RecipeDialogAddToShoppingList from "~/components/Domain/Recipe/RecipeDialogAddToShoppingList.vue";
 import RecipeDialogShare from "~/components/Domain/Recipe/RecipeDialogShare.vue";
@@ -207,7 +233,9 @@ import RecipeLastMade from "~/components/Domain/Recipe/RecipeLastMade.vue";
 import RecipeTimeline from "~/components/Domain/Recipe/RecipeTimeline.vue";
 import RecipePageComments from "~/components/Domain/Recipe/RecipePage/RecipePageParts/RecipePageComments.vue";
 import { useStaticRoutes, useUserApi } from "~/composables/api";
+import { useIngredientPantryActions } from "~/composables/use-ingredient-pantry-actions";
 import { useRecipePantry } from "~/composables/use-recipe-pantry";
+import { useUnitStore } from "~/composables/store";
 import { useDownloader } from "~/composables/api/use-downloader";
 import { useRecipePermissions } from "~/composables/recipes";
 import { useAddToShoppingListDialog } from "~/composables/shopping-list-page/use-add-to-shopping-list-dialog";
@@ -217,9 +245,9 @@ import { useLoggedInState } from "~/composables/use-logged-in-state";
 import { alert } from "~/composables/use-toast";
 import { relativeAgo } from "~/composables/use-today";
 import { useUserSelfRatings } from "~/composables/use-users";
-import type { HouseholdSummary } from "~/lib/api/types/household";
+import type { HouseholdSummary, PantryItemOut, PantryItemUpdate } from "~/lib/api/types/household";
 import type { NoUndefinedField } from "~/lib/api/types/non-generated";
-import type { Recipe } from "~/lib/api/types/recipe";
+import type { IngredientUnit, Recipe, RecipeIngredient } from "~/lib/api/types/recipe";
 import { isRecipeFullyPublic } from "~/lib/recipe/recipe-visibility";
 
 const recipe = defineModel<NoUndefinedField<Recipe>>({ required: true });
@@ -235,7 +263,7 @@ const { household } = useHouseholdSelf();
 const { group, actions: groupActions } = useGroupSelf();
 const { recipeImage } = useStaticRoutes();
 // The household's pantry against the ingredients; members only, since the pantry is the household's.
-const { pantry } = useRecipePantry(() => recipe.value.id, () => isOwnGroup.value);
+const { pantry, setItems } = useRecipePantry(() => recipe.value.id, () => isOwnGroup.value);
 
 const titleId = useId();
 const isMobile = useMediaQuery("(max-width: 1023px)");
@@ -407,6 +435,78 @@ const { open: shoppingListDialog, shoppingLists, getShoppingLists, addShoppingLi
 async function openShoppingListDialog() {
   await getShoppingLists();
   shoppingListDialog.value = true;
+}
+
+/* Ingredient sheet: tapping an ingredient changes the pantry or a shopping list. */
+const pantryActions = useIngredientPantryActions({
+  recipeId: () => recipe.value.id,
+  scale: () => scale.value,
+  setItems,
+  items: referenceId => pantry.value?.[referenceId] ?? [],
+  lists: () => shoppingLists.value ?? [],
+});
+const sheet = reactive({ open: false, ingredient: null as RecipeIngredient | null, missing: [] as RecipeIngredient[] });
+// Read live from the pantry, so the sheet shows a row change the moment it lands.
+const sheetItems = computed(() => {
+  const referenceId = sheet.ingredient?.referenceId;
+  return (referenceId && pantry.value?.[referenceId]) || [];
+});
+
+async function openIngredient({ ingredient }: { ingredient: RecipeIngredient }) {
+  sheet.ingredient = ingredient;
+  sheet.open = true;
+  if (!shoppingLists.value) {
+    await getShoppingLists();
+  }
+}
+
+/** "Add N to list": straight to the only list, else the sheet asks which. */
+async function openAddMissing(ingredients: RecipeIngredient[]) {
+  if (!shoppingLists.value) {
+    await getShoppingLists();
+  }
+  const lists = shoppingLists.value ?? [];
+  if (!lists.length) {
+    // No list yet: the upstream dialog can make one.
+    shoppingListDialog.value = true;
+    return;
+  }
+  sheet.missing = ingredients;
+  if (lists.length === 1) {
+    await pantryActions.addMissing(ingredients, lists[0]!.id);
+    return;
+  }
+  sheet.ingredient = null;
+  sheet.open = true;
+}
+
+async function addMissingTo(listId: string) {
+  if (await pantryActions.addMissing(sheet.missing, listId)) {
+    sheet.open = false;
+  }
+}
+
+/** Runs an action on the open ingredient; the sheet closes once it went through. */
+async function act(action: (ingredient: RecipeIngredient) => Promise<boolean>) {
+  if (sheet.ingredient && (await action(sheet.ingredient))) {
+    sheet.open = false;
+  }
+}
+
+// The edit dialog's unit list; the store fetches on creation, so visitors (no pantry, no dialog) skip it.
+const allUnits = isOwnGroup.value ? useUnitStore().store : ref<IngredientUnit[]>([]);
+const pantryEditor = reactive({ open: false, item: null as PantryItemOut | null, ingredient: null as RecipeIngredient | null });
+
+function editPantryItem(item: PantryItemOut) {
+  pantryEditor.item = item;
+  pantryEditor.ingredient = sheet.ingredient;
+  sheet.open = false;
+  pantryEditor.open = true;
+}
+
+function savePantryItem(_id: string, data: PantryItemUpdate) {
+  const { item, ingredient } = pantryEditor;
+  return item && ingredient ? pantryActions.edit(ingredient, item, data) : Promise.resolve(false);
 }
 
 const { share: nativeShare, isSupported: shareSupported } = useShare();
