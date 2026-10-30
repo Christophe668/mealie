@@ -139,6 +139,48 @@ describe("useIngredientPantryActions", () => {
     expect(pantry["ing-lemon"]!.map(item => item.id)).toEqual(["p2", "p3"]);
   });
 
+  test("usedUp undo merged into a row already shown replaces that row instead of adding it twice", async () => {
+    const held = row({ id: "p1", location: "fridge" });
+    const frozen = row({ id: "p2", location: "freezer" });
+    pantry["ing-lemon"] = [held, frozen];
+    api.deleteOne.mockResolvedValue({ data: held });
+    // The server folds the recreated row into the freezer one (same food), returning its id.
+    api.createOne.mockResolvedValue({ data: { ...frozen, useBy: "2026-11-05" } });
+    const { usedUp } = actions();
+
+    await usedUp(lemon, held);
+    await clickToastAction();
+
+    expect(pantry["ing-lemon"]!.map(item => item.id)).toEqual(["p2"]);
+    expect(pantry["ing-lemon"]![0]!.useBy).toBe("2026-11-05");
+  });
+
+  test("iHaveIt merged into a row already shown replaces that row", async () => {
+    pantry["ing-lemon"] = [row({ id: "p1" })];
+    api.createOne.mockResolvedValue({ data: row({ id: "p1", useBy: "2026-11-02" }) });
+    const { iHaveIt } = actions();
+
+    await iHaveIt(lemon, "fridge", "2026-11-02");
+
+    expect(pantry["ing-lemon"]!.map(item => item.id)).toEqual(["p1"]);
+    expect(pantry["ing-lemon"]![0]!.useBy).toBe("2026-11-02");
+  });
+
+  test("undo of an iHaveIt that merged puts the row back as it was instead of deleting it", async () => {
+    const held = row({ id: "p1", useBy: null });
+    pantry["ing-lemon"] = [held];
+    api.createOne.mockResolvedValue({ data: row({ id: "p1", useBy: "2026-11-02" }) });
+    api.updateOne.mockResolvedValue({ data: held });
+    const { iHaveIt } = actions();
+    await iHaveIt(lemon, "fridge", "2026-11-02");
+
+    await clickToastAction();
+
+    expect(api.deleteOne).not.toHaveBeenCalled();
+    expect(api.updateOne).toHaveBeenCalledWith("p1", expect.objectContaining({ useBy: null }));
+    expect(pantry["ing-lemon"]).toEqual([held]);
+  });
+
   test("openedToday undo restores the previous date", async () => {
     const today = format(new Date(), "yyyy-MM-dd");
     const held = row({ openedOn: "2026-10-20" });
@@ -183,6 +225,16 @@ describe("useIngredientPantryActions", () => {
     await addToList({ referenceId: "ing-salt", quantity: 0, food: { id: "f-salt", name: "salt" } }, "l1");
 
     expect(api.createItem).toHaveBeenCalledWith(expect.objectContaining({ quantity: 1, note: "", unitId: undefined }));
+  });
+
+  test("at scale 2, a quantity-less ingredient is still added as 1, and a quantity of 2 as 4", async () => {
+    api.createItem.mockResolvedValue({ data: {} });
+    const { addToList } = actions(2);
+
+    await addToList({ referenceId: "ing-salt", quantity: 0, food: { id: "f-salt", name: "salt" } }, "l1");
+    await addToList(lemon, "l1");
+
+    expect(api.createItem.mock.calls.map(([body]) => body.quantity)).toEqual([1, 4]);
   });
 
   test("addMissing sends one addRecipes call with the missing ingredients and the scale", async () => {

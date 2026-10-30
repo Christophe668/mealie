@@ -88,26 +88,39 @@ function focusCandidates(itemId: string): string[] {
   return [...own.slice(at + 1), ...own.slice(0, at).reverse(), ...after, ...before];
 }
 
+/**
+ * Where focus should go once the item's row is gone, worked out now while the row is still there: the
+ * returned getter gives the first of those rows still on screen, else the quick-add field. The page's item
+ * sheet uses it too, for actions that take the row (and the "⋯" that opened the sheet) away.
+ */
+function focusAfter(itemId: string): () => HTMLElement | null {
+  const candidates = focusCandidates(itemId);
+  return () => {
+    for (const id of candidates) {
+      const box = document.getElementById(`shop-item-${id}`);
+      if (box) {
+        return box;
+      }
+    }
+    return (quickAdd.value?.$el as HTMLElement | undefined)?.querySelector("input") ?? null;
+  };
+}
+
+defineExpose({ focusAfter });
+
 async function onToggle(item: ShoppingListItemOut) {
   const row = root.value?.querySelector(`[data-item-id="${CSS.escape(item.id)}"]`);
   const hadFocus = !!row && row.contains(document.activeElement);
-  const candidates = hadFocus ? focusCandidates(item.id) : [];
+  const target = hadFocus ? focusAfter(item.id) : null;
   emit("toggle", item);
-  if (!hadFocus) {
+  if (!target) {
     return;
   }
   await nextTick();
   if (row?.isConnected && row.contains(document.activeElement)) {
     return;
   }
-  for (const id of candidates) {
-    const box = document.getElementById(`shop-item-${id}`);
-    if (box) {
-      box.focus();
-      return;
-    }
-  }
-  (quickAdd.value?.$el as HTMLElement | undefined)?.querySelector("input")?.focus();
+  target()?.focus();
 }
 
 // Put away empties the Bought section, taking the focused button with it. Land on the first open row,

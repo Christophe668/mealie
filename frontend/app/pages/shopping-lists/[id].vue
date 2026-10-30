@@ -40,6 +40,7 @@
 
     <ShopList
       v-if="shoppingList"
+      ref="shopList"
       :list="shoppingList"
       :by-label="byLabel"
       :putting="putting"
@@ -100,6 +101,7 @@
       :guessed-location="guessedLocation"
       :busy="sheet.busy"
       :for-text="sheetForText"
+      :focus-fallback="sheetFocusFallback"
       @toggle="sheetToggle"
       @put-away="sheetPutAway"
       @already-have="sheetAlreadyHave"
@@ -421,7 +423,17 @@ const sheetForText = computed(() =>
 
 const itemName = (item: ShoppingListItemOut) => item.food?.name || item.note || i18n.t("recipe.ingredient");
 
+// Tick, put away, already have and remove take the row away, and with it the "⋯" the sheet gives focus back
+// to. Each works out the row's neighbour (else the quick-add field) before it acts, so focus lands there.
+const shopList = useTemplateRef<InstanceType<typeof ShopList>>("shopList");
+let sheetFocus: (() => HTMLElement | null) | null = null;
+const sheetFocusFallback = () => sheetFocus?.() ?? null;
+function keepFocusNear(item: ShoppingListItemOut) {
+  sheetFocus = shopList.value?.focusAfter(item.id) ?? null;
+}
+
 async function openSheet(item: ShoppingListItemOut) {
+  sheetFocus = null;
   sheet.item = item;
   sheet.match = undefined;
   sheet.open = true;
@@ -490,6 +502,7 @@ function sheetToggle() {
   if (!item || sheet.busy) {
     return;
   }
+  keepFocusNear(item);
   sheet.open = false;
   toggle(item);
 }
@@ -510,6 +523,7 @@ async function sheetPutAway(location: PantryLocation) {
     return;
   }
   sheet.busy = true;
+  keepFocusNear(item);
   try {
     if (!item.checked) {
       saveListItem({ ...item, checked: true });
@@ -526,12 +540,13 @@ async function sheetPutAway(location: PantryLocation) {
       alertUnreportedError(error, i18n.t("shop.put-away-failed"));
       return;
     }
-    sheet.open = false;
     alert.info(i18n.t("shop.put-away-one-done", { item: itemName(item) }), undefined, {
       timeout: 6000,
       action: { message: i18n.t("shop.open-pantry"), onClick: () => router.push("/household/pantry") },
     });
+    // Closed once the reload has taken the row away, so focus goes to its neighbour, not the gone "⋯".
     await refresh();
+    sheet.open = false;
   }
   finally {
     sheet.busy = false;
@@ -545,17 +560,21 @@ async function sheetAlreadyHave(location: PantryLocation) {
     return;
   }
   sheet.busy = true;
+  keepFocusNear(item);
   try {
     if (hasQueuedChanges.value) {
       // Send pending edits first, so the server removes (and Undo restores) the item as it is on screen.
       await refresh();
+      if (hasQueuedChanges.value) {
+        alert.error(i18n.t("shop.put-away-unsynced"));
+        return;
+      }
     }
     const { data, error } = await api.householdPantry.alreadyHave(id, item.id, location);
     if (!data) {
       alertUnreportedError(error, i18n.t("events.something-went-wrong"));
       return;
     }
-    sheet.open = false;
     const { removedItem, createdPantryItem } = data;
     withUndo(i18n.t("shop.already-have-done", { item: itemName(removedItem) }), async () => {
       if (!(await recreate(removedItem))) {
@@ -569,7 +588,9 @@ async function sheetAlreadyHave(location: PantryLocation) {
       }
       return true;
     });
-    refresh();
+    // Closed once the reload has taken the row away, so focus goes to its neighbour, not the gone "⋯".
+    await refresh();
+    sheet.open = false;
   }
   finally {
     sheet.busy = false;
@@ -582,6 +603,7 @@ function sheetRemove() {
     return;
   }
   const snapshot = { ...item };
+  keepFocusNear(item);
   sheet.open = false;
   deleteListItem(item);
   withUndo(i18n.t("shop.removed", { item: itemName(snapshot) }), () => recreate(snapshot));

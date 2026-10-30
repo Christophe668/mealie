@@ -187,7 +187,7 @@ const summary = computed(() => {
 </script>
 
 <script lang="ts">
-/** Session-storage key for the ticked ingredients of one recipe; cook mode reads the same ticks. */
+/** Session-storage key for cook mode's ingredient ticks of one recipe; cook mode owns them (the recipe page no longer writes them). */
 export function ingredientTicksKey(recipeSlug: string): string {
   return `recipe-read:${recipeSlug}:ticked`;
 }

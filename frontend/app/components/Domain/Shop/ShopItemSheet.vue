@@ -1,5 +1,5 @@
 <template>
-  <DsSheet v-model="open" :title="title" :busy="busy">
+  <DsSheet v-model="open" :title="title" :busy="busy" :fallback="focusFallback">
     <template #header>
       <header class="shop-sheet__header">
         <h2 class="shop-sheet__title">
@@ -66,7 +66,9 @@ const props = withDefaults(defineProps<{
   busy: boolean;
   /** "For Roast chicken", from `itemForText`; empty when it comes from no recipe. */
   forText?: string;
-}>(), { forText: "" });
+  /** Where focus goes on close when the action took the item's row (and its "⋯") away. */
+  focusFallback?: () => HTMLElement | null | undefined;
+}>(), { forText: "", focusFallback: undefined });
 
 const emit = defineEmits<{
   "toggle": [];
@@ -82,13 +84,16 @@ const i18n = useI18n();
 
 const title = computed(() => props.item?.display || props.item?.food?.name || props.item?.note || i18n.t("recipe.ingredient"));
 
-const putAwayHint = computed(() =>
-  props.match
-    ? i18n.t("shop.put-away-into", {
-        place: i18n.t(`pantry.location.${props.match.location ?? DEFAULT_PANTRY_LOCATION}`).toLocaleLowerCase(i18n.locale.value),
-      })
-    : i18n.t("shop.put-away-one-hint"),
-);
+const putAwayHint = computed(() => {
+  if (!props.match) {
+    return i18n.t("shop.put-away-one-hint");
+  }
+  const place = props.match.location ?? DEFAULT_PANTRY_LOCATION;
+  // "the other" reads badly: a row with no particular place is just in the pantry.
+  return place === "other"
+    ? i18n.t("shop.put-away-into-pantry")
+    : i18n.t("shop.put-away-into", { place: i18n.t(`pantry.location.${place}`).toLocaleLowerCase(i18n.locale.value) });
+});
 
 const location = ref<PantryLocation>(props.guessedLocation);
 

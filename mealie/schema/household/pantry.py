@@ -109,4 +109,4 @@ class AlreadyHaveRequest(MealieModel):
 class AlreadyHaveResult(MealieModel):
     removed_item: ShoppingListItemOut
     created_pantry_item: PantryItemOut | None = None
-    """The pantry row this call created or merged into; `None` when the pantry already held the item."""
+    """The pantry row this call created, or null when the pantry already held the item."""

@@ -34,13 +34,21 @@ vi.mock("vue-draggable-plus", () => ({ VueDraggable: { render: () => null } }));
 vi.mock("~/components/Domain/Recipe/RecipeList.vue", () => ({ default: { render: () => null } }));
 vi.mock("~/components/Domain/ShoppingList/ShoppingListItemEditor.vue", () => ({ default: { name: "ShoppingListItemEditor", props: ["modelValue"], render: () => null } }));
 // The real sheet pulls in Vuetify's dialog components, which makes the page's first import slow.
-vi.mock("~/components/Design/DsSheet.vue", () => ({
-  default: {
-    name: "DsSheet",
-    props: ["modelValue", "title", "busy"],
-    template: "<div v-if=\"modelValue\" class=\"sheet\"><slot name=\"header\" /><slot /></div>",
-  },
-}));
+// It keeps the real focus return, so where focus lands after an action can be checked.
+vi.mock("~/components/Design/DsSheet.vue", async () => {
+  const { computed, defineComponent } = await import("vue");
+  const { useFocusReturn } = await import("~/composables/use-focus-return");
+  return {
+    default: defineComponent({
+      name: "DsSheet",
+      props: ["modelValue", "title", "busy", "fallback"],
+      setup(props) {
+        useFocusReturn(computed(() => !!props.modelValue), () => props.fallback?.());
+      },
+      template: "<div v-if=\"modelValue\" class=\"sheet\"><slot name=\"header\" /><slot /></div>",
+    }),
+  };
+});
 vi.mock("~/components/Domain/ShoppingList/MultiPurposeLabelSection.vue", () => ({ default: { render: () => null } }));
 
 const stubs = {
@@ -364,6 +372,21 @@ describe("item sheet", () => {
     expect(alert.error).toHaveBeenCalledWith("Some ticks could not be saved yet. Try again in a moment.");
   });
 
+  test("already in the pantry stops if the queued changes could not be sent", async () => {
+    const { alert } = await import("~/composables/use-toast");
+    vi.mocked(alert.error).mockClear();
+    page.current.hasQueuedChanges.value = true;
+    const wrapper = await render();
+    await openSheet(wrapper);
+
+    await sheetAction(wrapper, "Already in the pantry").trigger("click");
+    await flushPromises();
+    expect(page.current.refresh).toHaveBeenCalled();
+    expect(api.householdPantry.alreadyHave).not.toHaveBeenCalled();
+    expect(alert.error).toHaveBeenCalledWith("Some ticks could not be saved yet. Try again in a moment.");
+    expect(wrapper.find(".sheet").exists()).toBe(true);
+  });
+
   test("Already in the pantry takes it off the list; Undo puts it back and deletes the pantry row it created", async () => {
     const removed = makeList().listItems![0]!;
     api.householdPantry.alreadyHave.mockResolvedValue({
@@ -430,7 +453,7 @@ describe("item sheet", () => {
     await (await lastToast())[2]!.action!.onClick();
     await flushPromises();
 
-    expect(alertUnreportedError).toHaveBeenCalledWith(error, "Couldn’t undo that. Try again.");
+    expect(alertUnreportedError).toHaveBeenCalledWith(error, "Couldn’t undo that.");
     expect(api.householdPantry.deleteOne).not.toHaveBeenCalled();
   });
 
@@ -465,6 +488,42 @@ describe("item sheet", () => {
     expect(created).toMatchObject({ shoppingListId: "list", note: "Kitchen foil", quantity: 0 });
     expect(created).not.toHaveProperty("id");
     expect(page.current.refresh).toHaveBeenCalled();
+  });
+
+  /** Opens the sheet from the row's "⋯" with the keyboard, then removes the item (the fake composable drops it). */
+  async function removeWithKeyboard(wrapper: Awaited<ReturnType<typeof render>>) {
+    page.current.deleteListItem.mockImplementation((item: { id: string }) => {
+      const list = page.current.shoppingList.value;
+      page.current.shoppingList.value = { ...list, listItems: list.listItems.filter((i: { id: string }) => i.id !== item.id) };
+      page.current.itemsByLabel.value = { "No label": page.current.itemsByLabel.value["No label"].filter((i: { id: string }) => i.id !== item.id) };
+    });
+    const more = wrapper.find<HTMLButtonElement>("[data-item-id=\"a\"] .shop-row__more");
+    more.element.focus();
+    await more.trigger("click");
+    await flushPromises();
+    await sheetAction(wrapper, "Remove from list").trigger("click");
+    await flushPromises();
+  }
+
+  test("after Remove, focus moves to the neighbouring row instead of falling to the page", async () => {
+    const extra = { id: "c", shoppingListId: "list", groupId: "g", householdId: "h", checked: false, note: "Matches", quantity: 0 };
+    page.current.shoppingList.value.listItems.push(extra);
+    page.current.itemsByLabel.value["No label"].push(extra);
+    const wrapper = await render();
+
+    await removeWithKeyboard(wrapper);
+
+    expect(document.activeElement?.id).toBe("shop-item-c");
+  });
+
+  test("after Remove of the last open item, focus moves to the quick-add field", async () => {
+    const wrapper = await render();
+
+    await removeWithKeyboard(wrapper);
+
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.tagName).toBe("INPUT");
+    expect(document.activeElement?.closest(".shop-list__add")).not.toBeNull();
   });
 
   test("ignores a second tap while saving", async () => {

@@ -47,6 +47,9 @@ export function useIngredientPantryActions(opts: IngredientPantryActionsOptions)
     }
   }
   const replace = (item: PantryItemOut) => (items: PantryItemOut[]) => items.map(row => (row.id === item.id ? item : row));
+  /** A create can come back merged into a row already shown (same food): replace that row, else add it. */
+  const upsert = (item: PantryItemOut) => (items: PantryItemOut[]) =>
+    items.some(row => row.id === item.id) ? replace(item)(items) : [...items, item];
 
   /** One request at a time: a second tap while saving does nothing. */
   async function run<T>(request: () => Promise<Response<T>>, fallback: string): Promise<T | null> {
@@ -109,7 +112,17 @@ export function useIngredientPantryActions(opts: IngredientPantryActionsOptions)
     if (!created) {
       return false;
     }
-    change(ingredient, items => [...items, created]);
+    // Merged into a row already there: Undo puts that row back as it was instead of deleting it.
+    const before = opts.items(ingredient.referenceId ?? "").find(row => row.id === created.id);
+    change(ingredient, upsert(created));
+    if (before) {
+      withUndo(
+        t("added-to-pantry", { name }),
+        () => api.householdPantry.updateOne(before.id, toPantryUpdate(before)),
+        restored => change(ingredient, replace(restored)),
+      );
+      return true;
+    }
     withUndo(
       t("added-to-pantry", { name }),
       () => api.householdPantry.deleteOne(created.id),
@@ -127,7 +140,7 @@ export function useIngredientPantryActions(opts: IngredientPantryActionsOptions)
     withUndo(
       t("removed-from-pantry", { name: item.name }),
       () => api.householdPantry.createOne(toPantryUpdate(item)),
-      restored => change(ingredient, items => [...items, restored]),
+      restored => change(ingredient, upsert(restored)),
     );
     return true;
   }
@@ -169,7 +182,8 @@ export function useIngredientPantryActions(opts: IngredientPantryActionsOptions)
         shoppingListId: listId,
         foodId: ingredient.food?.id,
         unitId: ingredient.unit?.id,
-        quantity: (ingredient.quantity || 1) * opts.scale(),
+        // Quantity-less ("salt to taste") is one of it at any scale.
+        quantity: ingredient.quantity ? ingredient.quantity * opts.scale() : 1,
         note: ingredient.note || "",
       }),
       i18n.t("events.something-went-wrong"),

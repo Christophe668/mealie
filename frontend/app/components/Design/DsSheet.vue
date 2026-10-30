@@ -27,13 +27,16 @@ const props = withDefaults(defineProps<{
   title: string;
   /** A request is in flight: Escape and the scrim stop closing the sheet. */
   busy?: boolean;
+  /** Where focus goes on close when the element that opened the sheet is gone by then (an action removed it). */
+  fallback?: () => HTMLElement | null | undefined;
 }>(), {
   busy: false,
+  fallback: undefined,
 });
 
 const open = defineModel<boolean>({ default: false });
 // Opened through v-model, so Vuetify has no activator to give focus back to.
-useFocusReturn(open);
+useFocusReturn(open, () => props.fallback?.());
 const { mobile } = useDisplay();
 
 function onEscape() {

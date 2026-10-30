@@ -79,6 +79,12 @@ describe("ShopItemSheet", () => {
     expect(wrapper.findAll("[role=radio]")).toHaveLength(0);
   });
 
+  test("a pantry row with no particular place reads as already in the pantry", () => {
+    const wrapper = render({ match: { ...pantryMilk, location: "other" } });
+
+    expect(action(wrapper, "Bought, put it away").text()).toContain("Adds to the one already in the pantry");
+  });
+
   test("when it is not in the pantry, the places show, preselected with the guess", () => {
     const wrapper = render({ match: null, guessedLocation: "freezer" });
 

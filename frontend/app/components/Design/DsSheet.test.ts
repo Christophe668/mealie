@@ -1,6 +1,6 @@
 import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { ref } from "vue";
+import { nextTick, ref } from "vue";
 import DsSheet from "./DsSheet.vue";
 
 const mobile = ref(false);
@@ -67,5 +67,28 @@ describe("DsSheet", () => {
     expect(wrapper.emitted("update:modelValue")).toBeUndefined();
     expect(wrapper.find("[data-overlay]").attributes("data-persistent")).toBe("true");
     expect(wrapper.find(".ds-sheet").attributes("aria-busy")).toBe("true");
+  });
+
+  test("on close, focus goes back to the opener, or to the fallback when the opener is gone", async () => {
+    const opener = document.createElement("button");
+    const fallback = document.createElement("button");
+    document.body.append(opener, fallback);
+    const wrapper = render({ modelValue: false, fallback: () => fallback });
+
+    opener.focus();
+    await wrapper.setProps({ modelValue: true });
+    await wrapper.setProps({ modelValue: false });
+    await nextTick();
+    expect(document.activeElement).toBe(opener);
+
+    opener.focus();
+    await wrapper.setProps({ modelValue: true });
+    opener.remove();
+    await wrapper.setProps({ modelValue: false });
+    await nextTick();
+    expect(document.activeElement).toBe(fallback);
+
+    fallback.remove();
+    wrapper.unmount();
   });
 });

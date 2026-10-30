@@ -1530,7 +1530,7 @@
     "updated-in-pantry": "{name} updated",
     "added-to-list": "{item} → {list}",
     "added-missing": "{count} ingredient added to {list} | {count} ingredients added to {list}",
-    "undo-failed": "Couldn’t undo that. Try again."
+    "undo-failed": "Couldn’t undo that."
   },
   "recipe-read": {
     "ingredients": "Ingredients",
@@ -1710,6 +1710,7 @@
     "put-away-one": "Bought, put it away",
     "put-away-one-hint": "Into the pantry and off the list",
     "put-away-into": "Adds to the one in the {place}",
+    "put-away-into-pantry": "Adds to the one already in the pantry",
     "already-have": "Already in the pantry",
     "already-have-hint": "Nothing bought, just off the list",
     "edit-quantity-note": "Edit quantity or note",
