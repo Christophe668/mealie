@@ -38,7 +38,7 @@
         :item="item"
         :recipe-names="recipeNames"
         @toggle="$emit('toggle', $event)"
-        @edit="$emit('edit', $event)"
+        @actions="$emit('actions', $event)"
       />
     </ul>
   </section>
@@ -59,7 +59,7 @@ withDefaults(defineProps<{
 }>(), { putting: false });
 
 defineEmits<{
-  (e: "toggle" | "edit", item: ShoppingListItemOut): void;
+  (e: "toggle" | "actions", item: ShoppingListItemOut): void;
   (e: "clear" | "put-away"): void;
 }>();
 

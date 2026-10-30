@@ -7,7 +7,10 @@ import { useLocales } from "~/composables/use-locales";
 // The page wires the upstream composable to the Shop components. The composable is replaced by a stand-in that
 // keeps the same dialog contract (open* sets the state flag, the action is called on confirm).
 const page = vi.hoisted(() => ({ current: null as any }));
-const api = vi.hoisted(() => ({ householdPantry: { putAway: vi.fn() } }));
+const api = vi.hoisted(() => ({
+  householdPantry: { putAway: vi.fn(), pantryMatch: vi.fn(), alreadyHave: vi.fn(), deleteOne: vi.fn() },
+  shopping: { items: { createOne: vi.fn() } },
+}));
 const router = vi.hoisted(() => ({ push: vi.fn() }));
 
 vi.mock("~/composables/use-locales");
@@ -29,7 +32,15 @@ vi.mock("~/composables/use-users/preferences", async () => {
 vi.mock("~/composables/use-wake-lock", () => ({ useWakeLock: () => {} }));
 vi.mock("vue-draggable-plus", () => ({ VueDraggable: { render: () => null } }));
 vi.mock("~/components/Domain/Recipe/RecipeList.vue", () => ({ default: { render: () => null } }));
-vi.mock("~/components/Domain/ShoppingList/ShoppingListItemEditor.vue", () => ({ default: { render: () => null } }));
+vi.mock("~/components/Domain/ShoppingList/ShoppingListItemEditor.vue", () => ({ default: { name: "ShoppingListItemEditor", props: ["modelValue"], render: () => null } }));
+// The real sheet pulls in Vuetify's dialog components, which makes the page's first import slow.
+vi.mock("~/components/Design/DsSheet.vue", () => ({
+  default: {
+    name: "DsSheet",
+    props: ["modelValue", "title", "busy"],
+    template: "<div v-if=\"modelValue\" class=\"sheet\"><slot name=\"header\" /><slot /></div>",
+  },
+}));
 vi.mock("~/components/Domain/ShoppingList/MultiPurposeLabelSection.vue", () => ({ default: { render: () => null } }));
 
 const stubs = {
@@ -118,6 +129,10 @@ beforeEach(() => {
   vi.stubGlobal("useRouter", () => router);
   router.push.mockReset();
   api.householdPantry.putAway.mockReset();
+  api.householdPantry.pantryMatch.mockReset().mockResolvedValue({ data: null, error: null });
+  api.householdPantry.alreadyHave.mockReset();
+  api.householdPantry.deleteOne.mockReset().mockResolvedValue({ data: { id: "deleted" }, error: null });
+  api.shopping.items.createOne.mockReset().mockResolvedValue({ data: { createdItems: [] }, error: null });
   vi.stubGlobal("useState", (_key: string, init: () => unknown) => ref(init()));
 });
 
@@ -254,5 +269,217 @@ describe("shopping list page", () => {
     const undo = vi.mocked(alert.info).mock.calls.at(-1)![2]!.action!.onClick as () => void;
     undo();
     expect(page.current.saveListItem).toHaveBeenLastCalledWith(expect.objectContaining({ id: "a", checked: false, note: "Foil, wide roll" }));
+  });
+});
+
+describe("item sheet", () => {
+  const sheetAction = (wrapper: Awaited<ReturnType<typeof render>>, label: string) =>
+    wrapper.findAll(".sheet .ds-sheet__action").find(button => button.find(".shop-sheet__label").text() === label)!;
+
+  async function openSheet(wrapper: Awaited<ReturnType<typeof render>>) {
+    await wrapper.find("[data-item-id=\"a\"] .shop-row__more").trigger("click");
+    await flushPromises();
+  }
+
+  const lastToast = async () => {
+    const { alert } = await import("~/composables/use-toast");
+    return vi.mocked(alert.info).mock.calls.at(-1)!;
+  };
+
+  test("the row's more button opens the item's sheet, not the editor, and asks the pantry about it", async () => {
+    const { default: Editor } = await import("~/components/Domain/ShoppingList/ShoppingListItemEditor.vue");
+    const wrapper = await render();
+
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+    await openSheet(wrapper);
+
+    expect(wrapper.find(".sheet .shop-sheet__title").text()).toBe("Kitchen foil");
+    expect(api.householdPantry.pantryMatch).toHaveBeenCalledExactlyOnceWith("list", "a");
+    expect(wrapper.findComponent(Editor).exists()).toBe(false);
+
+    await sheetAction(wrapper, "Edit quantity or note").trigger("click");
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+    expect(wrapper.findComponent(Editor).props("modelValue")).toMatchObject({ id: "a" });
+  });
+
+  test("a tap on the row still ticks it, without opening the sheet", async () => {
+    const wrapper = await render();
+
+    await wrapper.find(".shop-row__label").trigger("click");
+    expect(page.current.saveListItem).toHaveBeenCalledWith(expect.objectContaining({ id: "a", checked: true }));
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+  });
+
+  test("Mark as bought ticks the item through the page's toggle", async () => {
+    const wrapper = await render();
+    await openSheet(wrapper);
+
+    await sheetAction(wrapper, "Mark as bought").trigger("click");
+    expect(page.current.saveListItem).toHaveBeenCalledWith(expect.objectContaining({ id: "a", checked: true }));
+    expect((await lastToast())[0]).toBe("Kitchen foil bought");
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+  });
+
+  test("Bought, put it away ticks the item, sends it, then puts this one away in the chosen place", async () => {
+    api.householdPantry.putAway.mockResolvedValue({ data: { created: [{ id: "p1" }], merged: [], removedItemIds: ["a"] }, error: null });
+    const wrapper = await render();
+    await openSheet(wrapper);
+
+    await wrapper.findAll(".sheet [role=radio]").find(chip => chip.text() === "Freezer")!.trigger("click");
+    await sheetAction(wrapper, "Bought, put it away").trigger("click");
+    await flushPromises();
+
+    expect(page.current.saveListItem).toHaveBeenCalledWith(expect.objectContaining({ id: "a", checked: true }));
+    expect(page.current.saveListItem.mock.invocationCallOrder[0]).toBeLessThan(page.current.refresh.mock.invocationCallOrder[0]!);
+    expect(page.current.refresh.mock.invocationCallOrder[0]).toBeLessThan(api.householdPantry.putAway.mock.invocationCallOrder[0]!);
+    expect(api.householdPantry.putAway).toHaveBeenCalledExactlyOnceWith("list", ["a"], "freezer");
+    const [text, , options] = await lastToast();
+    expect(text).toBe("Kitchen foil put away");
+    expect(options!.action!.message).toBe("Open pantry");
+    expect(page.current.refresh).toHaveBeenCalledTimes(2);
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+  });
+
+  test("when the pantry already holds it, put away sends the matched row's place", async () => {
+    api.householdPantry.pantryMatch.mockResolvedValue({ data: { id: "p1", name: "foil", location: "other", groupId: "g", householdId: "h" }, error: null });
+    api.householdPantry.putAway.mockResolvedValue({ data: { created: [], merged: [{ id: "p1" }], removedItemIds: ["a"] }, error: null });
+    const wrapper = await render();
+    await openSheet(wrapper);
+
+    await sheetAction(wrapper, "Bought, put it away").trigger("click");
+    await flushPromises();
+    expect(api.householdPantry.putAway).toHaveBeenCalledExactlyOnceWith("list", ["a"], "other");
+  });
+
+  test("put away stops if the tick could not be sent", async () => {
+    const { alert } = await import("~/composables/use-toast");
+    vi.mocked(alert.error).mockClear();
+    page.current.hasQueuedChanges.value = true;
+    const wrapper = await render();
+    await openSheet(wrapper);
+
+    await sheetAction(wrapper, "Bought, put it away").trigger("click");
+    await flushPromises();
+    expect(api.householdPantry.putAway).not.toHaveBeenCalled();
+    expect(alert.error).toHaveBeenCalledWith("Some ticks could not be saved yet. Try again in a moment.");
+  });
+
+  test("Already in the pantry takes it off the list; Undo puts it back and deletes the pantry row it created", async () => {
+    const removed = makeList().listItems![0]!;
+    api.householdPantry.alreadyHave.mockResolvedValue({
+      data: {
+        removedItem: { ...removed, label: null, createdAt: "2026-10-30T09:00:00Z", updatedAt: "2026-10-30T09:00:00Z", recipeReferences: [{ id: "ref", shoppingListItemId: "a", recipeId: "r1", recipeQuantity: 1 }] },
+        createdPantryItem: { id: "p9", name: "Kitchen foil", groupId: "g", householdId: "h" },
+      },
+      error: null,
+    });
+    const wrapper = await render();
+    await openSheet(wrapper);
+
+    await sheetAction(wrapper, "Already in the pantry").trigger("click");
+    await flushPromises();
+    // No label on the item: the cupboard is the guess.
+    expect(api.householdPantry.alreadyHave).toHaveBeenCalledExactlyOnceWith("list", "a", "cupboard");
+    expect(page.current.refresh).toHaveBeenCalled();
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+
+    const [text, , options] = await lastToast();
+    expect(text).toBe("Kitchen foil is already in the pantry; taken off the list");
+    expect(options!.action!.message).toBe("Undo");
+    await options!.action!.onClick();
+    await flushPromises();
+
+    const created = api.shopping.items.createOne.mock.calls[0]![0];
+    expect(created).toMatchObject({ shoppingListId: "list", note: "Kitchen foil", checked: false, recipeReferences: [{ recipeId: "r1", recipeQuantity: 1 }] });
+    for (const key of ["id", "groupId", "householdId", "label", "createdAt", "updatedAt"]) {
+      expect(created).not.toHaveProperty(key);
+    }
+    expect(created.recipeReferences[0]).not.toHaveProperty("id");
+    expect(created.recipeReferences[0]).not.toHaveProperty("shoppingListItemId");
+    expect(api.householdPantry.deleteOne).toHaveBeenCalledExactlyOnceWith("p9");
+  });
+
+  test("Undo of Already in the pantry deletes nothing when the pantry row was already there", async () => {
+    api.householdPantry.alreadyHave.mockResolvedValue({ data: { removedItem: makeList().listItems![0]!, createdPantryItem: null }, error: null });
+    const wrapper = await render();
+    await openSheet(wrapper);
+
+    await sheetAction(wrapper, "Already in the pantry").trigger("click");
+    await flushPromises();
+    await (await lastToast())[2]!.action!.onClick();
+    await flushPromises();
+
+    expect(api.shopping.items.createOne).toHaveBeenCalledOnce();
+    expect(api.householdPantry.deleteOne).not.toHaveBeenCalled();
+  });
+
+  test("a failing undo says so and changes nothing else", async () => {
+    const { alertUnreportedError } = await import("~/composables/use-toast");
+    vi.mocked(alertUnreportedError).mockClear();
+    const error = { response: { status: 500 } };
+    api.householdPantry.alreadyHave.mockResolvedValue({
+      data: { removedItem: makeList().listItems![0]!, createdPantryItem: { id: "p9", name: "foil", groupId: "g", householdId: "h" } },
+      error: null,
+    });
+    api.shopping.items.createOne.mockResolvedValue({ data: null, error });
+    const wrapper = await render();
+    await openSheet(wrapper);
+
+    await sheetAction(wrapper, "Already in the pantry").trigger("click");
+    await flushPromises();
+    await (await lastToast())[2]!.action!.onClick();
+    await flushPromises();
+
+    expect(alertUnreportedError).toHaveBeenCalledWith(error, "Couldn’t undo that. Try again.");
+    expect(api.householdPantry.deleteOne).not.toHaveBeenCalled();
+  });
+
+  test("a failed already in the pantry says so and keeps the sheet open", async () => {
+    const { alertUnreportedError } = await import("~/composables/use-toast");
+    vi.mocked(alertUnreportedError).mockClear();
+    const error = { response: { status: 500 } };
+    api.householdPantry.alreadyHave.mockResolvedValue({ data: null, error });
+    const wrapper = await render();
+    await openSheet(wrapper);
+
+    await sheetAction(wrapper, "Already in the pantry").trigger("click");
+    await flushPromises();
+    expect(alertUnreportedError).toHaveBeenCalledWith(error, "Something Went Wrong!");
+    expect(wrapper.find(".sheet").exists()).toBe(true);
+  });
+
+  test("Remove from list deletes the item; Undo recreates it from what it was", async () => {
+    const wrapper = await render();
+    await openSheet(wrapper);
+
+    await sheetAction(wrapper, "Remove from list").trigger("click");
+    expect(page.current.deleteListItem).toHaveBeenCalledWith(expect.objectContaining({ id: "a" }));
+    expect(wrapper.find(".sheet").exists()).toBe(false);
+
+    const [text, , options] = await lastToast();
+    expect(text).toBe("Kitchen foil removed from the list");
+    await options!.action!.onClick();
+    await flushPromises();
+
+    const created = api.shopping.items.createOne.mock.calls[0]![0];
+    expect(created).toMatchObject({ shoppingListId: "list", note: "Kitchen foil", quantity: 0 });
+    expect(created).not.toHaveProperty("id");
+    expect(page.current.refresh).toHaveBeenCalled();
+  });
+
+  test("ignores a second tap while saving", async () => {
+    let resolve!: (value: unknown) => void;
+    api.householdPantry.alreadyHave.mockReturnValue(new Promise(r => (resolve = r)));
+    const wrapper = await render();
+    await openSheet(wrapper);
+
+    await sheetAction(wrapper, "Already in the pantry").trigger("click");
+    await sheetAction(wrapper, "Already in the pantry").trigger("click");
+    await sheetAction(wrapper, "Remove from list").trigger("click");
+    expect(api.householdPantry.alreadyHave).toHaveBeenCalledOnce();
+    expect(page.current.deleteListItem).not.toHaveBeenCalled();
+
+    resolve({ data: { removedItem: makeList().listItems![0]!, createdPantryItem: null }, error: null });
+    await flushPromises();
   });
 });

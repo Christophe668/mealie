@@ -19,7 +19,7 @@
       :items="aisle.items"
       :recipe-names="recipeNames"
       @toggle="onToggle"
-      @edit="$emit('edit', $event)"
+      @actions="$emit('actions', $event)"
     />
 
     <ShopBought
@@ -28,7 +28,7 @@
       :recipe-names="recipeNames"
       :putting="putting"
       @toggle="onToggle"
-      @edit="$emit('edit', $event)"
+      @actions="$emit('actions', $event)"
       @clear="$emit('clearBought')"
       @put-away="onPutAway"
     />
@@ -41,6 +41,7 @@ import ShopBought from "./ShopBought.vue";
 import ShopQuickAdd from "./ShopQuickAdd.vue";
 import { nextTick, useTemplateRef } from "vue";
 import { shopAisles, shopBought, type ShopAisleGroup } from "~/composables/use-shop";
+import { recipeNamesOf } from "~/lib/shop/item-for-text";
 import type { ComponentPublicInstance } from "vue";
 import type { ShoppingListItemOut, ShoppingListOut } from "~/lib/api/types/household";
 
@@ -53,7 +54,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: "toggle" | "edit", item: ShoppingListItemOut): void;
+  (e: "toggle" | "actions", item: ShoppingListItemOut): void;
   (e: "add", text: string): void;
   (e: "clearBought" | "putAway"): void;
 }>();
@@ -61,11 +62,7 @@ const emit = defineEmits<{
 const aisles = computed(() => shopAisles(props.list, props.byLabel));
 const bought = computed(() => shopBought(props.list));
 
-const recipeNames = computed(() => new Map(
-  (props.list.recipeReferences ?? [])
-    .filter(ref => ref.recipe?.name)
-    .map(ref => [ref.recipeId, ref.recipe.name as string]),
-));
+const recipeNames = computed(() => recipeNamesOf(props.list));
 
 // =====================================================
 // Keyboard focus: a toggled row moves to the other section and unmounts, which would drop focus to <body>.

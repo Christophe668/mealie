@@ -12,7 +12,7 @@
         :item="item"
         :recipe-names="recipeNames"
         @toggle="$emit('toggle', $event)"
-        @edit="$emit('edit', $event)"
+        @actions="$emit('actions', $event)"
       />
     </ul>
   </section>
@@ -32,7 +32,7 @@ const props = defineProps<{
 }>();
 
 defineEmits<{
-  (e: "toggle" | "edit", item: ShoppingListItemOut): void;
+  (e: "toggle" | "actions", item: ShoppingListItemOut): void;
 }>();
 
 const i18n = useI18n();
