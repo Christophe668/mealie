@@ -40,11 +40,12 @@
 
     <ShopList
       v-if="shoppingList"
+      ref="shopList"
       :list="shoppingList"
       :by-label="byLabel"
       :putting="putting"
       @toggle="toggle"
-      @edit="openEditor"
+      @actions="openSheet"
       @add="add"
       @clear-bought="openDeleteChecked"
       @put-away="putAway"
@@ -91,6 +92,22 @@
     </section>
 
     <KeepScreenOn v-if="keepAwake" />
+
+    <!-- One item's actions: "⋯" or a long press on its row. -->
+    <ShopItemSheet
+      v-model="sheet.open"
+      :item="sheetItem"
+      :match="sheet.match"
+      :guessed-location="guessedLocation"
+      :busy="sheet.busy"
+      :for-text="sheetForText"
+      :focus-fallback="sheetFocusFallback"
+      @toggle="sheetToggle"
+      @put-away="sheetPutAway"
+      @already-have="sheetAlreadyHave"
+      @edit="sheetEdit"
+      @remove="sheetRemove"
+    />
 
     <!-- Item editor: upstream's editor on a copy, so a background refresh never overwrites typing. -->
     <v-dialog v-model="editor.open" max-width="560" :aria-label="$t('shop.edit-dialog')">
@@ -178,6 +195,7 @@
 import { VueDraggable } from "vue-draggable-plus";
 import DsIcon from "~/components/Design/DsIcon.vue";
 import DsSectionTitle from "~/components/Design/DsSectionTitle.vue";
+import ShopItemSheet from "~/components/Domain/Shop/ShopItemSheet.vue";
 import ShopList from "~/components/Domain/Shop/ShopList.vue";
 import RecipeList from "~/components/Domain/Recipe/RecipeList.vue";
 import MultiPurposeLabelSection from "~/components/Domain/ShoppingList/MultiPurposeLabelSection.vue";
@@ -192,7 +210,9 @@ import { openCount, toByLabel } from "~/composables/use-shop";
 import { alert, alertUnreportedError } from "~/composables/use-toast";
 import { useUserExperiencePreferences } from "~/composables/use-users/preferences";
 import { useWakeLock } from "~/composables/use-wake-lock";
-import type { ShoppingListItemOut } from "~/lib/api/types/household";
+import type { PantryItemOut, PantryLocation, ShoppingListItemCreate, ShoppingListItemOut } from "~/lib/api/types/household";
+import { guessLocation } from "~/lib/pantry/location-guess";
+import { itemForText, recipeNamesOf } from "~/lib/shop/item-for-text";
 import type { AppShellMenuItem } from "~/types/application-types";
 
 definePageMeta({
@@ -378,6 +398,215 @@ async function putAway() {
   finally {
     putting.value = false;
   }
+}
+
+// =====================================================
+// Item sheet: one item's actions. The tick and the editor are the page's own; the pantry actions call the
+// server directly and reload the list after.
+
+const sheet = reactive({
+  open: false,
+  item: null as ShoppingListItemOut | null,
+  /** The pantry row holding the item; undefined while asking. */
+  match: undefined as PantryItemOut | null | undefined,
+  busy: false,
+});
+
+/** The item as the list holds it now (a refresh or poll may have replaced it since the sheet opened). */
+const sheetItem = computed(() =>
+  sheet.item ? (shoppingList.value?.listItems?.find(item => item.id === sheet.item!.id) ?? sheet.item) : null,
+);
+const guessedLocation = computed(() => guessLocation(sheetItem.value?.label?.name));
+const sheetForText = computed(() =>
+  sheetItem.value ? itemForText(sheetItem.value, recipeNamesOf(shoppingList.value), i18n.t) : "",
+);
+
+const itemName = (item: ShoppingListItemOut) => item.food?.name || item.note || i18n.t("recipe.ingredient");
+
+// Tick, put away, already have and remove take the row away, and with it the "⋯" the sheet gives focus back
+// to. Each works out the row's neighbour (else the quick-add field) before it acts, so focus lands there.
+const shopList = useTemplateRef<InstanceType<typeof ShopList>>("shopList");
+let sheetFocus: (() => HTMLElement | null) | null = null;
+const sheetFocusFallback = () => sheetFocus?.() ?? null;
+function keepFocusNear(item: ShoppingListItemOut) {
+  sheetFocus = shopList.value?.focusAfter(item.id) ?? null;
+}
+
+async function openSheet(item: ShoppingListItemOut) {
+  sheetFocus = null;
+  sheet.item = item;
+  sheet.match = undefined;
+  sheet.open = true;
+  const { data } = await api.householdPantry.pantryMatch(id, item.id);
+  // A failed lookup counts as "not in the pantry": the place chips show, and the server still matches on save.
+  if (sheet.item?.id === item.id) {
+    sheet.match = data ?? null;
+  }
+}
+
+/** A list item as a create request: no id or server-managed fields, recipe references without theirs. */
+function toItemCreate(item: ShoppingListItemOut): ShoppingListItemCreate {
+  return {
+    shoppingListId: item.shoppingListId,
+    quantity: item.quantity,
+    unitId: item.unitId,
+    foodId: item.foodId,
+    labelId: item.labelId,
+    note: item.note,
+    display: item.display,
+    checked: item.checked,
+    position: item.position,
+    extras: item.extras,
+    recipeReferences: (item.recipeReferences ?? []).map(({ recipeId, recipeQuantity, recipeScale, recipeNote }) => ({
+      recipeId,
+      recipeQuantity,
+      recipeScale,
+      recipeNote,
+    })),
+  };
+}
+
+const UNDO_TIMEOUT = 5000;
+
+/** A snackbar with a one-shot Undo; a failed undo says so and changes nothing else. */
+function withUndo(text: string, undo: () => Promise<boolean>) {
+  let undone = false;
+  alert.info(text, undefined, {
+    timeout: UNDO_TIMEOUT,
+    action: {
+      message: i18n.t("general.undo"),
+      onClick: async () => {
+        if (undone) {
+          return;
+        }
+        undone = true;
+        if (await undo()) {
+          refresh();
+        }
+      },
+    },
+  });
+}
+
+async function recreate(item: ShoppingListItemOut): Promise<boolean> {
+  const { data, error } = await api.shopping.items.createOne(toItemCreate(item));
+  if (!data) {
+    alertUnreportedError(error, i18n.t("recipe-ingredient-sheet.undo-failed"));
+    return false;
+  }
+  return true;
+}
+
+function sheetToggle() {
+  const item = sheetItem.value;
+  if (!item || sheet.busy) {
+    return;
+  }
+  keepFocusNear(item);
+  sheet.open = false;
+  toggle(item);
+}
+
+function sheetEdit() {
+  const item = sheetItem.value;
+  if (!item || sheet.busy) {
+    return;
+  }
+  sheet.open = false;
+  openEditor(item);
+}
+
+/** Ticks the item if needed, sends the queue, then puts this one item away. No Undo, as the bulk Put away. */
+async function sheetPutAway(location: PantryLocation) {
+  const item = sheetItem.value;
+  if (!item || sheet.busy) {
+    return;
+  }
+  sheet.busy = true;
+  keepFocusNear(item);
+  try {
+    if (!item.checked) {
+      saveListItem({ ...item, checked: true });
+    }
+    await refresh();
+    if (hasQueuedChanges.value) {
+      alert.error(i18n.t("shop.put-away-unsynced"));
+      return;
+    }
+    // A match keeps its place: send it, so the row lands where the sheet said.
+    const place = sheet.match?.location ?? location;
+    const { data, error } = await api.householdPantry.putAway(id, [item.id], place);
+    if (!data) {
+      alertUnreportedError(error, i18n.t("shop.put-away-failed"));
+      return;
+    }
+    alert.info(i18n.t("shop.put-away-one-done", { item: itemName(item) }), undefined, {
+      timeout: 6000,
+      action: { message: i18n.t("shop.open-pantry"), onClick: () => router.push("/household/pantry") },
+    });
+    // Closed once the reload has taken the row away, so focus goes to its neighbour, not the gone "⋯".
+    await refresh();
+    sheet.open = false;
+  }
+  finally {
+    sheet.busy = false;
+  }
+}
+
+/** Off the list without buying; the server adds a pantry row when none holds it. Undo reverses both. */
+async function sheetAlreadyHave(location: PantryLocation) {
+  const item = sheetItem.value;
+  if (!item || sheet.busy) {
+    return;
+  }
+  sheet.busy = true;
+  keepFocusNear(item);
+  try {
+    if (hasQueuedChanges.value) {
+      // Send pending edits first, so the server removes (and Undo restores) the item as it is on screen.
+      await refresh();
+      if (hasQueuedChanges.value) {
+        alert.error(i18n.t("shop.put-away-unsynced"));
+        return;
+      }
+    }
+    const { data, error } = await api.householdPantry.alreadyHave(id, item.id, location);
+    if (!data) {
+      alertUnreportedError(error, i18n.t("events.something-went-wrong"));
+      return;
+    }
+    const { removedItem, createdPantryItem } = data;
+    withUndo(i18n.t("shop.already-have-done", { item: itemName(removedItem) }), async () => {
+      if (!(await recreate(removedItem))) {
+        return false;
+      }
+      if (createdPantryItem) {
+        const { data: deleted, error: deleteError } = await api.householdPantry.deleteOne(createdPantryItem.id);
+        if (!deleted) {
+          alertUnreportedError(deleteError, i18n.t("recipe-ingredient-sheet.undo-failed"));
+        }
+      }
+      return true;
+    });
+    // Closed once the reload has taken the row away, so focus goes to its neighbour, not the gone "⋯".
+    await refresh();
+    sheet.open = false;
+  }
+  finally {
+    sheet.busy = false;
+  }
+}
+
+function sheetRemove() {
+  const item = sheetItem.value;
+  if (!item || sheet.busy) {
+    return;
+  }
+  const snapshot = { ...item };
+  keepFocusNear(item);
+  sheet.open = false;
+  deleteListItem(item);
+  withUndo(i18n.t("shop.removed", { item: itemName(snapshot) }), () => recreate(snapshot));
 }
 
 // =====================================================

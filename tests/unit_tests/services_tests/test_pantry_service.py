@@ -196,6 +196,39 @@ def test_put_away_picks_location_from_label(unique_user: TestUser):
     }
 
 
+def test_put_away_location_override(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    shopping_list = _list(unique_user)
+    label = unique_user.repos.group_multi_purpose_labels.create(
+        MultiPurposeLabelSave(name="Dairy", group_id=unique_user.group_id)
+    )
+    food = _food(unique_user, label_id=label.id)
+    unique_user.repos.group_shopping_list_item.create(
+        ShoppingListItemCreate(shopping_list_id=shopping_list.id, food_id=food.id, checked=True)
+    )
+
+    result = service.put_away(shopping_list.id, None, today=DAY_2, location=PantryLocation.freezer)
+
+    assert [row.location for row in result.created] == [PantryLocation.freezer]
+
+
+def test_put_away_location_override_merge_keeps_place(unique_user: TestUser):
+    service = PantryService(unique_user.repos)
+    shopping_list = _list(unique_user)
+    food = _food(unique_user)
+    existing, _ = service.add_item(
+        PantryItemCreate(name=food.name, food_id=food.id, location=PantryLocation.fridge, bought_on=DAY_1)
+    )
+    unique_user.repos.group_shopping_list_item.create(
+        ShoppingListItemCreate(shopping_list_id=shopping_list.id, food_id=food.id, checked=True)
+    )
+
+    result = service.put_away(shopping_list.id, None, today=DAY_2, location=PantryLocation.freezer)
+
+    assert result.created == []
+    assert [(row.id, row.location) for row in result.merged] == [(existing.id, PantryLocation.fridge)]
+
+
 def test_put_away_ignores_repeated_ids(unique_user: TestUser):
     service = PantryService(unique_user.repos)
     shopping_list = _list(unique_user)

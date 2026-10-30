@@ -5,6 +5,7 @@ from mealie.core.exceptions import NoEntryFound
 from mealie.repos.repository_factory import AllRepositories
 from mealie.schema.household.group_shopping_list import ShoppingListItemOut
 from mealie.schema.household.pantry import (
+    AlreadyHaveResult,
     PantryItemCreate,
     PantryItemOut,
     PantryItemUpdate,
@@ -13,6 +14,7 @@ from mealie.schema.household.pantry import (
     PutAwayResult,
 )
 from mealie.services._base_service import BaseService
+from mealie.services.claude_context.pantry_matching import shopping_item_matcher
 
 # Put-away location rule: `item.label` decides where it goes. Only the item's label is read; when the item has
 # none, `ShoppingListItemOut.populate_missing_label` has already filled it from the food's label.
@@ -125,7 +127,13 @@ class PantryService(BaseService):
             self.sync_on_hand(removed.food_id)
         return removed
 
-    def put_away(self, list_id: UUID, item_ids: list[UUID] | None, today: date | None = None) -> PutAwayResult:
+    def put_away(
+        self,
+        list_id: UUID,
+        item_ids: list[UUID] | None,
+        today: date | None = None,
+        location: PantryLocation | None = None,
+    ) -> PutAwayResult:
         """Move checked shopping items into the pantry, then delete them from the list.
 
         Order: every pantry row is written first, the shopping items are deleted last. A failure midway
@@ -133,6 +141,8 @@ class PantryService(BaseService):
 
         `item_ids=None` means every checked item. Raises `NoEntryFound` when the list (or an item on it)
         is not in this household, and `PantryItemsNotChecked` when any requested item is not checked.
+
+        `location`, when given, replaces the label-based guess for new rows; a merge keeps the existing row's place.
         """
         today = today or datetime.now().astimezone().date()
         shopping_list = self.repos.group_shopping_lists.get_one(list_id)
@@ -155,7 +165,7 @@ class PantryService(BaseService):
         created: dict[UUID, PantryItemOut] = {}
         merged: dict[UUID, PantryItemOut] = {}
         for item in to_move:
-            row, was_merged = self.add_item(self._from_shopping_item(item, today))
+            row, was_merged = self.add_item(self._from_shopping_item(item, today, location))
             if row.id in created:
                 # merged into a row this same put-away created: still a creation, keep its latest state
                 created[row.id] = row
@@ -170,6 +180,45 @@ class PantryService(BaseService):
             merged=list(merged.values()),
             removed_item_ids=[item.id for item in removed],
         )
+
+    def _list_item_or_raise(self, list_id: UUID, item_id: UUID) -> ShoppingListItemOut:
+        shopping_list = self.repos.group_shopping_lists.get_one(list_id)
+        if shopping_list is None:
+            raise NoEntryFound("Shopping list not found.")
+        for item in shopping_list.list_items:
+            if item.id == item_id:
+                return item
+        raise NoEntryFound("Shopping list item not found.")
+
+    def _match_for(self, item: ShoppingListItemOut) -> PantryItemOut | None:
+        matches = shopping_item_matcher(item)
+        return next((row for row in self.pantry.ordered() if matches(row)), None)
+
+    def pantry_match(self, list_id: UUID, item_id: UUID) -> PantryItemOut | None:
+        """The first pantry row (in `ordered()` order) that is what this shopping item asks for, if any.
+
+        Raises `NoEntryFound` when the list or the item on it is not in this household."""
+        return self._match_for(self._list_item_or_raise(list_id, item_id))
+
+    def already_have(self, list_id: UUID, item_id: UUID, location: PantryLocation) -> AlreadyHaveResult:
+        """The shopping item is already at home: make sure the pantry holds it, then take it off the list.
+
+        The pantry row (if the pantry held nothing matching) is written before the list item is deleted."""
+        item = self._list_item_or_raise(list_id, item_id)
+        created: PantryItemOut | None = None
+        if self._match_for(item) is None:
+            name = item.food.name if item.food is not None else (item.note or "").strip() or _UNNAMED_ITEM
+            created, _ = self.add_item(
+                PantryItemCreate(
+                    name=name,
+                    # not item.food_id: on SQLite a deleted food leaves a dangling id behind on the shopping item
+                    food_id=item.food.id if item.food else None,
+                    location=location,
+                    source=PantrySource.manual,
+                )
+            )
+        self.repos.group_shopping_list_item.delete_many([item.id])
+        return AlreadyHaveResult(removed_item=item, created_pantry_item=created)
 
     def sync_on_hand(self, food_id: UUID) -> None:
         """Mirror pantry presence of `food_id` into the household's on-hand foods.
@@ -252,7 +301,9 @@ class PantryService(BaseService):
             return PantryLocation.fridge
         return PantryLocation.cupboard
 
-    def _from_shopping_item(self, item: ShoppingListItemOut, today: date) -> PantryItemCreate:
+    def _from_shopping_item(
+        self, item: ShoppingListItemOut, today: date, location: PantryLocation | None = None
+    ) -> PantryItemCreate:
         if item.food is not None:
             name, note = item.food.name, item.note or None
         else:
@@ -269,7 +320,7 @@ class PantryService(BaseService):
             food_id=item.food.id if item.food else None,
             quantity=quantity,
             unit_id=item.unit_id,
-            location=self._location_for(item),
+            location=location or self._location_for(item),
             bought_on=today,
             source=PantrySource.shopping,
             note=note,

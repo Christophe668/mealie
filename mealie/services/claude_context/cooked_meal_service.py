@@ -1,11 +1,9 @@
 import math
 from collections import Counter
-from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 
 from mealie.core.exceptions import NoEntryFound
-from mealie.db.models.recipe import IngredientFoodModel
 from mealie.repos.all_repositories import get_repositories
 from mealie.repos.repository_factory import AllRepositories
 from mealie.repos.single_commit import single_commit
@@ -30,9 +28,10 @@ from mealie.schema.household.pantry import (
 from mealie.schema.household.recipe_feedback import RecipeFeedbackCreate, RecipeFeedbackOut
 from mealie.schema.meal_plan.new_meal import ReadPlanEntry
 from mealie.schema.recipe.recipe import Recipe
-from mealie.schema.recipe.recipe_ingredient import IngredientFood, RecipeIngredient
+from mealie.schema.recipe.recipe_ingredient import RecipeIngredient
 from mealie.schema.user.user import PrivateUser
 from mealie.services._base_service import BaseService
+from mealie.services.claude_context.pantry_matching import food_matcher
 from mealie.services.claude_context.pantry_service import PantryService
 from mealie.services.claude_context.pantry_usage import propose_for_food, propose_substitute
 from mealie.services.claude_context.recipe_feedback_service import (
@@ -41,7 +40,6 @@ from mealie.services.claude_context.recipe_feedback_service import (
     local_noon,
     move_last_made_forward,
 )
-from mealie.services.claude_context.recipe_writer import food_name_variants
 
 LEFTOVER_USE_BY_DAYS: dict[str, int] = {"fridge": 3, "freezer": 90}
 LEFTOVER_PORTIONS_MIN, LEFTOVER_PORTIONS_MAX = 1, 50
@@ -96,28 +94,9 @@ class CookedMealService(BaseService):
             raise NoEntryFound("Recipe not found.")
         return recipe
 
-    @staticmethod
-    def _food_matcher(foods: list[IngredientFood]) -> Callable[[PantryItemOut], bool]:
-        """Whether a pantry item is one of `foods`: by `food_id`, or (items without a food) by the food's name or
-        its simple singular/plural, case-insensitively."""
-        food_ids: set[str] = set()
-        names: set[str] = set()
-        for food in foods:
-            food_ids.add(str(food.id))
-            key = IngredientFoodModel.normalize(food.name)
-            names.add(key)
-            names.update(food_name_variants(key))
-
-        def matches(item: PantryItemOut) -> bool:
-            if item.food_id is not None:
-                return str(item.food_id) in food_ids
-            return IngredientFoodModel.normalize(item.name) in names
-
-        return matches
-
     def _matching_items(self, recipe: Recipe, pantry: list[PantryItemOut] | None = None) -> list[PantryItemOut]:
-        """Pantry items matching the recipe's foods (see `_food_matcher`), in `get_pantry` order."""
-        matches = self._food_matcher([i.food for i in recipe.recipe_ingredient if i.food is not None])
+        """Pantry items matching the recipe's foods (see `food_matcher`), in `get_pantry` order."""
+        matches = food_matcher([i.food for i in recipe.recipe_ingredient if i.food is not None])
         items = self.repos.pantry_items.ordered() if pantry is None else pantry
         return [item for item in items if matches(item)]
 
@@ -127,7 +106,7 @@ class CookedMealService(BaseService):
         for ingredient in recipe.recipe_ingredient:
             if ingredient.food is None or ingredient.reference_id is None:
                 continue
-            matches = self._food_matcher([ingredient.food])
+            matches = food_matcher([ingredient.food])
             result.append(
                 PantryIngredientMatch(
                     reference_id=ingredient.reference_id,
@@ -204,7 +183,7 @@ class CookedMealService(BaseService):
         claimed: set[str] = set()
         by_item: dict[str, PantryProposal] = {}
         for lines in lines_by_food.values():
-            matches = self._food_matcher([lines[0].food] if lines[0].food else [])
+            matches = food_matcher([lines[0].food] if lines[0].food else [])
             # an item matching two foods is proposed once, for the first food
             food_items = [item for item in items if matches(item) and str(item.id) not in claimed]
             claimed.update(str(item.id) for item in food_items)
@@ -230,7 +209,7 @@ class CookedMealService(BaseService):
             if line.food is None or line.reference_id is None or str(line.food.id) in seen:
                 continue
             seen.add(str(line.food.id))
-            matches = self._food_matcher([line.food])
+            matches = food_matcher([line.food])
             if any(matches(item) for item in pantry):
                 continue
             unmatched.append(
@@ -279,7 +258,7 @@ class CookedMealService(BaseService):
         matched_refs = []
         for ref, _ in pairs:
             food = lines[str(ref)].food
-            if food is not None and any(self._food_matcher([food])(item) for item in pantry):
+            if food is not None and any(food_matcher([food])(item) for item in pantry):
                 matched_refs.append(str(ref))
         if matched_refs:
             raise ValueError(f"ingredients already in the pantry, nothing to use instead: {', '.join(matched_refs)}")

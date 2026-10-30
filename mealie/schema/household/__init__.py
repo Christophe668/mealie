@@ -91,6 +91,8 @@ from .household_profile import (
 from .household_statistics import HouseholdStatistics
 from .invite_token import CreateInviteToken, EmailInitationResponse, EmailInvitation, ReadInviteToken, SaveInviteToken
 from .pantry import (
+    AlreadyHaveRequest,
+    AlreadyHaveResult,
     PantryItemCreate,
     PantryItemOut,
     PantryItemPagination,
@@ -204,6 +206,8 @@ __all__ = [
     "RecipeFeedbackRecipe",
     "RecipeFeedbackSummary",
     "SetPermissions",
+    "AlreadyHaveRequest",
+    "AlreadyHaveResult",
     "PantryItemCreate",
     "PantryItemOut",
     "PantryItemPagination",

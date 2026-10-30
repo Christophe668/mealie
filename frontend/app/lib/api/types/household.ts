@@ -24,6 +24,13 @@ export type ProposalReason =
   | "small_amount"
   | "no_quantity";
 
+export interface AlreadyHaveRequest {
+  location?: PantryLocation;
+}
+export interface AlreadyHaveResult {
+  removedItem: ShoppingListItemOut;
+  createdPantryItem?: PantryItemOut | null;
+}
 export interface CookedFeedback {
   verdict: FeedbackVerdict;
   effort?: number | null;
@@ -590,6 +597,7 @@ export interface PantryItemUpdate {
 }
 export interface PutAwayRequest {
   itemIds?: string[] | null;
+  location?: PantryLocation | null;
 }
 export interface PutAwayResult {
   created: PantryItemOut[];

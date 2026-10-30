@@ -9,6 +9,7 @@ from mealie.db.models.household.pantry import PantryItem
 from mealie.db.models.recipe import IngredientFoodModel, IngredientFoodSubstitutionModel, IngredientUnitModel
 from mealie.schema._mealie import MealieModel
 from mealie.schema._mealie.mealie_model import UpdatedAtField
+from mealie.schema.household.group_shopping_list import ShoppingListItemOut
 from mealie.schema.recipe.recipe_ingredient import IngredientFood, IngredientUnit
 from mealie.schema.response.pagination import PaginationBase
 
@@ -90,9 +91,22 @@ class PantryItemPagination(PaginationBase):
 class PutAwayRequest(MealieModel):
     item_ids: list[UUID4] | None = None
     """Shopping list item ids to put away; `None` means every checked item."""
+    location: PantryLocation | None = None
+    """Where the new rows go; `None` picks one per item from its label. A merge keeps the existing row's place."""
 
 
 class PutAwayResult(MealieModel):
     created: list[PantryItemOut]
     merged: list[PantryItemOut]
     removed_item_ids: list[UUID4]
+
+
+class AlreadyHaveRequest(MealieModel):
+    location: PantryLocation = PantryLocation.cupboard
+    """Where the new pantry row goes when the pantry holds nothing matching yet."""
+
+
+class AlreadyHaveResult(MealieModel):
+    removed_item: ShoppingListItemOut
+    created_pantry_item: PantryItemOut | None = None
+    """The pantry row this call created, or null when the pantry already held the item."""

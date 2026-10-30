@@ -36,9 +36,9 @@
     <button
       type="button"
       class="shop-row__more ds-focus"
-      :aria-label="$t('shop.edit-item', { item: plainName })"
-      :title="$t('shop.edit-item', { item: plainName })"
-      @click="$emit('edit', item)"
+      :aria-label="$t('shop.item-actions', { item: plainName })"
+      :title="$t('shop.item-actions', { item: plainName })"
+      @click="$emit('actions', item)"
     >
       <DsIcon name="dotsVertical" :size="20" />
     </button>
@@ -49,6 +49,7 @@
 import DsIcon from "~/components/Design/DsIcon.vue";
 import { useIngredientTextParser } from "~/composables/recipes";
 import type { ShoppingListItemOut } from "~/lib/api/types/household";
+import { itemForText } from "~/lib/shop/item-for-text";
 
 const props = defineProps<{
   item: ShoppingListItemOut;
@@ -57,7 +58,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: "toggle" | "edit", item: ShoppingListItemOut): void;
+  (e: "toggle" | "actions", item: ShoppingListItemOut): void;
 }>();
 
 const i18n = useI18n();
@@ -76,18 +77,7 @@ const text = computed(() => {
 
 const plainName = computed(() => props.item.food?.name || props.item.note || i18n.t("recipe.ingredient"));
 
-const forText = computed(() => {
-  const names = [...new Set((props.item.recipeReferences ?? []).map(ref => ref.recipeId))]
-    .map(id => props.recipeNames.get(id))
-    .filter((name): name is string => !!name);
-  if (!names.length) {
-    return "";
-  }
-  if (names.length === 1) {
-    return i18n.t("shop.for-recipe", { recipe: names[0] });
-  }
-  return i18n.t("shop.for-recipe-and-more", { recipe: names[0], count: names.length - 1 });
-});
+const forText = computed(() => itemForText(props.item, props.recipeNames, i18n.t));
 
 // The checkbox stays controlled: it shows the item's state, and the parent flips it optimistically.
 // preventDefault makes the browser restore the old state after dispatch; that is only safe because a toggled
@@ -103,7 +93,7 @@ function onBoxClick(event: MouseEvent) {
 }
 
 // =====================================================
-// Long press opens the editor (the kebab is the visible way to do the same).
+// Long press opens the item's actions (the kebab is the visible way to do the same).
 
 const LONG_PRESS_MS = 500;
 const MOVE_TOLERANCE = 10;
@@ -121,7 +111,7 @@ function startPress(event: PointerEvent) {
   pressTimer = setTimeout(() => {
     pressTimer = undefined;
     suppressClick = true;
-    emit("edit", props.item);
+    emit("actions", props.item);
   }, LONG_PRESS_MS);
 }
 
@@ -144,7 +134,7 @@ function onLabelClick(event: MouseEvent) {
   }
 }
 
-/** Touch browsers raise the context menu on a long press; the editor replaces it. */
+/** Touch browsers raise the context menu on a long press; the item's actions replace it. */
 function onContextMenu(event: MouseEvent) {
   if (suppressClick || pressTimer) {
     event.preventDefault();

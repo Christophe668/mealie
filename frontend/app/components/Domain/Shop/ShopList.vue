@@ -19,7 +19,7 @@
       :items="aisle.items"
       :recipe-names="recipeNames"
       @toggle="onToggle"
-      @edit="$emit('edit', $event)"
+      @actions="$emit('actions', $event)"
     />
 
     <ShopBought
@@ -28,7 +28,7 @@
       :recipe-names="recipeNames"
       :putting="putting"
       @toggle="onToggle"
-      @edit="$emit('edit', $event)"
+      @actions="$emit('actions', $event)"
       @clear="$emit('clearBought')"
       @put-away="onPutAway"
     />
@@ -41,6 +41,7 @@ import ShopBought from "./ShopBought.vue";
 import ShopQuickAdd from "./ShopQuickAdd.vue";
 import { nextTick, useTemplateRef } from "vue";
 import { shopAisles, shopBought, type ShopAisleGroup } from "~/composables/use-shop";
+import { recipeNamesOf } from "~/lib/shop/item-for-text";
 import type { ComponentPublicInstance } from "vue";
 import type { ShoppingListItemOut, ShoppingListOut } from "~/lib/api/types/household";
 
@@ -53,7 +54,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: "toggle" | "edit", item: ShoppingListItemOut): void;
+  (e: "toggle" | "actions", item: ShoppingListItemOut): void;
   (e: "add", text: string): void;
   (e: "clearBought" | "putAway"): void;
 }>();
@@ -61,11 +62,7 @@ const emit = defineEmits<{
 const aisles = computed(() => shopAisles(props.list, props.byLabel));
 const bought = computed(() => shopBought(props.list));
 
-const recipeNames = computed(() => new Map(
-  (props.list.recipeReferences ?? [])
-    .filter(ref => ref.recipe?.name)
-    .map(ref => [ref.recipeId, ref.recipe.name as string]),
-));
+const recipeNames = computed(() => recipeNamesOf(props.list));
 
 // =====================================================
 // Keyboard focus: a toggled row moves to the other section and unmounts, which would drop focus to <body>.
@@ -91,26 +88,39 @@ function focusCandidates(itemId: string): string[] {
   return [...own.slice(at + 1), ...own.slice(0, at).reverse(), ...after, ...before];
 }
 
+/**
+ * Where focus should go once the item's row is gone, worked out now while the row is still there: the
+ * returned getter gives the first of those rows still on screen, else the quick-add field. The page's item
+ * sheet uses it too, for actions that take the row (and the "⋯" that opened the sheet) away.
+ */
+function focusAfter(itemId: string): () => HTMLElement | null {
+  const candidates = focusCandidates(itemId);
+  return () => {
+    for (const id of candidates) {
+      const box = document.getElementById(`shop-item-${id}`);
+      if (box) {
+        return box;
+      }
+    }
+    return (quickAdd.value?.$el as HTMLElement | undefined)?.querySelector("input") ?? null;
+  };
+}
+
+defineExpose({ focusAfter });
+
 async function onToggle(item: ShoppingListItemOut) {
   const row = root.value?.querySelector(`[data-item-id="${CSS.escape(item.id)}"]`);
   const hadFocus = !!row && row.contains(document.activeElement);
-  const candidates = hadFocus ? focusCandidates(item.id) : [];
+  const target = hadFocus ? focusAfter(item.id) : null;
   emit("toggle", item);
-  if (!hadFocus) {
+  if (!target) {
     return;
   }
   await nextTick();
   if (row?.isConnected && row.contains(document.activeElement)) {
     return;
   }
-  for (const id of candidates) {
-    const box = document.getElementById(`shop-item-${id}`);
-    if (box) {
-      box.focus();
-      return;
-    }
-  }
-  (quickAdd.value?.$el as HTMLElement | undefined)?.querySelector("input")?.focus();
+  target()?.focus();
 }
 
 // Put away empties the Bought section, taking the focused button with it. Land on the first open row,

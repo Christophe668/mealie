@@ -1,6 +1,6 @@
 import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import RecipeReadIngredients, { ingredientTicksKey } from "./RecipeReadIngredients.vue";
+import RecipeReadIngredients from "./RecipeReadIngredients.vue";
 import type { RecipeIngredient } from "~/lib/api/types/recipe";
 import type { PantryItemOut } from "~/lib/api/types/household";
 import type { IngredientPantry } from "~/composables/use-recipe-pantry";
@@ -32,7 +32,7 @@ const lemon: RecipeIngredient = {
   food: { id: "f-lemon", name: "lemon" },
 };
 
-function render(props: Partial<{ ingredients: RecipeIngredient[]; scale: number; recipeSlug: string; collapsible: boolean; pantry: IngredientPantry | null }> = {}) {
+function render(props: Partial<{ ingredients: RecipeIngredient[]; scale: number; recipeSlug: string; collapsible: boolean; pantry: IngredientPantry | null; canAct: boolean }> = {}) {
   return mount(RecipeReadIngredients, {
     props: { ingredients: [flour, butter, lemon], scale: 1, recipeSlug: "lemon-cake", groupSlug: "home", ...props },
     global: { stubs },
@@ -58,42 +58,85 @@ afterEach(() => {
 
 const pantryItem = (extra: Partial<PantryItemOut>): PantryItemOut => ({ id: "p", name: "x", groupId: "g", householdId: "h", ...extra });
 
-describe("RecipeReadIngredients pantry", () => {
-  test("marks each ingredient in the pantry or not, with where it is, and sums it up", () => {
-    const wrapper = render({
-      pantry: {
-        "ing-flour": [pantryItem({ id: "p1", location: "cupboard" })],
-        "ing-butter": [],
-        "ing-lemon": [pantryItem({ id: "p2", location: "fridge" }), pantryItem({ id: "p3", location: "freezer" })],
-      },
-    });
-
-    const marks = rows(wrapper).map(row => row.find(".read-ingredients__pantry"));
-    expect(marks.map(m => m.text())).toEqual(["In pantry · Cupboard", "Not in pantry", "In pantry · Fridge, Freezer"]);
-    expect(marks.map(m => m.classes().includes("read-ingredients__pantry--have"))).toEqual([true, false, true]);
-    expect(wrapper.find(".read-ingredients__summary").text()).toBe("2 of 3 in your pantry");
+describe("RecipeReadIngredients pantry status", () => {
+  const pantry = (): IngredientPantry => ({
+    "ing-flour": [pantryItem({ id: "p1", location: "cupboard" })],
+    "ing-butter": [pantryItem({ id: "p2", location: "fridge", useBy: "2026-10-27" })],
+    "ing-lemon": [],
   });
 
-  test("an item near its use-by date says so", () => {
+  function renderOn(day: Date, props: Parameters<typeof render>[0]) {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date(2026, 9, 26, 12));
-    const wrapper = render({ pantry: { "ing-butter": [pantryItem({ location: "fridge", useBy: "2026-10-27" })] } });
+    vi.setSystemTime(day);
+    const wrapper = render(props);
     vi.useRealTimers();
+    return wrapper;
+  }
 
-    const mark = wrapper.find(".read-ingredients__pantry");
-    expect(mark.text()).toBe("In pantry · Fridge · Use by October 27");
-    expect(mark.classes()).toContain("read-ingredients__pantry--urgent");
+  test("tags have, use soon and missing in words, with where it is and when to use it by", () => {
+    const wrapper = renderOn(new Date(2026, 9, 26, 12), { pantry: pantry(), canAct: true });
+
+    expect(rows(wrapper).map(row => row.find(".read-ingredients__tag").text())).toEqual(["Have", "Use soon", "Missing"]);
+    expect(rows(wrapper).map(row => row.find(".read-ingredients__detail").exists() ? row.find(".read-ingredients__detail").text() : "")).toEqual([
+      "Cupboard",
+      "Fridge · Use by October 27",
+      "",
+    ]);
+    expect(wrapper.find(".read-ingredients__summary strong").text()).toBe("2 of 3");
+    expect(wrapper.find(".read-ingredients__summary").text()).toContain("2 of 3 in your pantry");
   });
 
-  test("ingredients the pantry can't tell, and an unknown pantry, show nothing", () => {
-    const told = render({ pantry: { "ing-flour": [] } });
-    expect(rows(told).map(row => row.find(".read-ingredients__pantry").exists())).toEqual([true, false, false]);
-    expect(told.find(".read-ingredients__summary").text()).toBe("0 of 1 in your pantry");
-    told.unmount();
+  test("an ingredient naming no food has no tag and is no button", () => {
+    const note: RecipeIngredient = { referenceId: "ing-n", quantity: 0, note: "a pinch of salt" };
+    const wrapper = render({ ingredients: [flour, note], pantry: { "ing-flour": [] }, canAct: true });
 
-    const unknown = render({ pantry: null });
-    expect(unknown.find(".read-ingredients__pantry").exists()).toBe(false);
-    expect(unknown.find(".read-ingredients__summary").exists()).toBe(false);
+    expect(rows(wrapper)[1]!.find(".read-ingredients__tag").exists()).toBe(false);
+    expect(rows(wrapper)[1]!.find("button").exists()).toBe(false);
+    expect(rows(wrapper)[0]!.find("button").exists()).toBe(true);
+  });
+
+  test("a row button is named by the ingredient and its status, and opens the ingredient with its items", async () => {
+    const wrapper = render({ pantry: pantry(), canAct: true });
+
+    const buttons = wrapper.findAll("button.read-ingredients__row");
+    expect(buttons).toHaveLength(3);
+    expect(buttons[2]!.text()).toContain("1 lemon");
+    expect(buttons[2]!.text()).toContain("Missing");
+
+    await buttons[2]!.trigger("click");
+    await buttons[0]!.trigger("click");
+    expect(wrapper.emitted("open-ingredient")).toEqual([
+      [{ ingredient: lemon, items: [] }],
+      [{ ingredient: flour, items: pantry()["ing-flour"] }],
+    ]);
+  });
+
+  test("the summary offers to add the missing ones to the list", async () => {
+    const wrapper = render({ pantry: pantry(), canAct: true });
+
+    const add = wrapper.find(".read-ingredients__summary button");
+    expect(add.text()).toBe("Add 1 to list");
+    await add.trigger("click");
+    expect(wrapper.emitted("add-missing")).toEqual([[[lemon]]]);
+  });
+
+  test("nothing missing: no add button", () => {
+    const wrapper = render({ pantry: { "ing-flour": [pantryItem({})] }, canAct: true });
+    expect(wrapper.find(".read-ingredients__summary button").exists()).toBe(false);
+  });
+
+  test("without canAct the status shows but there are no buttons", () => {
+    const wrapper = render({ pantry: pantry() });
+    expect(wrapper.findAll(".read-ingredients__tag")).toHaveLength(3);
+    expect(wrapper.find("button.read-ingredients__row").exists()).toBe(false);
+    expect(wrapper.find(".read-ingredients__summary button").exists()).toBe(false);
+  });
+
+  test("an unknown pantry shows no tags, buttons or summary", () => {
+    const wrapper = render({ pantry: null, canAct: true });
+    expect(wrapper.find(".read-ingredients__tag").exists()).toBe(false);
+    expect(wrapper.find("button.read-ingredients__row").exists()).toBe(false);
+    expect(wrapper.find(".read-ingredients__summary").exists()).toBe(false);
   });
 });
 
@@ -157,42 +200,6 @@ describe("RecipeReadIngredients", () => {
     const sections = wrapper.findAll(".read-ingredients__section");
     expect(sections).toHaveLength(2);
     expect(sections[1]!.findAll(".read-ingredients__item")).toHaveLength(1);
-  });
-
-  test("each ingredient is a real, labelled checkbox", () => {
-    const wrapper = render();
-
-    const boxes = wrapper.findAll("input[type=checkbox]");
-    expect(boxes).toHaveLength(3);
-    const label = wrapper.find(`label[for="${boxes[0]!.attributes("id")}"]`);
-    expect(label.exists()).toBe(true);
-    expect(label.text()).toContain("flour");
-  });
-
-  test("ticking an ingredient marks it checked and unticking clears it", async () => {
-    const wrapper = render();
-
-    await wrapper.findAll("input[type=checkbox]")[1]!.setValue(true);
-    expect(rows(wrapper)[1]!.classes()).toContain("checked");
-    expect(rows(wrapper)[0]!.classes()).not.toContain("checked");
-
-    await wrapper.findAll("input[type=checkbox]")[1]!.setValue(false);
-    expect(rows(wrapper)[1]!.classes()).not.toContain("checked");
-  });
-
-  test("ticks persist in session storage per recipe slug", async () => {
-    const first = render();
-    await first.findAll("input[type=checkbox]")[0]!.setValue(true);
-    expect(JSON.parse(sessionStorage.getItem(ingredientTicksKey("lemon-cake"))!)).toEqual({ "ref:ing-flour": true });
-    first.unmount();
-
-    const again = render();
-    expect(rows(again)[0]!.classes()).toContain("checked");
-    expect((again.findAll("input[type=checkbox]")[0]!.element as HTMLInputElement).checked).toBe(true);
-    again.unmount();
-
-    const otherRecipe = render({ recipeSlug: "apple-pie" });
-    expect(rows(otherRecipe)[0]!.classes()).not.toContain("checked");
   });
 
   test("when collapsible, the heading toggles the list and starts open", async () => {

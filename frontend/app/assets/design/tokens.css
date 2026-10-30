@@ -10,6 +10,15 @@
   --ds-accent: #f2b01e;
   --ds-accent-text: #17201b;
 
+  /* Pantry status. Never the saffron accent: have is green, missing is red, soon is amber. */
+  --ds-have: #2f7a4f;
+  --ds-have-surface: #e5f1e9;
+  --ds-missing: #a9432f;
+  --ds-missing-surface: #f8e6e1;
+  --ds-soon: #8f5d0e;
+  --ds-soon-surface: #fbefd6;
+  --ds-soon-bar: #d49a2a;
+
   /* Shape and depth */
   --ds-radius-ctl: 6px;
   --ds-radius-card: 12px;
@@ -43,5 +52,12 @@
   --ds-accent: #f2b01e;
   /* Ink on saffron in both modes, never light text on the accent. */
   --ds-accent-text: #17201b;
+  --ds-have: #7fcf9f;
+  --ds-have-surface: #1d3828;
+  --ds-missing: #f0a08f;
+  --ds-missing-surface: #3f211b;
+  --ds-soon: #e8b95c;
+  --ds-soon-surface: #3a2c10;
+  --ds-soon-bar: #d49a2a;
   --ds-scrim: rgb(0 0 0 / 55%);
 }

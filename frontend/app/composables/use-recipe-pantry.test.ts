@@ -62,4 +62,37 @@ describe("useRecipePantry", () => {
 
     expect(pantry.value).toEqual({ new: [] });
   });
+
+  test("setItems replaces one ingredient's items and leaves the rest", async () => {
+    pantryCheck.mockReset();
+    pantryCheck.mockResolvedValue({
+      data: { items: [item("p1")], suggestedLeftoverPortions: 0, ingredients: [{ referenceId: "a", pantryItemIds: [] }, { referenceId: "b", pantryItemIds: ["p1"] }] },
+    });
+    const { pantry, setItems } = run(() => "r-1", () => true);
+    await flushPromises();
+
+    setItems("a", [item("p9")]);
+
+    expect(pantry.value).toEqual({ a: [item("p9")], b: [item("p1")] });
+  });
+
+  test("setItems does nothing while the pantry is unknown", () => {
+    pantryCheck.mockReset();
+    const { pantry, setItems } = run(() => undefined, () => true);
+    setItems("a", [item("p9")]);
+    expect(pantry.value).toBeNull();
+  });
+
+  test("reload reads the pantry again", async () => {
+    pantryCheck.mockReset();
+    pantryCheck.mockResolvedValueOnce({ data: { items: [], suggestedLeftoverPortions: 0, ingredients: [{ referenceId: "a", pantryItemIds: [] }] } });
+    const { pantry, reload } = run(() => "r-1", () => true);
+    await flushPromises();
+    expect(pantry.value).toEqual({ a: [] });
+
+    pantryCheck.mockResolvedValueOnce({ data: { items: [item("p1")], suggestedLeftoverPortions: 0, ingredients: [{ referenceId: "a", pantryItemIds: ["p1"] }] } });
+    await reload();
+
+    expect(pantry.value).toEqual({ a: [item("p1")] });
+  });
 });

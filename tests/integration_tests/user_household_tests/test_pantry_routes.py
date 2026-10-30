@@ -142,6 +142,20 @@ def test_put_away_route(api_client: TestClient, unique_user_fn_scoped: TestUser)
     assert sorted(item["name"] for item in response.json()["items"]) == ["Apples", "Pasta"]
 
 
+def test_put_away_route_location(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    list_id = _create_list(api_client, user)
+    item_id = _add_list_item(api_client, user, list_id, "Peas", checked=True)
+
+    response = api_client.post(
+        api_routes.households_shopping_lists_list_id_put_away(list_id),
+        json={"itemIds": [item_id], "location": "freezer"},
+        headers=user.token,
+    )
+    assert response.status_code == 200
+    assert response.json()["created"][0]["location"] == "freezer"
+
+
 def test_put_away_unchecked_ids_422(api_client: TestClient, unique_user_fn_scoped: TestUser):
     user = unique_user_fn_scoped
     list_id = _create_list(api_client, user)
@@ -222,3 +236,110 @@ def test_blank_name_rejected(api_client: TestClient, unique_user_fn_scoped: Test
     response = api_client.put(api_routes.households_pantry_item_id(item_id), json={"name": " "}, headers=user.token)
     assert response.status_code == 422
     assert api_client.get(api_routes.households_pantry_item_id(item_id), headers=user.token).json()["name"] == "Milk"
+
+
+def _create_food(api_client: TestClient, user: TestUser, name: str) -> dict:
+    response = api_client.post(api_routes.foods, json={"name": name}, headers=user.token)
+    assert response.status_code == 201
+    return response.json()
+
+
+def _add_food_list_item(api_client: TestClient, user: TestUser, list_id: str, food: dict) -> str:
+    response = api_client.post(
+        api_routes.households_shopping_items,
+        json={"shoppingListId": list_id, "foodId": food["id"], "quantity": 1},
+        headers=user.token,
+    )
+    assert response.status_code == 201
+    return response.json()["createdItems"][0]["id"]
+
+
+def test_pantry_match_none(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    list_id = _create_list(api_client, user)
+    item_id = _add_list_item(api_client, user, list_id, "Lemon", checked=False)
+
+    response = api_client.get(
+        api_routes.households_shopping_lists_list_id_items_item_id_pantry_match(list_id, item_id), headers=user.token
+    )
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+def test_pantry_match_foodless_name_plural(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    list_id = _create_list(api_client, user)
+    food = _create_food(api_client, user, "lemon")
+    item_id = _add_food_list_item(api_client, user, list_id, food)
+    pantry = api_client.post(api_routes.households_pantry, json={"name": "Lemons"}, headers=user.token).json()
+
+    response = api_client.get(
+        api_routes.households_shopping_lists_list_id_items_item_id_pantry_match(list_id, item_id), headers=user.token
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == pantry["id"]
+
+
+def test_already_have_creates_when_missing(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    list_id = _create_list(api_client, user)
+    food = _create_food(api_client, user, random_string())
+    item_id = _add_food_list_item(api_client, user, list_id, food)
+
+    response = api_client.post(
+        api_routes.households_shopping_lists_list_id_items_item_id_already_have(list_id, item_id),
+        json={"location": "fridge"},
+        headers=user.token,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["removedItem"]["id"] == item_id
+    assert body["createdPantryItem"]["location"] == "fridge"
+    assert body["createdPantryItem"]["foodId"] == food["id"]
+
+    shopping_list = api_client.get(api_routes.households_shopping_lists_item_id(list_id), headers=user.token).json()
+    assert shopping_list["listItems"] == []
+    assert api_client.get(api_routes.households_pantry, headers=user.token).json()["total"] == 1
+
+
+def test_already_have_no_create_when_held(api_client: TestClient, unique_user_fn_scoped: TestUser):
+    user = unique_user_fn_scoped
+    list_id = _create_list(api_client, user)
+    food = _create_food(api_client, user, "lemon")
+    item_id = _add_food_list_item(api_client, user, list_id, food)
+    api_client.post(api_routes.households_pantry, json={"name": "Lemons"}, headers=user.token)
+
+    response = api_client.post(
+        api_routes.households_shopping_lists_list_id_items_item_id_already_have(list_id, item_id),
+        json={},
+        headers=user.token,
+    )
+    assert response.status_code == 200
+    assert response.json()["createdPantryItem"] is None
+
+    shopping_list = api_client.get(api_routes.households_shopping_lists_item_id(list_id), headers=user.token).json()
+    assert shopping_list["listItems"] == []
+    assert api_client.get(api_routes.households_pantry, headers=user.token).json()["total"] == 1
+
+
+def test_shopping_pantry_endpoints_foreign_404(api_client: TestClient, unique_user: TestUser, h2_user: TestUser):
+    list_id = _create_list(api_client, unique_user)
+    item_id = _add_list_item(api_client, unique_user, list_id, "Cheese", checked=False)
+
+    response = api_client.get(
+        api_routes.households_shopping_lists_list_id_items_item_id_pantry_match(list_id, item_id),
+        headers=h2_user.token,
+    )
+    assert response.status_code == 404
+    response = api_client.post(
+        api_routes.households_shopping_lists_list_id_items_item_id_already_have(list_id, item_id),
+        json={},
+        headers=h2_user.token,
+    )
+    assert response.status_code == 404
+
+    # nothing was removed
+    shopping_list = api_client.get(
+        api_routes.households_shopping_lists_item_id(list_id), headers=unique_user.token
+    ).json()
+    assert [item["id"] for item in shopping_list["listItems"]] == [item_id]

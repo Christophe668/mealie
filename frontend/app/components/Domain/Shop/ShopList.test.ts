@@ -178,15 +178,17 @@ describe("ShopList", () => {
     expect(foilRow.find(".shop-row__qty").exists()).toBe(false);
   });
 
-  test("the row's more button asks to edit the item", async () => {
+  test("the row's more button asks for the item's actions", async () => {
     const wrapper = render();
 
-    await wrapper.find(`[data-item-id="${milk.id}"] .shop-row__more`).trigger("click");
-    expect(wrapper.emitted("edit")).toEqual([[milk]]);
+    const more = wrapper.find(`[data-item-id="${milk.id}"] .shop-row__more`);
+    expect(more.attributes("aria-label")).toBe(`Actions for ${milk.food!.name}`);
+    await more.trigger("click");
+    expect(wrapper.emitted("actions")).toEqual([[milk]]);
     expect(wrapper.emitted("toggle")).toBeUndefined();
   });
 
-  test("a long press asks to edit instead of toggling", async () => {
+  test("a long press asks for the item's actions instead of toggling", async () => {
     vi.useFakeTimers();
     try {
       const wrapper = render();
@@ -197,7 +199,7 @@ describe("ShopList", () => {
       await label.trigger("pointerup");
       await label.trigger("click");
 
-      expect(wrapper.emitted("edit")).toEqual([[milk]]);
+      expect(wrapper.emitted("actions")).toEqual([[milk]]);
       expect(wrapper.emitted("toggle")).toBeUndefined();
     }
     finally {

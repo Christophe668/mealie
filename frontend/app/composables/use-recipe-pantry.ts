@@ -14,9 +14,12 @@ export function useRecipePantry(recipeId: () => string | undefined, enabled: () 
   const pantry = ref<IngredientPantry | null>(null);
   let stamp = 0;
 
-  async function load(id: string | undefined) {
+  async function load(id: string | undefined, keep = false) {
     const current = ++stamp;
-    pantry.value = null;
+    // A reload keeps what is shown until the answer arrives, so the rows don't flicker.
+    if (!keep) {
+      pantry.value = null;
+    }
     if (!id || !enabled()) {
       return;
     }
@@ -41,5 +44,15 @@ export function useRecipePantry(recipeId: () => string | undefined, enabled: () 
 
   watch([recipeId, enabled], ([id]) => load(id), { immediate: true });
 
-  return { pantry };
+  /** Reads the pantry again, e.g. after an action changed it. */
+  const reload = () => load(recipeId(), true);
+
+  /** Swaps one ingredient's items in place (an optimistic update). Ignored while the pantry is unknown. */
+  function setItems(referenceId: string, items: PantryItemOut[]) {
+    if (pantry.value) {
+      pantry.value = { ...pantry.value, [referenceId]: items };
+    }
+  }
+
+  return { pantry, reload, setItems };
 }

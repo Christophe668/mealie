@@ -513,6 +513,16 @@ def households_shopping_lists_item_id_recipe_recipe_id_delete(item_id, recipe_id
     return f"{prefix}/households/shopping/lists/{item_id}/recipe/{recipe_id}/delete"
 
 
+def households_shopping_lists_list_id_items_item_id_already_have(list_id, item_id):
+    """`/api/households/shopping/lists/{list_id}/items/{item_id}/already-have`"""
+    return f"{prefix}/households/shopping/lists/{list_id}/items/{item_id}/already-have"
+
+
+def households_shopping_lists_list_id_items_item_id_pantry_match(list_id, item_id):
+    """`/api/households/shopping/lists/{list_id}/items/{item_id}/pantry-match`"""
+    return f"{prefix}/households/shopping/lists/{list_id}/items/{item_id}/pantry-match"
+
+
 def households_shopping_lists_list_id_put_away(list_id):
     """`/api/households/shopping/lists/{list_id}/put-away`"""
     return f"{prefix}/households/shopping/lists/{list_id}/put-away"
