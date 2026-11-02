@@ -66,6 +66,19 @@ describe("ShopItemSheet", () => {
     expect(labels(wrapper)[0]).toBe("Not bought");
   });
 
+  test("says whether the pantry already holds the item, with how much and where", () => {
+    const status = (match: PantryItemOut | null | undefined) => render({ match }).find(".shop-sheet__pantry").text();
+
+    expect(status(undefined)).toBe("Checking the pantry…");
+    expect(status(null)).toBe("Not in the pantry");
+    expect(status(pantryMilk)).toBe("Already in the pantry · Fridge");
+    expect(status({ ...pantryMilk, quantity: 2, unit: { id: "u", name: "liter", abbreviation: "l", useAbbreviation: true } })).toBe(
+      "Already in the pantry · 2 l · Fridge",
+    );
+    // No particular place: nothing to add after the status.
+    expect(status({ ...pantryMilk, location: "other" })).toBe("Already in the pantry");
+  });
+
   test("no recipe, no For line", () => {
     const wrapper = render();
 

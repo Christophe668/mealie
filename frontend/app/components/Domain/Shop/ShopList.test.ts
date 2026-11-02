@@ -1,7 +1,8 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import ShopList from "./ShopList.vue";
-import { shopAisles, toByLabel, updatedAgo } from "~/composables/use-shop";
+import { shopAisles, shopRecipes, toByLabel, updatedAgo } from "~/composables/use-shop";
+import { recipeNamesOf } from "~/lib/shop/item-for-text";
 import type { ShoppingListItemOut, ShoppingListOut } from "~/lib/api/types/household";
 import type { MultiPurposeLabelSummary } from "~/lib/api/types/labels";
 import { useLocales } from "~/composables/use-locales";
@@ -103,6 +104,7 @@ beforeEach(() => {
 
 afterEach(() => {
   document.body.innerHTML = "";
+  localStorage.clear();
 });
 
 describe("ShopList", () => {
@@ -136,11 +138,23 @@ describe("ShopList", () => {
     expect(wrapper.findAll(".shop-bought .shop-row__name").map(n => n.text())).toEqual(["bread", "butter"]);
   });
 
-  test("tapping a row toggles the item through the handler, once", async () => {
+  test("tapping the checkbox's area ticks the item through the handler, once", async () => {
     const wrapper = render();
 
-    await wrapper.findAll(".shop-aisle")[1]!.find(".shop-row__label").trigger("click");
+    await wrapper.findAll(".shop-aisle")[1]!.find(".shop-row__box").trigger("click");
     expect(wrapper.emitted("toggle")).toEqual([[potatoes]]);
+    expect(wrapper.emitted("actions")).toBeUndefined();
+  });
+
+  test("tapping the item itself opens its options instead of ticking it", async () => {
+    const wrapper = render();
+
+    const open = wrapper.find(`[data-item-id="${milk.id}"] .shop-row__open`);
+    expect(open.element.tagName).toBe("BUTTON");
+    expect(open.attributes("aria-haspopup")).toBe("dialog");
+    await open.trigger("click");
+    expect(wrapper.emitted("actions")).toEqual([[milk]]);
+    expect(wrapper.emitted("toggle")).toBeUndefined();
   });
 
   test("the row's checkbox is a real labelled checkbox that toggles through the handler", async () => {
@@ -148,7 +162,9 @@ describe("ShopList", () => {
     const box = wrapper.find<HTMLInputElement>("#shop-item-" + milk.id);
 
     expect(box.attributes("type")).toBe("checkbox");
-    expect(wrapper.find(`label[for="shop-item-${milk.id}"]`).exists()).toBe(true);
+    // Named by the item's text, inside a label that widens its hit area.
+    expect(wrapper.find(`#${box.attributes("aria-labelledby")}`).text()).toBe("milk");
+    expect(box.element.closest("label")).not.toBeNull();
     await box.trigger("click");
     expect(wrapper.emitted("toggle")).toEqual([[milk]]);
     // Controlled: the box shows the item's state until the parent updates the item.
@@ -159,7 +175,7 @@ describe("ShopList", () => {
     const wrapper = render();
 
     await wrapper.find(".shop-bought__toggle").trigger("click");
-    await wrapper.find(".shop-bought .shop-row__label").trigger("click");
+    await wrapper.find(".shop-bought .shop-row__box").trigger("click");
     expect(wrapper.emitted("toggle")).toEqual([[bread]]);
   });
 
@@ -176,35 +192,6 @@ describe("ShopList", () => {
     expect(foilRow.find(".shop-row__name").text()).toBe("Kitchen foil");
     expect(foilRow.find(".shop-row__for").exists()).toBe(false);
     expect(foilRow.find(".shop-row__qty").exists()).toBe(false);
-  });
-
-  test("the row's more button asks for the item's actions", async () => {
-    const wrapper = render();
-
-    const more = wrapper.find(`[data-item-id="${milk.id}"] .shop-row__more`);
-    expect(more.attributes("aria-label")).toBe(`Actions for ${milk.food!.name}`);
-    await more.trigger("click");
-    expect(wrapper.emitted("actions")).toEqual([[milk]]);
-    expect(wrapper.emitted("toggle")).toBeUndefined();
-  });
-
-  test("a long press asks for the item's actions instead of toggling", async () => {
-    vi.useFakeTimers();
-    try {
-      const wrapper = render();
-      const label = wrapper.find(`[data-item-id="${milk.id}"] .shop-row__label`);
-
-      await label.trigger("pointerdown", { pointerType: "touch" });
-      vi.advanceTimersByTime(600);
-      await label.trigger("pointerup");
-      await label.trigger("click");
-
-      expect(wrapper.emitted("actions")).toEqual([[milk]]);
-      expect(wrapper.emitted("toggle")).toBeUndefined();
-    }
-    finally {
-      vi.useRealTimers();
-    }
   });
 
   test("quick add submits the text on Enter and clears the field", async () => {
@@ -270,7 +257,81 @@ describe("ShopList", () => {
   });
 });
 
+describe("ShopList grouped by recipe", () => {
+  test("the view switch is offered only when the list holds recipes", () => {
+    expect(render().find(".shop-list__view").exists()).toBe(true);
+    const noRecipes = mount(ShopList, {
+      props: { list: { ...makeList([milk]), recipeReferences: [] }, byLabel: [] },
+      global: { stubs },
+    });
+    expect(noRecipes.find(".shop-list__view").exists()).toBe(false);
+  });
+
+  test("switching to Recipes groups by recipe in list order, no-recipe items last, and is remembered", async () => {
+    const wrapper = render();
+    const [aisles, recipes] = wrapper.findAll(".shop-list__view-option");
+    expect(aisles!.attributes("aria-checked")).toBe("true");
+
+    await recipes!.trigger("click");
+    expect(recipes!.attributes("aria-checked")).toBe("true");
+    expect(aisleNames(wrapper)).toEqual(["Roast chicken", "Lemon tart", "No recipe"]);
+    const names = (i: number) => wrapper.findAll(".shop-aisle")[i]!.findAll(".shop-row__name").map(n => n.text());
+    expect(names(0)).toEqual(["potatoes", "lemon"]);
+    expect(names(1)).toEqual(["lemon"]);
+    expect(names(2)).toEqual(["milk", "Kitchen foil"]);
+
+    // Remembered: a fresh mount opens on the recipe view.
+    expect(aisleNames(render())).toContain("Roast chicken");
+  });
+
+  test("an item for two recipes says which other recipe it is for, with its own checkbox ids", async () => {
+    const wrapper = render();
+    await wrapper.findAll(".shop-list__view-option")[1]!.trigger("click");
+
+    const lemonRows = wrapper.findAll(".shop-row").filter(row => row.find(".shop-row__name").text() === "lemon");
+    expect(lemonRows.map(row => row.find(".shop-row__for").text())).toEqual(["Also for Lemon tart", "Also for Roast chicken"]);
+    const ids = lemonRows.map(row => row.find("input").attributes("id"));
+    expect(new Set(ids).size).toBe(2);
+    // A single-recipe item needs no "Also for" line.
+    expect(wrapper.findAll(".shop-aisle")[0]!.findAll(".shop-row")[0]!.find(".shop-row__for").exists()).toBe(false);
+  });
+
+  test("ticking an item in one recipe group toggles the item itself", async () => {
+    const wrapper = render();
+    await wrapper.findAll(".shop-list__view-option")[1]!.trigger("click");
+
+    await wrapper.findAll(".shop-aisle")[1]!.find(".shop-row__box").trigger("click");
+    expect(wrapper.emitted("toggle")).toEqual([[lemons]]);
+  });
+});
+
 describe("shop helpers", () => {
+  test("shopRecipes shows each recipe's share of an item for several recipes, and drops bought items", () => {
+    const flour = item("flour", {
+      quantity: 500,
+      recipeReferences: [
+        { id: "a", shoppingListItemId: "x", recipeId: "r-tart", recipeQuantity: 200 },
+        { id: "b", shoppingListItemId: "x", recipeId: "r-chicken", recipeQuantity: 300 },
+      ],
+    });
+    const list = makeList([flour, potatoes, butter]);
+    const groups = shopRecipes(list, recipeNamesOf(list));
+
+    expect(groups.map(g => g.name)).toEqual(["Roast chicken", "Lemon tart"]);
+    expect(groups[0]!.entries.map(e => [e.item.id, e.quantity, e.others])).toEqual([
+      [flour.id, 300, ["Lemon tart"]],
+      // One recipe only: the item's own quantity, so a hand edit still shows.
+      [potatoes.id, undefined, []],
+    ]);
+    expect(groups[1]!.entries.map(e => [e.item.id, e.quantity])).toEqual([[flour.id, 200]]);
+  });
+
+  test("shopRecipes treats a reference to a recipe no longer on the list as no recipe", () => {
+    const stray = item("salt", { recipeReferences: [{ id: "c", shoppingListItemId: "x", recipeId: "r-gone" }] });
+    const list = makeList([stray]);
+    expect(shopRecipes(list, recipeNamesOf(list))).toEqual([{ recipeId: null, name: null, entries: [{ item: stray, others: [] }] }]);
+  });
+
   test("toByLabel maps the composable's label buckets onto label objects, unlabelled as null", () => {
     const list = makeList(allItems);
     const groups = toByLabel(upstreamItemsByLabel(), list);

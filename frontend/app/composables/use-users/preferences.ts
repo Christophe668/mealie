@@ -38,6 +38,8 @@ export interface UserRecipePreferences {
 
 export interface UserShoppingListPreferences {
   viewAllLists: boolean;
+  /** How a list groups its open items: by aisle (label) or by recipe. */
+  groupBy: "aisle" | "recipe";
 }
 
 export interface UserTimelinePreferences {
@@ -161,6 +163,7 @@ export function useShoppingListPreferences(): Ref<UserShoppingListPreferences> {
     "shopping-list-preferences",
     {
       viewAllLists: false,
+      groupBy: "aisle" as "aisle" | "recipe",
     },
     { mergeDefaults: true },
   );

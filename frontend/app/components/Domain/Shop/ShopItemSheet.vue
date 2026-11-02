@@ -8,6 +8,11 @@
         <p v-if="forText" class="shop-sheet__for">
           {{ forText }}
         </p>
+        <!-- Whether the pantry already holds it, so "Already in the pantry" or "Put away" is an informed choice. -->
+        <p v-if="item" class="shop-sheet__pantry" :class="{ 'shop-sheet__pantry--in': !!match }" role="status">
+          <DsIcon :name="match ? 'checkboxMarkedCircle' : 'fridgeOutline'" :size="18" />
+          <span>{{ pantryStatus }}</span>
+        </p>
       </header>
     </template>
 
@@ -66,7 +71,7 @@ const props = withDefaults(defineProps<{
   busy: boolean;
   /** "For Roast chicken", from `itemForText`; empty when it comes from no recipe. */
   forText?: string;
-  /** Where focus goes on close when the action took the item's row (and its "⋯") away. */
+  /** Where focus goes on close when the action took the item's row (and the button that opened the sheet) away. */
   focusFallback?: () => HTMLElement | null | undefined;
 }>(), { forText: "", focusFallback: undefined });
 
@@ -93,6 +98,21 @@ const putAwayHint = computed(() => {
   return place === "other"
     ? i18n.t("shop.put-away-into-pantry")
     : i18n.t("shop.put-away-into", { place: i18n.t(`pantry.location.${place}`).toLocaleLowerCase(i18n.locale.value) });
+});
+
+/** "Checking the pantry…", "Not in the pantry" or "In the pantry · 2 kg · Fridge". */
+const pantryStatus = computed(() => {
+  const match = props.match;
+  if (match === undefined) {
+    return i18n.t("shop.pantry-checking");
+  }
+  if (match === null) {
+    return i18n.t("shop.pantry-not-in");
+  }
+  const unit = match.unit ? (match.unit.useAbbreviation && match.unit.abbreviation) || match.unit.name : "";
+  const amount = match.quantity ? [match.quantity, unit].filter(Boolean).join(" ") : "";
+  const place = match.location && match.location !== "other" ? i18n.t(`pantry.location.${match.location}`) : "";
+  return [i18n.t("shop.pantry-in"), amount, place].filter(Boolean).join(" · ");
 });
 
 const location = ref<PantryLocation>(props.guessedLocation);
@@ -126,6 +146,20 @@ watch(
   margin: 2px 0 0;
   color: var(--ds-text-2);
   font-size: var(--ds-t-2);
+}
+
+.shop-sheet__pantry {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--ds-space) * 0.75);
+  margin: calc(var(--ds-space) * 1) 0 0;
+  color: var(--ds-text-2);
+  font-size: var(--ds-t-2);
+}
+
+.shop-sheet__pantry--in {
+  color: var(--ds-text);
+  font-weight: 600;
 }
 
 .shop-sheet__label {
