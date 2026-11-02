@@ -51,49 +51,21 @@
       @put-away="putAway"
     />
 
-    <!-- Recipes whose ingredients are on the list: upstream's controls to add or take a recipe off again. -->
+    <!-- Recipes whose ingredients are on the list, with upstream's controls to add or take a recipe off again. -->
     <section v-if="shoppingList && recipeList.length" class="shop-page__recipes">
       <DsSectionTitle :title="$t('shop.recipes-on-list')" />
-      <RecipeList :recipes="recipeList" show-description :disabled="isOffline">
-        <template
-          v-for="(recipe, index) in recipeList"
-          #[`actions-${recipe.id}`]
-          :key="'item-actions-decrease' + recipe.id"
-        >
-          <v-list-item-action>
-            <v-btn
-              icon
-              flat
-              class="bg-transparent"
-              :disabled="isOffline"
-              :aria-label="$t('shop.recipe-less', { recipe: recipe.name })"
-              @click.prevent="removeRecipeReferenceToList(recipe.id!)"
-            >
-              <v-icon>{{ $globals.icons.minus }}</v-icon>
-            </v-btn>
-          </v-list-item-action>
-          <div class="pl-3">
-            {{ shoppingList.recipeReferences?.[index]?.recipeQuantity }}
-          </div>
-          <v-list-item-action>
-            <v-btn
-              icon
-              flat
-              class="bg-transparent"
-              :disabled="isOffline"
-              :aria-label="$t('shop.recipe-more', { recipe: recipe.name })"
-              @click.prevent="addRecipeReferenceToList(recipe.id!)"
-            >
-              <v-icon>{{ $globals.icons.createAlt }}</v-icon>
-            </v-btn>
-          </v-list-item-action>
-        </template>
-      </RecipeList>
+      <ShopRecipes
+        :recipes="recipeList"
+        :references="shoppingList.recipeReferences ?? []"
+        :disabled="isOffline"
+        @less="removeRecipeReferenceToList"
+        @more="addRecipeReferenceToList"
+      />
     </section>
 
     <KeepScreenOn v-if="keepAwake" />
 
-    <!-- One item's actions: "⋯" or a long press on its row. -->
+    <!-- One item's options: a tap on its row (the checkbox ticks it directly). -->
     <ShopItemSheet
       v-model="sheet.open"
       :item="sheetItem"
@@ -197,7 +169,7 @@ import DsIcon from "~/components/Design/DsIcon.vue";
 import DsSectionTitle from "~/components/Design/DsSectionTitle.vue";
 import ShopItemSheet from "~/components/Domain/Shop/ShopItemSheet.vue";
 import ShopList from "~/components/Domain/Shop/ShopList.vue";
-import RecipeList from "~/components/Domain/Recipe/RecipeList.vue";
+import ShopRecipes from "~/components/Domain/Shop/ShopRecipes.vue";
 import MultiPurposeLabelSection from "~/components/Domain/ShoppingList/MultiPurposeLabelSection.vue";
 import ShoppingListItemEditor from "~/components/Domain/ShoppingList/ShoppingListItemEditor.vue";
 import AppShellMenu from "~/components/Layout/AppShellMenu.vue";
@@ -423,7 +395,7 @@ const sheetForText = computed(() =>
 
 const itemName = (item: ShoppingListItemOut) => item.food?.name || item.note || i18n.t("recipe.ingredient");
 
-// Tick, put away, already have and remove take the row away, and with it the "⋯" the sheet gives focus back
+// Tick, put away, already have and remove take the row away, and with it the row button the sheet gives focus back
 // to. Each works out the row's neighbour (else the quick-add field) before it acts, so focus lands there.
 const shopList = useTemplateRef<InstanceType<typeof ShopList>>("shopList");
 let sheetFocus: (() => HTMLElement | null) | null = null;
@@ -544,7 +516,7 @@ async function sheetPutAway(location: PantryLocation) {
       timeout: 6000,
       action: { message: i18n.t("shop.open-pantry"), onClick: () => router.push("/household/pantry") },
     });
-    // Closed once the reload has taken the row away, so focus goes to its neighbour, not the gone "⋯".
+    // Closed once the reload has taken the row away, so focus goes to its neighbour, not the gone row.
     await refresh();
     sheet.open = false;
   }
@@ -588,7 +560,7 @@ async function sheetAlreadyHave(location: PantryLocation) {
       }
       return true;
     });
-    // Closed once the reload has taken the row away, so focus goes to its neighbour, not the gone "⋯".
+    // Closed once the reload has taken the row away, so focus goes to its neighbour, not the gone row.
     await refresh();
     sheet.open = false;
   }
@@ -743,24 +715,5 @@ const moreItems = computed<AppShellMenuItem[]>(() => [
 
 .shop-page__recipes {
   margin-top: calc(var(--ds-space) * 2);
-}
-
-/* Upstream RecipeList, kept as is; only its sheets move onto the tokens (hairline, no shadow). */
-.shop-page__recipes :deep(.v-list) {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ds-space);
-  padding: 0;
-  background: transparent;
-}
-
-.shop-page__recipes :deep(.v-sheet) {
-  margin: 0 !important;
-  overflow: hidden;
-  background: var(--ds-surface);
-  border: 1px solid var(--ds-border);
-  border-radius: var(--ds-radius-card);
-  box-shadow: none;
-  color: var(--ds-text);
 }
 </style>

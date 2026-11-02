@@ -27,11 +27,13 @@ vi.mock("~/composables/use-toast", () => ({ alert: { info: vi.fn(), error: vi.fn
 vi.mock("~/composables/api", () => ({ useUserApi: () => api }));
 vi.mock("~/composables/use-users/preferences", async () => {
   const { ref } = await import("vue");
-  return { useUserExperiencePreferences: () => ref({ lockScreen: false }) };
+  return {
+    useUserExperiencePreferences: () => ref({ lockScreen: false }),
+    useShoppingListPreferences: () => ref({ viewAllLists: false, groupBy: "aisle" }),
+  };
 });
 vi.mock("~/composables/use-wake-lock", () => ({ useWakeLock: () => {} }));
 vi.mock("vue-draggable-plus", () => ({ VueDraggable: { render: () => null } }));
-vi.mock("~/components/Domain/Recipe/RecipeList.vue", () => ({ default: { render: () => null } }));
 vi.mock("~/components/Domain/ShoppingList/ShoppingListItemEditor.vue", () => ({ default: { name: "ShoppingListItemEditor", props: ["modelValue"], render: () => null } }));
 // The real sheet pulls in Vuetify's dialog components, which makes the page's first import slow.
 // It keeps the real focus return, so where focus lands after an action can be checked.
@@ -268,7 +270,7 @@ describe("shopping list page", () => {
     const { alert } = await import("~/composables/use-toast");
     const wrapper = await render();
 
-    await wrapper.find(".shop-row__label").trigger("click");
+    await wrapper.find(".shop-row__box").trigger("click");
     const ticked = page.current.saveListItem.mock.calls[0][0];
     expect(ticked).toMatchObject({ id: "a", checked: true });
 
@@ -285,7 +287,7 @@ describe("item sheet", () => {
     wrapper.findAll(".sheet .ds-sheet__action").find(button => button.find(".shop-sheet__label").text() === label)!;
 
   async function openSheet(wrapper: Awaited<ReturnType<typeof render>>) {
-    await wrapper.find("[data-item-id=\"a\"] .shop-row__more").trigger("click");
+    await wrapper.find("[data-item-id=\"a\"] .shop-row__open").trigger("click");
     await flushPromises();
   }
 
@@ -310,10 +312,10 @@ describe("item sheet", () => {
     expect(wrapper.findComponent(Editor).props("modelValue")).toMatchObject({ id: "a" });
   });
 
-  test("a tap on the row still ticks it, without opening the sheet", async () => {
+  test("a tap on the checkbox still ticks it, without opening the sheet", async () => {
     const wrapper = await render();
 
-    await wrapper.find(".shop-row__label").trigger("click");
+    await wrapper.find(".shop-row__box").trigger("click");
     expect(page.current.saveListItem).toHaveBeenCalledWith(expect.objectContaining({ id: "a", checked: true }));
     expect(wrapper.find(".sheet").exists()).toBe(false);
   });
@@ -497,7 +499,7 @@ describe("item sheet", () => {
       page.current.shoppingList.value = { ...list, listItems: list.listItems.filter((i: { id: string }) => i.id !== item.id) };
       page.current.itemsByLabel.value = { "No label": page.current.itemsByLabel.value["No label"].filter((i: { id: string }) => i.id !== item.id) };
     });
-    const more = wrapper.find<HTMLButtonElement>("[data-item-id=\"a\"] .shop-row__more");
+    const more = wrapper.find<HTMLButtonElement>("[data-item-id=\"a\"] .shop-row__open");
     more.element.focus();
     await more.trigger("click");
     await flushPromises();

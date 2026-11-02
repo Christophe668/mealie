@@ -262,12 +262,17 @@ defineExpose({ focus });
     margin-bottom: calc(var(--ds-space) * 2);
   }
 
-  /* One line on mobile: a long title ellipsizes instead of crowding the brand. */
+  /* Up to three lines on mobile (the brand and the actions share the row), so a list or recipe name is read
+     in full; only a longer one ellipsizes. */
   .ds-topbar__title {
+    display: -webkit-box;
     overflow: hidden;
     font-size: var(--ds-t-5);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
   }
 }
 </style>
