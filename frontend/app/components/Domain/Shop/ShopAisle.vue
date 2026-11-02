@@ -2,15 +2,18 @@
   <section class="shop-aisle" :aria-labelledby="headingId">
     <h2 :id="headingId" class="shop-aisle__heading">
       <span class="shop-aisle__name">{{ name }}</span>
-      <span class="shop-aisle__count" aria-hidden="true">{{ items.length }}</span>
-      <span class="shop-aisle__sr">{{ $t("shop.to-buy", { count: items.length }) }}</span>
+      <span class="shop-aisle__count" aria-hidden="true">{{ rows.length }}</span>
+      <span class="shop-aisle__sr">{{ $t("shop.to-buy", { count: rows.length }) }}</span>
     </h2>
     <ul class="shop-aisle__items" role="list">
       <ShopItemRow
-        v-for="item in items"
-        :key="item.id"
-        :item="item"
+        v-for="row in rows"
+        :key="row.item.id"
+        :item="row.item"
         :recipe-names="recipeNames"
+        :quantity="row.quantity"
+        :also-for="row.others"
+        :id-suffix="row.idSuffix"
         @toggle="$emit('toggle', $event)"
         @actions="$emit('actions', $event)"
       />
@@ -21,13 +24,21 @@
 <script setup lang="ts">
 import { useId } from "vue";
 import ShopItemRow from "./ShopItemRow.vue";
+import type { ShopRecipeEntry } from "~/composables/use-shop";
 import type { ShoppingListItemOut } from "~/lib/api/types/household";
 import type { MultiPurposeLabelSummary } from "~/lib/api/types/labels";
 
+/** A row of the section; only the recipe view sets more than the item. */
+type Row = Partial<Omit<ShopRecipeEntry, "item">> & { item: ShoppingListItemOut; idSuffix?: string };
+
 const props = defineProps<{
   /** null = the unlabelled items, shown as "Other". */
-  label: MultiPurposeLabelSummary | null;
-  items: ShoppingListItemOut[];
+  label?: MultiPurposeLabelSummary | null;
+  /** Heading instead of the label's name: a recipe, in the recipe view. */
+  title?: string;
+  items?: ShoppingListItemOut[];
+  /** The recipe view's rows, in place of `items`. */
+  entries?: Row[];
   recipeNames: Map<string, string>;
 }>();
 
@@ -37,7 +48,8 @@ defineEmits<{
 
 const i18n = useI18n();
 const headingId = useId();
-const name = computed(() => props.label?.name || i18n.t("shop.other"));
+const name = computed(() => props.title || props.label?.name || i18n.t("shop.other"));
+const rows = computed<Row[]>(() => props.entries ?? (props.items ?? []).map(item => ({ item })));
 </script>
 
 <style scoped>
