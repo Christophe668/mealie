@@ -91,7 +91,7 @@ describe("PantryList", () => {
     expect(section.findAll("li .pantry-row__name").map(n => n.text())).toEqual(["Milk", "Butter"]);
   });
 
-  test("a row shows quantity with unit and one freshness line; only urgent use-by is the accent chip", () => {
+  test("a row shows quantity with unit, a status dot and one freshness line led by its status", () => {
     const wrapper = render([
       { location: "fridge", items: [milk, butter] },
       { location: "cupboard", items: [rice] },
@@ -101,13 +101,43 @@ describe("PantryList", () => {
     const row = (id: string) => wrapper.find(`[data-item-id="${id}"]`);
 
     expect(row("milk").find(".pantry-row__qty").text()).toBe("1 litre");
-    expect(row("milk").find(".pantry-row__fresh").text()).toContain("Use by October 25");
-    expect(row("milk").find(".ds-chip--accent").exists()).toBe(true);
+    // Use by tomorrow: use soon.
+    expect(row("milk").find(".pantry-row__fresh").text()).toBe("Use soon · use by October 25");
+    expect(row("milk").find(".pantry-row__dot--soon").exists()).toBe(true);
+    // No keeping time known: just the date, and no claim either way.
     expect(row("butter").find(".pantry-row__fresh").text()).toBe("Opened 3 days ago");
+    expect(row("butter").find(".pantry-row__dot--unknown").exists()).toBe(true);
     expect(row("rice").find(".pantry-row__fresh").text()).toBe("Bought 5 days ago");
-    expect(row("peas").find(".pantry-row__fresh").exists()).toBe(false);
-    expect(row("candles").find(".ds-chip--accent").exists()).toBe(false);
-    expect(wrapper.findAll(".ds-chip--accent")).toHaveLength(1);
+    expect(row("peas").find(".pantry-row__fresh").text()).toBe("No date");
+    expect(row("candles").find(".pantry-row__dot--ok").exists()).toBe(true);
+  });
+
+  test("an estimate from the keeping time colours the row", () => {
+    const bread = item("bread", "Baguette", {
+      location: "cupboard",
+      boughtOn: "2026-10-18",
+      shelfLife: { openedDays: 2, unopenedDays: 2, source: "typical" },
+    });
+    const wrapper = render([{ location: "cupboard", items: [rice, bread] }]);
+
+    // Worst first within the place.
+    expect(wrapper.findAll(".pantry-row__name").map(n => n.text())).toEqual(["Baguette", "Rice"]);
+    expect(wrapper.find("[data-item-id=bread] .pantry-row__fresh").text()).toBe("Probably past it · bought 6 days ago");
+    expect(wrapper.find("[data-item-id=bread] .pantry-row__dot--past").exists()).toBe(true);
+  });
+
+  test("a place folds after five items and unfolds on demand", async () => {
+    const many = Array.from({ length: 7 }, (_, i) => item(`i${i}`, `Item ${i}`, { location: "cupboard" }));
+    const wrapper = render([{ location: "cupboard", items: many }]);
+
+    expect(wrapper.findAll(".pantry-row")).toHaveLength(5);
+    const fold = wrapper.find(".pantry-group__fold");
+    expect(fold.text()).toContain("Show 2 more");
+
+    await fold.trigger("click");
+
+    expect(wrapper.findAll(".pantry-row")).toHaveLength(7);
+    expect(wrapper.find(".pantry-group__fold").text()).toContain("Show less");
   });
 
   test("tapping a row asks to edit it", async () => {
@@ -150,6 +180,15 @@ describe("PantryList", () => {
     groupList(wrapper, "fridge").vm.$emit("add", { item });
 
     expect(wrapper.emitted("move")).toEqual([["rice", "fridge"]]);
+  });
+
+  test("an item is only picked up after a long press, so a swipe still scrolls", () => {
+    const wrapper = render([{ location: "fridge", items: [milk] }]);
+    const list = groupList(wrapper, "fridge");
+
+    expect(Number(list.attributes("delay"))).toBeGreaterThanOrEqual(300);
+    expect(list.attributes("delay-on-touch-only")).toBeUndefined();
+    expect(Number(list.attributes("touch-start-threshold"))).toBeGreaterThan(0);
   });
 
   test("while dragging, a floating bar offers every place, empty ones included, without showing empty groups", async () => {

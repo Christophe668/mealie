@@ -77,6 +77,7 @@ import {
   mdiFormatColorFill,
   mdiFormatListChecks,
   mdiFridgeOutline,
+  mdiArchiveOutline,
   mdiGithub,
   mdiHeart,
   mdiHeartOutline,
@@ -235,6 +236,9 @@ export const icons = {
   formatColorFill: mdiFormatColorFill,
   formatListCheck: mdiFormatListChecks,
   fridgeOutline: mdiFridgeOutline,
+  // Pantry places: the cupboard and anywhere else.
+  cupboard: mdiArchiveOutline,
+  otherPlace: mdiShapeOutline,
   github: mdiGithub,
   heart: mdiHeart,
   heartOutline: mdiHeartOutline,

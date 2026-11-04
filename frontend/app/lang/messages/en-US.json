@@ -1778,7 +1778,30 @@
     "use-by-date": "Use by",
     "note": "Note",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "summary-past": "{count} probably past it",
+    "summary-check": "{count} to check",
+    "search": "Search the pantry",
+    "filters": "Filter the pantry",
+    "filter-all": "All",
+    "filter-check": "To check",
+    "use-first": "Use first",
+    "estimate": "Estimate",
+    "estimate-hint": "From when it was bought or opened and how long that food usually keeps. Check before you eat it.",
+    "by-place": "By place",
+    "hold-to-move": "Hold an item to move it",
+    "status": {
+      "past": "Probably past it",
+      "check": "Worth checking",
+      "soon": "Use soon"
+    },
+    "no-date": "No date",
+    "keeps-days": "keeps about {days} day | keeps about {days} days",
+    "throw-away": "Throw away",
+    "show-more": "Show {count} more",
+    "show-less": "Show less",
+    "no-match": "Nothing in the pantry matches “{query}”.",
+    "nothing-to-check": "Nothing to check: everything looks fine."
   },
   "household-profile": {
     "title": "Household",

@@ -1,7 +1,8 @@
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import UUID4, ConfigDict, field_validator
+from pydantic import UUID4, ConfigDict, field_validator, model_validator
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.orm.interfaces import LoaderOption
 
@@ -12,6 +13,7 @@ from mealie.schema._mealie.mealie_model import UpdatedAtField
 from mealie.schema.household.group_shopping_list import ShoppingListItemOut
 from mealie.schema.recipe.recipe_ingredient import IngredientFood, IngredientUnit
 from mealie.schema.response.pagination import PaginationBase
+from mealie.services.claude_context.shelf_life import estimate_shelf_life
 
 
 class PantryLocation(StrEnum):
@@ -57,6 +59,15 @@ class PantryItemUpdate(PantryItemCreate):
     pass
 
 
+class PantryShelfLife(MealieModel):
+    """How long the item typically keeps, in days, once opened and sealed. An estimate, not a safety rule."""
+
+    opened_days: int | None = None
+    unopened_days: int | None = None
+    source: Literal["food", "typical"]
+    """`food`: set on the item's food; `typical`: Mealie's built-in table of common foods."""
+
+
 class PantryItemOut(_PantryItemFields):
     id: UUID4
     group_id: UUID4
@@ -68,7 +79,29 @@ class PantryItemOut(_PantryItemFields):
     created_at: datetime | None = None
     updated_at: datetime | None = UpdatedAtField(None)
 
+    shelf_life: PantryShelfLife | None = None
+    """Filled from the item itself on every read; whatever a client sends here is ignored."""
+
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def _estimate_shelf_life(self) -> PantryItemOut:
+        estimate = estimate_shelf_life(
+            name=self.name,
+            location=self.location.value,
+            source=self.source.value,
+            note=self.note,
+            food_name=self.food.name if self.food else None,
+            food_extras=self.food.extras if self.food else None,
+        )
+        self.shelf_life = (
+            PantryShelfLife(
+                opened_days=estimate.opened_days, unopened_days=estimate.unopened_days, source=estimate.source
+            )
+            if estimate
+            else None
+        )
+        return self
 
     @classmethod
     def loader_options(cls) -> list[LoaderOption]:

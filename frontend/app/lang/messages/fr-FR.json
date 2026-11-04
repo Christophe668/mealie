@@ -1778,7 +1778,30 @@
     "use-by-date": "À utiliser avant le",
     "note": "Note",
     "save": "Enregistrer",
-    "cancel": "Annuler"
+    "cancel": "Annuler",
+    "summary-past": "{count} probablement passé | {count} probablement passés",
+    "summary-check": "{count} à vérifier",
+    "search": "Chercher dans le garde-manger",
+    "filters": "Filtrer le garde-manger",
+    "filter-all": "Tout",
+    "filter-check": "À vérifier",
+    "use-first": "À utiliser d’abord",
+    "estimate": "Estimation",
+    "estimate-hint": "D’après la date d’achat ou d’ouverture et la durée de conservation habituelle de l’aliment. Vérifiez avant de le manger.",
+    "by-place": "Par endroit",
+    "hold-to-move": "Appui long pour déplacer",
+    "status": {
+      "past": "Probablement passé",
+      "check": "À vérifier",
+      "soon": "À utiliser vite"
+    },
+    "no-date": "Pas de date",
+    "keeps-days": "se garde environ {days} jour | se garde environ {days} jours",
+    "throw-away": "Jeter",
+    "show-more": "Voir {count} de plus",
+    "show-less": "Voir moins",
+    "no-match": "Rien dans le garde-manger ne correspond à « {query} ».",
+    "nothing-to-check": "Rien à vérifier : tout a l’air bon."
   },
   "household-profile": {
     "title": "Foyer",
