@@ -36,7 +36,6 @@ _ITEM_FIELDS = frozenset(PantryItemCreate.model_fields)
 # `unit` is accepted as a unit name (or abbreviation) and resolved to `unit_id`.
 _ADD_KEYS = _ITEM_FIELDS | {"unit"}
 _UPDATE_KEYS = _ADD_KEYS | {"id"}
-_SHELF_LIFE_KEYS = ("shelf_life_days_opened", "shelf_life_days_unopened")
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _OUTCOMES = ", ".join(o.value for o in PantryOutcome)
 _PANTRY_OUTCOME_KEYS = frozenset({"id", "outcome", "quantity", "replaces_reference_id"})
@@ -53,25 +52,8 @@ def _days(start: date | None, end: date | None) -> int | None:
     return (end - start).days if start is not None and end is not None else None
 
 
-def _shelf_life(extras: dict | None, key: str) -> int | None:
-    """An integer shelf life from the food's extras; extras are stored as strings, so numeric strings count."""
-    value = (extras or {}).get(key)
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value) if value.is_integer() else None
-    if isinstance(value, str):
-        try:
-            return int(value.strip())
-        except ValueError:
-            return None
-    return None
-
-
 def _item_dict(item: PantryItemOut, today: date) -> dict[str, Any]:
-    extras = item.food.extras if item.food else None
+    shelf_life = item.shelf_life
     return {
         "id": str(item.id),
         "name": item.name,
@@ -87,8 +69,9 @@ def _item_dict(item: PantryItemOut, today: date) -> dict[str, Any]:
         "days_since_bought": _days(item.bought_on, today),
         "days_since_opened": _days(item.opened_on, today),
         "days_until_use_by": _days(today, item.use_by),
-        "shelf_life_days_opened": _shelf_life(extras, _SHELF_LIFE_KEYS[0]),
-        "shelf_life_days_unopened": _shelf_life(extras, _SHELF_LIFE_KEYS[1]),
+        "shelf_life_days_opened": shelf_life.opened_days if shelf_life else None,
+        "shelf_life_days_unopened": shelf_life.unopened_days if shelf_life else None,
+        "shelf_life_source": shelf_life.source if shelf_life else None,
     }
 
 
@@ -408,8 +391,10 @@ async def get_pantry(location: str | None = None) -> dict[str, Any]:
     bought). `location` limits it to one of fridge, freezer, cupboard, other. Returns {items: [{id, name,
     food_id, quantity, unit, location, bought_on, opened_on, use_by, source (shopping|manual|leftover), note,
     days_since_bought, days_since_opened, days_until_use_by, shelf_life_days_opened,
-    shelf_life_days_unopened}]}. Dates are ISO (YYYY-MM-DD); day counts and shelf lives are integers or null
-    (shelf lives are the food's typical keeping time in days, opened or unopened, when known). Freshness is
+    shelf_life_days_unopened, shelf_life_source (food|typical)}]}. Dates are ISO (YYYY-MM-DD); day counts and
+    shelf lives are integers or null. Shelf lives are the typical keeping time in days, opened or unopened:
+    set on the food (source food) or from Mealie's table of common foods (source typical); the freezer and
+    leftovers have their own. An explicit use_by always wins over them. Freshness is
     your estimate from these dates and the food's shelf life: say so, present it as guidance rather than
     safety advice, and flag borderline cases instead of deciding them."""
     return await run_in_context(get_pantry_impl, location)

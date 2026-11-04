@@ -82,6 +82,7 @@ async def test_get_pantry_orders_and_counts_days(
         "days_until_use_by",
         "shelf_life_days_opened",
         "shelf_life_days_unopened",
+        "shelf_life_source",
     }
     assert milk["location"] == "fridge"
     assert milk["use_by"] == (TODAY + timedelta(days=1)).isoformat()
@@ -92,7 +93,8 @@ async def test_get_pantry_orders_and_counts_days(
     assert rice["days_since_bought"] == 30
     assert rice["days_since_opened"] is None
     assert rice["days_until_use_by"] is None
-    assert rice["shelf_life_days_opened"] is None
+    assert rice["shelf_life_days_opened"] == 365
+    assert rice["shelf_life_source"] == "typical"
 
     fridge = await get_pantry("fridge")
     assert [i["name"] for i in fridge["items"]] == ["Milk", "Yoghurt"]
@@ -121,6 +123,7 @@ async def test_get_pantry_reads_shelf_life_from_food_extras(
     assert item["food_id"] == str(food.id)
     assert item["shelf_life_days_opened"] == 4
     assert item["shelf_life_days_unopened"] is None
+    assert item["shelf_life_source"] == "food"
 
 
 @pytest.mark.asyncio

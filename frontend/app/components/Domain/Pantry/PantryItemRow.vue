@@ -2,14 +2,11 @@
   <li class="pantry-row" :data-item-id="item.id">
     <!-- The whole row opens the editor; the kebab holds the quick actions. -->
     <button type="button" class="pantry-row__main ds-focus" @click="$emit('edit', item)">
+      <span class="pantry-row__dot" :class="`pantry-row__dot--${freshness.status}`" aria-hidden="true" />
       <span class="pantry-row__text">
         <span class="pantry-row__name">{{ item.name }}</span>
-        <span v-if="fresh" class="pantry-row__fresh">
-          <DsChip v-if="fresh.urgent" tone="accent">
-            {{ fresh.text }}
-            <span class="pantry-row__sr">{{ $t("pantry.use-soon") }}</span>
-          </DsChip>
-          <template v-else>{{ fresh.text }}</template>
+        <span class="pantry-row__fresh" :class="`pantry-row__fresh--${freshness.status}`">
+          {{ meta }}
         </span>
       </span>
       <span v-if="qty" class="pantry-row__qty">{{ qty }}</span>
@@ -30,10 +27,9 @@
 </template>
 
 <script setup lang="ts">
-import DsChip from "~/components/Design/DsChip.vue";
 import DsIcon from "~/components/Design/DsIcon.vue";
 import AppShellMenu from "~/components/Layout/AppShellMenu.vue";
-import { freshnessLine } from "~/lib/pantry/freshness";
+import { freshnessLine, freshnessOf } from "~/lib/pantry/freshness";
 import type { PantryItemOut } from "~/lib/api/types/household";
 import type { AppShellMenuItem } from "~/types/application-types";
 
@@ -48,7 +44,23 @@ const emit = defineEmits<{
 
 const i18n = useI18n();
 
-const fresh = computed(() => freshnessLine(props.item, props.today, (key, params) => i18n.t(key, params ?? {}), i18n.locale.value));
+const freshness = computed(() => freshnessOf(props.item, props.today));
+
+/** "Worth checking", "Use soon"…: only when the item needs attention. */
+const statusLabel = computed(() => {
+  const status = freshness.value.status;
+  return status === "past" || status === "check" || status === "soon" ? i18n.t(`pantry.status.${status}`) : "";
+});
+
+/** "Worth checking · opened 8 days ago": the status if any, then the use-by, opened or bought date. */
+const meta = computed(() => {
+  const text = freshnessLine(props.item, props.today, (key, params) => i18n.t(key, params ?? {}), i18n.locale.value)?.text
+    ?? i18n.t("pantry.no-date");
+  if (!statusLabel.value) {
+    return text;
+  }
+  return `${statusLabel.value} · ${text.charAt(0).toLocaleLowerCase(i18n.locale.value)}${text.slice(1)}`;
+});
 
 /** "1 litre", "500 g", "3": the unit only when there is an amount to go with it. */
 const qty = computed(() => {
@@ -85,7 +97,7 @@ const actions = computed<AppShellMenuItem[]>(() => [
   display: flex;
   flex: 1;
   align-items: center;
-  gap: calc(var(--ds-space) * 2);
+  gap: calc(var(--ds-space) * 1.5);
   min-width: 0;
   min-height: 52px;
   padding: var(--ds-space) var(--ds-space) var(--ds-space) calc(var(--ds-space) * 0.5);
@@ -96,6 +108,29 @@ const actions = computed<AppShellMenuItem[]>(() => [
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.pantry-row__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ds-have);
+}
+
+.pantry-row__dot--soon,
+.pantry-row__dot--check {
+  background: var(--ds-soon-bar);
+}
+
+.pantry-row__dot--past {
+  background: var(--ds-missing);
+}
+
+/* No dates: a hollow ring, so "fine" is never claimed without evidence. */
+.pantry-row__dot--unknown {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ds-border);
 }
 
 .pantry-row__text {
@@ -119,21 +154,23 @@ const actions = computed<AppShellMenuItem[]>(() => [
   line-height: 1.3;
 }
 
+.pantry-row__fresh--soon,
+.pantry-row__fresh--check {
+  color: var(--ds-soon);
+  font-weight: 600;
+}
+
+.pantry-row__fresh--past {
+  color: var(--ds-missing);
+  font-weight: 600;
+}
+
 .pantry-row__qty {
   flex: none;
   color: var(--ds-text-2);
   font-size: var(--ds-t-2);
   font-variant-numeric: tabular-nums;
   text-align: right;
-  white-space: nowrap;
-}
-
-.pantry-row__sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
   white-space: nowrap;
 }
 

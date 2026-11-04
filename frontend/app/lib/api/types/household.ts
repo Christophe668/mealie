@@ -145,6 +145,12 @@ export interface PantryItemOut {
   unit?: IngredientUnit | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+  shelfLife?: PantryShelfLife | null;
+}
+export interface PantryShelfLife {
+  openedDays?: number | null;
+  unopenedDays?: number | null;
+  source: "food" | "typical";
 }
 export interface IngredientFood {
   id: string;

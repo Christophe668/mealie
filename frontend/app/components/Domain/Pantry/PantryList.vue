@@ -6,6 +6,7 @@
       :location="group.location"
       :items="group.items"
       :today="today"
+      :foldable="foldable"
       @edit="$emit('edit', $event)"
       @opened="$emit('opened', $event)"
       @remove="$emit('remove', $event)"
@@ -49,10 +50,11 @@ import PantryGroup from "./PantryGroup.vue";
 import { PANTRY_LOCATIONS, type PantryGroupData } from "~/lib/pantry/freshness";
 import type { PantryItemOut, PantryLocation } from "~/lib/api/types/household";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   byLocation: PantryGroupData[];
   today: Date;
-}>();
+  foldable?: boolean;
+}>(), { foldable: true });
 
 const emit = defineEmits<{
   (e: "edit" | "opened" | "remove", item: PantryItemOut): void;
@@ -80,9 +82,16 @@ function onDrop(event: { item: HTMLElement }, location: PantryLocation) {
 
 <style scoped>
 .pantry-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: calc(var(--ds-space) * 2);
+  align-items: start;
+}
+
+/* Desktop: places side by side. */
+@media (min-width: 1024px) {
+  .pantry-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .pantry-list__dropbar {
