@@ -112,6 +112,7 @@ from .recipe_feedback import (
     RecipeFeedbackRecipe,
     RecipeFeedbackSummary,
 )
+from .trmnl import TrmnlAtHome, TrmnlRecipe, TrmnlState, TrmnlToBuy, TrmnlTonightOut, TrmnlUseSoon
 from .webhook import CreateWebhook, ReadWebhook, SaveWebhook, WebhookPagination, WebhookType
 
 __all__ = [
@@ -145,6 +146,12 @@ __all__ = [
     "ProposalReason",
     "ProposedOutcome",
     "UnmatchedIngredient",
+    "TrmnlAtHome",
+    "TrmnlRecipe",
+    "TrmnlState",
+    "TrmnlToBuy",
+    "TrmnlTonightOut",
+    "TrmnlUseSoon",
     "HouseholdStatistics",
     "Diet",
     "HouseholdProfileOut",

@@ -234,6 +234,30 @@ def propose_for_food(lines: list[RecipeIngredient], items: list[PantryItemOut], 
     return proposals
 
 
+def uncovered_fraction(lines: list[RecipeIngredient], items: list[PantryItemOut], scale: float) -> float | None:
+    """The fraction (0..1) of the recipe's need for a food that the pantry items don't cover.
+
+    Spills the need over the items in pantry order, as `propose_for_food` does. None when the items don't cover
+    it and at least one of them can't be compared (units differ, or a quantity is missing on either side).
+    """
+    remaining = 1.0
+    unknown = False
+    for item in items:
+        if remaining <= _EPSILON:
+            break
+        need, _ = amount_in_item(lines, item, scale)
+        if need is None or not item.quantity:
+            unknown = True
+            continue
+        if need <= 0:
+            return 0.0
+        remaining -= min(need * remaining, item.quantity) / need
+
+    if remaining <= _EPSILON:
+        return 0.0
+    return None if unknown else remaining
+
+
 def propose_substitute(
     lines: list[RecipeIngredient], item: PantryItemOut, scale: float, replaces: UUID | None
 ) -> PantryProposal:
