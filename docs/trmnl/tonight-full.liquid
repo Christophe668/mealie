@@ -6,70 +6,122 @@
 {%- assign to_buy_rows = toBuy.size | plus: toBuyMore -%}
 {%- assign all_good = false -%}
 {%- if state == "planned" and toBuy.size == 0 and toCheckCount == 0 -%}{%- assign all_good = true -%}{%- endif -%}
-<div class="layout layout--top layout--stretch-y">
-  <div class="columns" style="height: 100%; align-items: stretch;">
+{%- assign when = kicker | split: " · " -%}
+{%- assign facts = "" | split: "" -%}
+{%- if recipe and recipe.facts != "" -%}{%- assign facts = recipe.facts | split: " · " -%}{%- endif -%}
+<style>
+  .ms { font-family: "Inter", system-ui, sans-serif; }
+  .ms-when { display: flex; align-items: center; gap: 12px; }
+  .ms-tab { background: #000; color: #fff; padding: 6px 12px 5px; border-radius: 6px; font-weight: 700; font-size: 20px; letter-spacing: .04em; }
+  .ms-date { font-size: 18px; }
+  .ms-name { font-size: 46px; line-height: 1.08; font-weight: 600; margin-top: 18px; }
+  .ms-facts { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 14px; font-size: 22px; }
+  .ms-hint { font-size: 20px; margin-top: 14px; }
+  .ms-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 3px solid #000; padding-bottom: 6px; }
+  .ms-head-title { font-size: 24px; font-weight: 700; }
+  .ms-head-count { font-size: 20px; }
+  .ms-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 7px; font-size: 20px; line-height: 1.15; }
+  .ms-box { flex: none; width: 17px; height: 17px; border: 2.5px solid #000; border-radius: 3px; margin-top: 2px; }
+  .ms-box--dashed { border-style: dashed; }
+  .ms-row-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ms-row-sub { display: block; font-size: 15px; }
+  .ms-row-qty { white-space: nowrap; font-weight: 600; }
+  .ms-more { font-size: 17px; margin-top: 8px; padding-left: 27px; }
+  .ms-photo { flex: 1 1 0; min-height: 60px; max-height: 170px; width: 100%; object-fit: cover; border-radius: 8px; margin-top: 14px; }
+  .ms-home { margin-top: auto; padding-top: 10px; border-top: 1px solid #000; font-size: 18px; line-height: 1.3; }
+  .ms-photo + .ms-home { margin-top: 12px; }
+  .ms-home b { font-weight: 700; text-decoration: underline; }
+  .ms-done { border: 3px solid #000; border-radius: 10px; padding: 18px; display: flex; gap: 14px; align-items: flex-start; }
+  .ms-done-mark { flex: none; width: 34px; height: 34px; background: #000; color: #fff; border-radius: 6px; font-size: 26px; line-height: 34px; text-align: center; font-weight: 700; }
+  .ms-done-title { font-size: 28px; font-weight: 700; }
+  .ms-done-sub { font-size: 18px; margin-top: 4px; }
+  .ms-when-tag { white-space: nowrap; font-weight: 600; }
+  .ms-when-tag--past { background: #000; color: #fff; padding: 0 6px; border-radius: 4px; }
+</style>
+<div class="layout layout--top layout--stretch-y ms">
+  <div class="columns" style="height: 100%; align-items: stretch; gap: 0;">
 
-    <div class="column" style="flex: 55; justify-content: flex-start;">
-      <span class="label">{{ kicker }}</span>
+    <div class="column" style="flex: 54; justify-content: flex-start; padding-right: 22px;">
+      <div class="ms-when">
+        <span class="ms-tab">{{ when[0] }}</span>
+        <span class="ms-date">{{ when[1] | capitalize }}</span>
+      </div>
       {%- if state == "nothing_planned" -%}
-        <span class="title title--xlarge" style="margin-top: 12px;">Rien de prévu</span>
+        <span class="ms-name">Rien de prévu</span>
+        <span class="ms-hint">Ajoute un repas au planning dans Mealie pour voir ici quoi acheter.</span>
       {%- else -%}
-        <span class="title title--xlarge" data-clamp="3" style="margin-top: 12px;">{{ recipe.name }}</span>
-        {%- if recipe.facts != "" -%}
-          <span class="description description--large" style="margin-top: 8px;">{{ recipe.facts }}</span>
+        <span class="ms-name" data-clamp="3">{{ recipe.name }}</span>
+        {%- if facts.size > 0 -%}
+          <div class="ms-facts">{%- for fact in facts -%}<span>{{ fact }}</span>{%- endfor -%}</div>
         {%- endif -%}
-        {%- if recipe.imageUrl -%}
-          <img class="image image-dither" src="{{ recipe.imageUrl }}" alt="" style="margin-top: 12px; max-height: 190px; object-fit: cover;">
+        {%- comment -%} a three-line name leaves only a sliver for the photo: leave it out {%- endcomment -%}
+        {%- if recipe.imageUrl and recipe.name.size <= 30 -%}
+          <img class="image image-dither ms-photo" src="{{ recipe.imageUrl }}" alt="">
+        {%- endif -%}
+        {%- if state == "planned" and all_good == false and atHome.size > 0 -%}
+          <div class="ms-home" data-clamp="3">Déjà là :
+            {% for item in atHome -%}
+              {%- if item.useSoon -%}<b>{{ item.name }}</b>{%- else -%}{{ item.name }}{%- endif -%}
+              {%- unless forloop.last -%}, {% endunless -%}
+            {%- endfor -%}
+          </div>
         {%- endif -%}
       {%- endif -%}
     </div>
 
-    <div class="column" style="flex: 45; justify-content: flex-start; border-left: 2px solid black; padding-left: 16px;">
+    <div class="column" style="flex: 46; justify-content: flex-start; border-left: 3px solid #000; padding-left: 22px; overflow: hidden;">
       {%- if state == "nothing_planned" -%}
         {%- if useSoon.size > 0 -%}
-          <span class="label label--underline">À FINIR VITE</span>
+          <div class="ms-head"><span class="ms-head-title">À finir vite</span><span class="ms-head-count">{{ useSoon.size }}</span></div>
           {%- for item in useSoon -%}
-            <div style="display: flex; justify-content: space-between; gap: 8px; margin-top: 6px;">
-              <span class="description description--large">{{ item.name }}</span>
-              <span class="description description--large" style="white-space: nowrap;">{{ item.when }}</span>
+            <div class="ms-row">
+              <span class="ms-row-name">{{ item.name }}</span>
+              <span class="ms-when-tag{% if item.when == "dépassé" %} ms-when-tag--past{% endif %}">{{ item.when }}</span>
             </div>
           {%- endfor -%}
+        {%- else -%}
+          <div class="ms-head"><span class="ms-head-title">Garde-manger</span></div>
+          <div class="ms-row">Rien à finir en urgence.</div>
         {%- endif -%}
 
       {%- elsif state == "no_recipe" -%}
-        <span class="description description--large">Pas de recette liée</span>
+        <div class="ms-head"><span class="ms-head-title">À acheter</span></div>
+        <div class="ms-row">Pas de recette liée à ce repas : la liste ne peut pas être calculée.</div>
 
       {%- elsif all_good -%}
-        <div class="bg--black" style="padding: 16px; display: flex; flex-direction: column; gap: 8px;">
-          <span class="title text--white">✓ Rien à acheter</span>
-          <span class="description text--white">{{ atHome.size }} ingrédients sur {{ ingredientCount }} à la maison</span>
+        <div class="ms-done">
+          <span class="ms-done-mark">✓</span>
+          <div>
+            <div class="ms-done-title">Rien à acheter</div>
+            <div class="ms-done-sub">Les {{ ingredientCount }} ingrédients sont à la maison.</div>
+          </div>
         </div>
 
       {%- else -%}
-        <span class="label label--underline">À ACHETER · {{ to_buy_rows }}</span>
+        <div class="ms-head">
+          <span class="ms-head-title">À acheter</span>
+          <span class="ms-head-count">{{ to_buy_rows }} sur {{ ingredientCount }}</span>
+        </div>
         {%- for item in toBuy -%}
-          <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 6px;">
-            <span class="description description--large" data-clamp="1">{{ item.name }}{% if item.onList %} <span class="label label--small label--gray">sur la liste</span>{% endif %}</span>
-            <span class="description description--large" style="white-space: nowrap;">{{ item.quantity }}{% if item.left %} ({{ item.left }}){% endif %}</span>
+          <div class="ms-row">
+            <span class="ms-box{% if item.onList %} ms-box--dashed{% endif %}"></span>
+            <span class="ms-row-name">{{ item.name }}
+              {%- if item.left or item.onList -%}
+                <span class="ms-row-sub">{% if item.left %}{{ item.left }}{% endif %}{% if item.left and item.onList %}, {% endif %}{% if item.onList %}déjà sur la liste{% endif %}</span>
+              {%- endif -%}
+            </span>
+            {%- if item.quantity -%}<span class="ms-row-qty">{{ item.quantity }}</span>{%- endif -%}
           </div>
         {%- endfor -%}
-        {%- if toBuyMore > 0 -%}
-          <span class="description description--large" style="margin-top: 6px;">+ {{ toBuyMore }} autres</span>
-        {%- endif -%}
-        {%- if toCheckCount > 0 -%}
-          <span class="description description--large" style="margin-top: 6px;">+ {{ toCheckCount }} à vérifier</span>
+        {%- if toBuyMore > 0 or toCheckCount > 0 -%}
+          <div class="ms-more">
+            {%- if toBuyMore > 0 -%}+ {{ toBuyMore }} autres{%- endif -%}
+            {%- if toBuyMore > 0 and toCheckCount > 0 -%}, {% endif -%}
+            {%- if toCheckCount > 0 -%}{% if toBuyMore == 0 %}+ {% endif %}{{ toCheckCount }} à vérifier dans la recette{%- endif -%}
+          </div>
         {%- endif -%}
       {%- endif -%}
 
-      {%- if state == "planned" and all_good == false and atHome.size > 0 -%}
-        <span class="label label--underline" style="margin-top: 12px;">DÉJÀ LÀ · {{ atHome.size }}</span>
-        <span class="description description--large" data-clamp="3" style="margin-top: 6px;">
-          {%- for item in atHome -%}
-            {%- if item.useSoon -%}<b style="text-decoration: underline;">{{ item.name }}</b>{%- else -%}{{ item.name }}{%- endif -%}
-            {%- unless forloop.last -%}, {% endunless -%}
-          {%- endfor -%}
-        </span>
-      {%- endif -%}
     </div>
 
   </div>
