@@ -1,6 +1,6 @@
 # TRMNL "Ce soir" screen
 
-Shows tonight's planned recipe and what is missing for it on the TRMNL ("Fridge"). Mealie does all the work
+Shows the next planned meal and what is missing for it on the TRMNL ("Fridge"). Mealie does all the work
 (`GET /api/households/trmnl/tonight`); [`tonight-full.liquid`](tonight-full.liquid) only lays it out.
 Design: [`docs/superpowers/specs/2026-11-11-trmnl-tonight-design.md`](../superpowers/specs/2026-11-11-trmnl-tonight-design.md).
 
@@ -11,9 +11,12 @@ Design: [`docs/superpowers/specs/2026-11-11-trmnl-tonight-design.md`](../superpo
 | A recipe is planned | Recipe name, time, portions, last verdict, photo | `À ACHETER · N` rows (`400 ml (reste 50 ml)` when the pantry is short, `sur la liste` when already on a shopping list), `+ N à vérifier`, then `DÉJÀ LÀ` (foods to use soon underlined) |
 | Everything is at home | same | Black block `✓ Rien à acheter`. Never shown while something can't be checked (a line without a food, units that don't compare, a missing quantity). |
 | Free-text entry | The entry's title | `Pas de recette liée` |
-| Nothing planned (or tonight's meal already ticked done) | `Rien de prévu` | `À FINIR VITE`: pantry items to use soon |
+| Nothing planned in the next 7 days | `Rien de prévu` | `À FINIR VITE`: pantry items to use soon |
 
-Tonight = today's dinner, else side, lunch, snack, breakfast; an entry with a recipe wins over a free-text one.
+Next meal = the first meal still to come in the next 7 days, in the order breakfast, lunch, snack, dinner, side.
+A meal ticked cooked is done; today's meal is also done once its hour has passed (breakfast 10:00, lunch 14:00,
+snack 17:00, dinner and side 21:00). An entry with a recipe wins over a free-text one. The heading says when:
+`CE MIDI · MERCREDI 11 NOV.`, `DEMAIN SOIR · JEUDI 12 NOV.`, `SAMEDI SOIR · 14 NOV.`.
 
 ## Setup
 

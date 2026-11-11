@@ -1,10 +1,10 @@
-"""What the TRMNL "Ce soir" screen shows: tonight's planned meal and what is missing for it.
+"""What the TRMNL "Ce soir" screen shows: the next planned meal and what is missing for it.
 
 Read-only. Mealie does the matching; the TRMNL template only draws what this returns
 (spec: docs/superpowers/specs/2026-11-11-trmnl-tonight-design.md).
 """
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 from mealie.core.config import get_app_settings
 from mealie.repos.all_repositories import get_repositories
@@ -32,13 +32,24 @@ from mealie.services.claude_context.pantry_usage import uncovered_fraction
 from mealie.services.claude_context.trmnl_format import clock, facts_line, kicker, quantity_text, use_soon_text
 
 MEAL_ORDER = (
-    PlanEntryType.dinner,
-    PlanEntryType.side,
+    PlanEntryType.breakfast,
     PlanEntryType.lunch,
     PlanEntryType.snack,
-    PlanEntryType.breakfast,
+    PlanEntryType.dinner,
+    PlanEntryType.side,
 )
-"""Which entry is "ce soir", most likely first; drinks and desserts are never it."""
+"""The order meals come in a day; a side goes with dinner, after it. Drinks and desserts are never shown."""
+
+MEAL_ENDS = {
+    PlanEntryType.breakfast: 10,
+    PlanEntryType.lunch: 14,
+    PlanEntryType.snack: 17,
+    PlanEntryType.dinner: 21,
+    PlanEntryType.side: 21,
+}
+"""Hour from which today's meal of that type is over, ticked or not, and the screen moves on."""
+
+LOOK_AHEAD_DAYS = 7
 
 USE_SOON_ROWS = 6
 
@@ -60,11 +71,15 @@ class TrmnlTonightService(BaseService):
     def tonight(self, today: date | None = None, now: datetime | None = None) -> TrmnlTonightOut:
         now = now or datetime.now().astimezone()
         today = today or now.date()
-        base = {"kicker": kicker(today), "generated_at": clock(now)}
-
-        entry = self._pick(today)
+        entry = self._pick(today, now)
         if entry is None:
-            return TrmnlTonightOut(state=TrmnlState.nothing_planned, use_soon=self._use_soon(today), **base)
+            return TrmnlTonightOut(
+                state=TrmnlState.nothing_planned,
+                kicker=kicker(today, today),
+                generated_at=clock(now),
+                use_soon=self._use_soon(today),
+            )
+        base = {"kicker": kicker(entry.date, today, entry.entry_type), "generated_at": clock(now)}
 
         recipe = self._recipe(entry)
         if recipe is None:
@@ -79,19 +94,23 @@ class TrmnlTonightService(BaseService):
             **base,
         )
 
-    # ------------------------------------------------------------------ picking tonight
+    # ------------------------------------------------------------------ picking the next meal
 
-    def _pick(self, today: date) -> ReadPlanEntry | None:
-        """The first meal type of `MEAL_ORDER` planned today; within it an entry with a recipe before a free-text
-        one, then the lowest id. Once every entry of that type is done, nothing: after dinner is recorded the screen
-        says "Rien de prévu" rather than showing a lunch nobody ticked."""
-        day = datetime.combine(today, time())
-        entries = [e for e in self.repos.meals.get_meals_by_date_range(day, day) if e.entry_type in MEAL_ORDER]
-        if not entries:
-            return None
-        first_type = min(MEAL_ORDER.index(e.entry_type) for e in entries)
-        candidates = [e for e in entries if MEAL_ORDER.index(e.entry_type) == first_type and e.cooked_at is None]
-        candidates.sort(key=lambda e: (e.recipe_id is None, e.id))
+    def _pick(self, today: date, now: datetime) -> ReadPlanEntry | None:
+        """The next meal still to come within `LOOK_AHEAD_DAYS`: by day, then `MEAL_ORDER`; an entry with a recipe
+        before a free-text one, then the lowest id. Cooked entries are done, and so is today's meal once its hour in
+        `MEAL_ENDS` has passed, so a lunch nobody ticked doesn't stay on the screen all evening."""
+        start = datetime.combine(today, time())
+        end = datetime.combine(today + timedelta(days=LOOK_AHEAD_DAYS - 1), time())
+        candidates = [
+            e
+            for e in self.repos.meals.get_meals_by_date_range(start, end)
+            if e.entry_type in MEAL_ORDER
+            and e.cooked_at is None
+            and today <= e.date < today + timedelta(days=LOOK_AHEAD_DAYS)
+            and not (e.date == today and now.hour >= MEAL_ENDS[e.entry_type])
+        ]
+        candidates.sort(key=lambda e: (e.date, MEAL_ORDER.index(e.entry_type), e.recipe_id is None, e.id))
         return candidates[0] if candidates else None
 
     def _recipe(self, entry: ReadPlanEntry) -> Recipe | None:

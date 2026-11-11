@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -6,8 +6,8 @@ from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
 
 TONIGHT = "/api/households/trmnl/tonight"
-# the service uses the server's today
-TODAY = datetime.now().astimezone().date()
+# the service uses the server's clock; tomorrow's dinner is the next meal whatever the hour
+TOMORROW = datetime.now().astimezone().date() + timedelta(days=1)
 
 
 def _plan_dinner(api_client: TestClient, user: TestUser, day: date) -> dict:
@@ -26,7 +26,7 @@ def test_tonight_requires_auth(api_client: TestClient):
 
 def test_tonight_shape(api_client: TestClient, unique_user_fn_scoped: TestUser):
     user = unique_user_fn_scoped
-    recipe = _plan_dinner(api_client, user, TODAY)
+    recipe = _plan_dinner(api_client, user, TOMORROW)
 
     response = api_client.get(TONIGHT, headers=user.token)
 
@@ -40,7 +40,7 @@ def test_tonight_shape(api_client: TestClient, unique_user_fn_scoped: TestUser):
 
 def test_tonight_other_household_not_visible(api_client: TestClient, unique_user: TestUser, h2_user: TestUser):
     # same group, another household
-    recipe = _plan_dinner(api_client, unique_user, TODAY)
+    recipe = _plan_dinner(api_client, unique_user, TOMORROW)
     assert api_client.get(TONIGHT, headers=unique_user.token).json()["state"] == "planned"
 
     response = api_client.get(TONIGHT, headers=h2_user.token)

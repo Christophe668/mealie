@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 from mealie.schema.household.recipe_feedback import FeedbackVerdict
+from mealie.schema.meal_plan.new_meal import PlanEntryType
 from mealie.schema.recipe.recipe_ingredient import IngredientUnit
 from mealie.services.claude_context.freshness import Freshness, FreshnessStatus
 
@@ -16,8 +17,28 @@ _VERDICTS = {
 }
 
 
-def kicker(day: date) -> str:
-    return f"CE SOIR · {_DAYS[day.weekday()]} {day.day} {_MONTHS[day.month - 1]}"
+_MOMENTS = {
+    PlanEntryType.breakfast: ("CE MATIN", "MATIN"),
+    PlanEntryType.lunch: ("CE MIDI", "MIDI"),
+    PlanEntryType.snack: ("CET APRÈS-MIDI", "APRÈS-MIDI"),
+    PlanEntryType.dinner: ("CE SOIR", "SOIR"),
+    PlanEntryType.side: ("CE SOIR", "SOIR"),
+}
+
+
+def kicker(day: date, today: date, entry_type: PlanEntryType | None = None) -> str:
+    """When the meal is: "CE SOIR · MERCREDI 11 NOV.", "DEMAIN MIDI · JEUDI 12 NOV.", "SAMEDI SOIR · 14 NOV.".
+    Without a meal, today's date: "AUJOURD'HUI · MERCREDI 11 NOV."."""
+    weekday = _DAYS[day.weekday()]
+    date_text = f"{day.day} {_MONTHS[day.month - 1]}"
+    if entry_type is None:
+        return f"AUJOURD'HUI · {weekday} {date_text}"
+    this, moment = _MOMENTS[entry_type]
+    if day == today:
+        return f"{this} · {weekday} {date_text}"
+    if (day - today).days == 1:
+        return f"DEMAIN {moment} · {weekday} {date_text}"
+    return f"{weekday} {moment} · {date_text}"
 
 
 def number(value: float) -> str:
