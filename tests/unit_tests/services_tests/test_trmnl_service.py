@@ -367,3 +367,57 @@ def test_use_soon_flag(user: TestUser):
     out = _tonight(user)
 
     assert [(a.name, a.use_soon) for a in out.at_home] == [("Épinards", True)]
+
+
+# ------------------------------------------------------------------ review fixes
+
+
+def test_dinner_done_does_not_fall_back_to_lunch(user: TestUser):
+    _plan(user, _recipe(user), PlanEntryType.lunch)
+    dinner = _plan(user, None, title="Soupe")
+    user.repos.meals.patch(dinner.id, {"cooked_at": NOW})
+
+    assert _tonight(user).state == TrmnlState.nothing_planned
+
+
+def test_breakfast_done_still_shows_dinner(user: TestUser):
+    breakfast = _plan(user, None, PlanEntryType.breakfast, title="Tartines")
+    user.repos.meals.patch(breakfast.id, {"cooked_at": NOW})
+    _plan(user, None, title="Soupe")
+
+    out = _tonight(user)
+
+    assert out.recipe is not None and out.recipe.name == "Soupe"
+
+
+def test_substitute_not_enough_is_to_buy(user: TestUser):
+    ml = _unit(user, "millilitre", "ml")
+    yaourt = _food(user, "Yaourt")
+    creme = _food(user, "Crème", substitutions=[CreateIngredientFoodSubstitution(substitute_food_id=yaourt.id)])
+    _item(user, "Yaourt", yaourt, quantity=50, unit_id=ml.id)
+    _dinner(user, [_line(creme, 400, ml)])
+
+    out = _tonight(user)
+
+    assert [(b.name, b.quantity) for b in out.to_buy] == [("Crème", "400 ml")]
+    assert out.at_home == []
+
+
+def test_substitute_unknown_amount_to_check(user: TestUser):
+    ml = _unit(user, "millilitre", "ml")
+    yaourt = _food(user, "Yaourt")
+    creme = _food(user, "Crème", substitutions=[CreateIngredientFoodSubstitution(substitute_food_id=yaourt.id)])
+    _item(user, "Yaourt", yaourt)
+    _dinner(user, [_line(creme, 400, ml)])
+
+    out = _tonight(user)
+
+    assert [a.name for a in out.at_home] == ["Yaourt (pour Crème)"] and out.to_check_count == 1
+
+
+def test_recipe_without_ingredients_is_to_check(user: TestUser):
+    _dinner(user, [])
+
+    out = _tonight(user)
+
+    assert out.to_buy == [] and out.ingredient_count == 0 and out.to_check_count == 1

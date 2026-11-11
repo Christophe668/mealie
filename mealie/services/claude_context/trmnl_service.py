@@ -82,15 +82,17 @@ class TrmnlTonightService(BaseService):
     # ------------------------------------------------------------------ picking tonight
 
     def _pick(self, today: date) -> ReadPlanEntry | None:
-        """By meal type (`MEAL_ORDER`), then an entry with a recipe before a free-text one, then the lowest id."""
+        """The first meal type of `MEAL_ORDER` planned today; within it an entry with a recipe before a free-text
+        one, then the lowest id. Once every entry of that type is done, nothing: after dinner is recorded the screen
+        says "Rien de prévu" rather than showing a lunch nobody ticked."""
         day = datetime.combine(today, time())
-        entries = [
-            entry
-            for entry in self.repos.meals.get_meals_by_date_range(day, day)
-            if entry.cooked_at is None and entry.entry_type in MEAL_ORDER
-        ]
-        entries.sort(key=lambda e: (MEAL_ORDER.index(e.entry_type), e.recipe_id is None, e.id))
-        return entries[0] if entries else None
+        entries = [e for e in self.repos.meals.get_meals_by_date_range(day, day) if e.entry_type in MEAL_ORDER]
+        if not entries:
+            return None
+        first_type = min(MEAL_ORDER.index(e.entry_type) for e in entries)
+        candidates = [e for e in entries if MEAL_ORDER.index(e.entry_type) == first_type and e.cooked_at is None]
+        candidates.sort(key=lambda e: (e.recipe_id is None, e.id))
+        return candidates[0] if candidates else None
 
     def _recipe(self, entry: ReadPlanEntry) -> Recipe | None:
         if entry.recipe_id is None:
@@ -174,7 +176,10 @@ class TrmnlTonightService(BaseService):
                 continue
 
             substitutes = self._substitutes(unmatched.get(food_id), pantry)
-            if substitutes:
+            uncovered = uncovered_fraction(lines, substitutes, scale) if substitutes else 1.0
+            if not uncovered:  # the substitute is enough (0.0), or can't tell (None)
+                if uncovered is None:
+                    to_check += 1
                 first = substitutes[0]
                 name = first.food.name if first.food else first.name
                 at_home.append(
@@ -192,7 +197,8 @@ class TrmnlTonightService(BaseService):
             "to_buy_more": more,
             "at_home": at_home,
             "ingredient_count": len(lines_by_food),
-            "to_check_count": to_check,
+            # a recipe without any ingredient line can't be judged: never "Rien à acheter" for it
+            "to_check_count": to_check if recipe.recipe_ingredient else 1,
         }
 
     def _foods_on_list(self) -> set[str]:
