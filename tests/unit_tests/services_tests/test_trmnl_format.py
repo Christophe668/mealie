@@ -1,6 +1,6 @@
 """French text for the TRMNL tonight screen."""
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from mealie.schema.household.recipe_feedback import FeedbackVerdict
@@ -55,5 +55,5 @@ def test_use_soon_text():
 
 
 def test_clock():
-    assert clock(datetime(2026, 11, 11, 16, 0)) == "16:00"
-    assert clock(datetime(2026, 11, 11, 7, 5)) == "07:05"
+    assert clock(datetime(2026, 11, 11, 16, 0, tzinfo=UTC)) == "16:00"
+    assert clock(datetime(2026, 11, 11, 7, 5, tzinfo=UTC)) == "07:05"

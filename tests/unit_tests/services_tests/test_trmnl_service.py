@@ -1,23 +1,31 @@
 """The TRMNL "Ce soir" screen data: which meal is tonight, what to buy, what is at home."""
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
 
+from mealie.schema.household.group_shopping_list import ShoppingListItemCreate, ShoppingListSave
 from mealie.schema.household.pantry import PantryItemCreate, PantryItemOut
 from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedbackCreate
-from mealie.schema.household.trmnl import TrmnlState
+from mealie.schema.household.trmnl import TrmnlState, TrmnlToBuy
 from mealie.schema.meal_plan.new_meal import PlanEntryType, ReadPlanEntry, SavePlanEntry
 from mealie.schema.recipe.recipe import Recipe
-from mealie.schema.recipe.recipe_ingredient import IngredientFood, RecipeIngredient, SaveIngredientFood
+from mealie.schema.recipe.recipe_ingredient import (
+    CreateIngredientFoodSubstitution,
+    IngredientFood,
+    IngredientUnit,
+    RecipeIngredient,
+    SaveIngredientFood,
+    SaveIngredientUnit,
+)
 from mealie.schema.user.user import PrivateUser
 from mealie.services.claude_context.trmnl_service import TrmnlTonightService
 from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
 
 TODAY = date(2026, 11, 11)
-NOW = datetime(2026, 11, 11, 16, 0)
+NOW = datetime(2026, 11, 11, 16, 0, tzinfo=UTC)
 
 
 def _tonight(user: TestUser):
@@ -184,3 +192,178 @@ def test_image_url_with_image(user: TestUser):
     out = _tonight(user)
     assert out.recipe is not None and out.recipe.image_url is not None
     assert out.recipe.image_url.endswith(f"/api/media/recipes/{recipe.id}/images/min-original.webp")
+
+
+# ------------------------------------------------------------------ what to buy, what is at home
+
+
+def _unit(user: TestUser, name: str, abbreviation: str = "") -> IngredientUnit:
+    return user.repos.ingredient_units.create(
+        SaveIngredientUnit(
+            name=name, abbreviation=abbreviation, use_abbreviation=bool(abbreviation), group_id=user.group_id
+        )
+    )
+
+
+def _line(
+    food: IngredientFood | None, quantity: float | None = None, unit: IngredientUnit | None = None, note: str = ""
+) -> RecipeIngredient:
+    return RecipeIngredient(food=food, quantity=quantity, unit=unit, note=note)
+
+
+def _dinner(user: TestUser, lines: list[RecipeIngredient], scale: float = 1.0) -> Recipe:
+    recipe = _recipe(user, lines)
+    _plan(user, recipe, scale=scale)
+    return recipe
+
+
+def test_missing_food_to_buy(user: TestUser):
+    ml = _unit(user, "millilitre", "ml")
+    coco = _food(user, "Lait de coco")
+    _dinner(user, [_line(coco, 400, ml)])
+
+    out = _tonight(user)
+
+    assert out.to_buy == [TrmnlToBuy(name="Lait de coco", quantity="400 ml")]
+    assert out.at_home == [] and out.to_check_count == 0 and out.ingredient_count == 1
+
+
+def test_enough_at_home(user: TestUser):
+    ml = _unit(user, "millilitre", "ml")
+    coco = _food(user, "Lait de coco")
+    _item(user, "Lait de coco", coco, quantity=500, unit_id=ml.id)
+    _dinner(user, [_line(coco, 400, ml)])
+
+    out = _tonight(user)
+
+    assert out.to_buy == []
+    assert [a.name for a in out.at_home] == ["Lait de coco"]
+    assert out.ingredient_count == 1 and out.to_check_count == 0
+
+
+def test_short_shows_left(user: TestUser):
+    ml = _unit(user, "millilitre", "ml")
+    coco = _food(user, "Lait de coco")
+    _item(user, "Lait de coco", coco, quantity=100, unit_id=ml.id)
+    _dinner(user, [_line(coco, 400, ml)])
+
+    out = _tonight(user)
+
+    assert [(b.quantity, b.left) for b in out.to_buy] == [("400 ml", "reste 100 ml")]
+    assert out.at_home == []
+
+
+def test_two_items_add_up(user: TestUser):
+    ml = _unit(user, "millilitre", "ml")
+    coco = _food(user, "Lait de coco")
+    _item(user, "Lait de coco", coco, quantity=200, unit_id=ml.id)
+    _item(user, "Lait de coco", coco, quantity=200, unit_id=ml.id)
+    _dinner(user, [_line(coco, 400, ml)])
+
+    out = _tonight(user)
+
+    assert out.to_buy == [] and [a.name for a in out.at_home] == ["Lait de coco"]
+
+
+def test_units_differ_to_check(user: TestUser):
+    ml = _unit(user, "millilitre", "ml")
+    can = _unit(user, "boîte")
+    coco = _food(user, "Lait de coco")
+    _item(user, "Lait de coco", coco, quantity=1, unit_id=can.id)
+    _dinner(user, [_line(coco, 400, ml)])
+
+    out = _tonight(user)
+
+    assert out.to_buy == [] and [a.name for a in out.at_home] == ["Lait de coco"]
+    assert out.to_check_count == 1
+
+
+def test_food_without_quantity_in_pantry(user: TestUser):
+    salt = _food(user, "Sel")
+    _item(user, "Sel", salt)
+    _dinner(user, [_line(salt)])
+
+    out = _tonight(user)
+
+    assert out.to_buy == [] and [a.name for a in out.at_home] == ["Sel"]
+    assert out.to_check_count == 1
+
+
+def test_food_without_quantity_missing(user: TestUser):
+    _dinner(user, [_line(_food(user, "Sel"))])
+
+    out = _tonight(user)
+
+    assert out.to_buy == [TrmnlToBuy(name="Sel", quantity=None)]
+
+
+def test_unparsed_line_to_check(user: TestUser):
+    _dinner(user, [_line(None, note="une pincée de bonheur"), _line(None)])
+
+    out = _tonight(user)
+
+    assert out.to_check_count == 1 and out.to_buy == [] and out.ingredient_count == 0
+
+
+def test_substitute_counts_at_home(user: TestUser):
+    yaourt = _food(user, "Yaourt")
+    creme = _food(user, "Crème", substitutions=[CreateIngredientFoodSubstitution(substitute_food_id=yaourt.id)])
+    _item(user, "Yaourt grec", yaourt, use_by=TODAY + timedelta(days=1))
+    _dinner(user, [_line(creme, 20)])
+
+    out = _tonight(user)
+
+    assert out.to_buy == []
+    assert [(a.name, a.use_soon) for a in out.at_home] == [("Yaourt (pour Crème)", True)]
+
+
+def test_on_list_mark(user: TestUser):
+    oignon, ail = _food(user, "Oignon"), _food(user, "Ail")
+    shopping_list = user.repos.group_shopping_lists.create(
+        ShoppingListSave(name="Courses", group_id=user.group_id, user_id=user.user_id)
+    )
+    for food, checked in ((oignon, False), (ail, True)):
+        user.repos.group_shopping_list_item.create(
+            ShoppingListItemCreate(shopping_list_id=shopping_list.id, food_id=food.id, checked=checked, note="")
+        )
+    _dinner(user, [_line(oignon, 1), _line(ail, 2)])
+
+    out = _tonight(user)
+
+    assert [(b.name, b.on_list) for b in out.to_buy] == [("Oignon", True), ("Ail", False)]
+
+
+def test_cap(user: TestUser):
+    _dinner(user, [_line(_food(user, f"Aliment {i}"), 1) for i in range(10)])
+
+    out = _tonight(user)
+
+    assert len(out.to_buy) == 7 and out.to_buy_more == 3
+    assert out.to_buy[0].name == "Aliment 0" and out.ingredient_count == 10
+
+
+def test_scaled_quantity(user: TestUser):
+    ml = _unit(user, "millilitre", "ml")
+    _dinner(user, [_line(_food(user, "Lait"), 200, ml)], scale=2)
+
+    assert _tonight(user).to_buy[0].quantity == "400 ml"
+
+
+def test_same_food_lines_summed(user: TestUser):
+    ml = _unit(user, "millilitre", "ml")
+    lait = _food(user, "Lait")
+    _dinner(user, [_line(lait, 200, ml), _line(lait, 100, ml)])
+
+    out = _tonight(user)
+
+    assert [(b.name, b.quantity) for b in out.to_buy] == [("Lait", "300 ml")]
+
+
+def test_use_soon_flag(user: TestUser):
+    epinards = _food(user, "Épinards")
+    _item(user, "Épinards", epinards, use_by=TODAY + timedelta(days=1))
+    _dinner(user, [_line(epinards)])
+
+    out = _tonight(user)
+
+    assert [(a.name, a.use_soon) for a in out.at_home] == [("Épinards", True)]
