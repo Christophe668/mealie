@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from mealie.schema.household.recipe_feedback import FeedbackVerdict
+from mealie.schema.meal_plan.new_meal import PlanEntryType
 from mealie.schema.recipe.recipe_ingredient import IngredientUnit
 from mealie.services.claude_context.freshness import Freshness, FreshnessStatus
 from mealie.services.claude_context.trmnl_format import clock, facts_line, kicker, quantity_text, use_soon_text
@@ -14,9 +15,14 @@ BOTTE = IngredientUnit(id=uuid4(), name="botte", abbreviation="bt", use_abbrevia
 
 
 def test_kicker():
-    assert kicker(date(2026, 11, 11)) == "CE SOIR · MERCREDI 11 NOV."
-    assert kicker(date(2026, 2, 1)) == "CE SOIR · DIMANCHE 1 FÉVR."
-    assert kicker(date(2026, 8, 3)) == "CE SOIR · LUNDI 3 AOÛT"
+    today = date(2026, 11, 11)
+    assert kicker(today, today) == "AUJOURD'HUI · MERCREDI 11 NOV."
+    assert kicker(today, today, PlanEntryType.dinner) == "CE SOIR · MERCREDI 11 NOV."
+    assert kicker(today, today, PlanEntryType.side) == "CE SOIR · MERCREDI 11 NOV."
+    assert kicker(today, today, PlanEntryType.lunch) == "CE MIDI · MERCREDI 11 NOV."
+    assert kicker(today, today, PlanEntryType.snack) == "CET APRÈS-MIDI · MERCREDI 11 NOV."
+    assert kicker(date(2026, 2, 1), date(2026, 1, 31), PlanEntryType.breakfast) == "DEMAIN MATIN · DIMANCHE 1 FÉVR."
+    assert kicker(date(2026, 8, 3), date(2026, 7, 31), PlanEntryType.dinner) == "LUNDI SOIR · 3 AOÛT"
 
 
 def test_facts_line_full():

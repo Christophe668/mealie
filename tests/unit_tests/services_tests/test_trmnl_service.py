@@ -28,12 +28,12 @@ TODAY = date(2026, 11, 11)
 NOW = datetime(2026, 11, 11, 16, 0, tzinfo=UTC)
 
 
-def _tonight(user: TestUser):
+def _tonight(user: TestUser, now: datetime = NOW):
     private_user = user.repos.users.get_one(user.user_id)
     household = user.repos.households.get_one(user.household_id)
     assert isinstance(private_user, PrivateUser) and household is not None
     user.repos.session.expire_all()
-    return TrmnlTonightService(user.repos, private_user, household).tonight(today=TODAY, now=NOW)
+    return TrmnlTonightService(user.repos, private_user, household).tonight(today=now.date(), now=now)
 
 
 def _food(user: TestUser, name: str | None = None, **extra: Any) -> IngredientFood:
@@ -99,7 +99,7 @@ def test_nothing_planned_lists_use_soon(user: TestUser):
     assert out.recipe is None
     assert [u.name for u in out.use_soon] == ["Épinards"]
     assert out.use_soon[0].when == "1 j"
-    assert out.kicker == "CE SOIR · MERCREDI 11 NOV."
+    assert out.kicker == "AUJOURD'HUI · MERCREDI 11 NOV."
     assert out.generated_at == "16:00"
 
 
@@ -112,7 +112,7 @@ def test_use_soon_worst_first(user: TestUser):
     assert [(u.name, u.when) for u in out.use_soon] == [("Crème", "dépassé"), ("Yaourt", "2 j")]
 
 
-def test_dinner_beats_lunch_with_recipe(user: TestUser):
+def test_lunch_past_shows_dinner(user: TestUser):
     _plan(user, _recipe(user), PlanEntryType.lunch)
     _plan(user, None, PlanEntryType.dinner, title="Pizza")
 
@@ -133,9 +133,9 @@ def test_two_dinners_recipe_wins(user: TestUser):
     assert out.recipe is not None and out.recipe.name == recipe.name
 
 
-def test_other_days_ignored(user: TestUser):
+def test_past_days_and_beyond_a_week_ignored(user: TestUser):
     _plan(user, _recipe(user), day=TODAY - timedelta(days=1))
-    _plan(user, _recipe(user), day=TODAY + timedelta(days=1))
+    _plan(user, _recipe(user), day=TODAY + timedelta(days=7))
 
     assert _tonight(user).state == TrmnlState.nothing_planned
 
@@ -421,3 +421,72 @@ def test_recipe_without_ingredients_is_to_check(user: TestUser):
     out = _tonight(user)
 
     assert out.to_buy == [] and out.ingredient_count == 0 and out.to_check_count == 1
+
+
+# ------------------------------------------------------------------ the next meal, not only tonight
+
+
+def test_lunch_before_its_time_comes_first(user: TestUser):
+    _plan(user, None, PlanEntryType.lunch, title="Salade")
+    _plan(user, None, title="Soupe")
+
+    out = _tonight(user, now=datetime(2026, 11, 11, 11, 0, tzinfo=UTC))
+
+    assert out.recipe is not None and out.recipe.name == "Salade"
+    assert out.kicker == "CE MIDI · MERCREDI 11 NOV."
+
+
+def test_breakfast_in_the_morning(user: TestUser):
+    _plan(user, None, PlanEntryType.breakfast, title="Tartines")
+
+    out = _tonight(user, now=datetime(2026, 11, 11, 7, 0, tzinfo=UTC))
+
+    assert out.kicker == "CE MATIN · MERCREDI 11 NOV."
+
+
+def test_dinner_cooked_shows_tomorrow(user: TestUser):
+    dinner = _plan(user, None, title="Soupe")
+    user.repos.meals.patch(dinner.id, {"cooked_at": NOW})
+    _plan(user, None, title="Curry", day=TODAY + timedelta(days=1))
+
+    out = _tonight(user)
+
+    assert out.recipe is not None and out.recipe.name == "Curry"
+    assert out.kicker == "DEMAIN SOIR · JEUDI 12 NOV."
+
+
+def test_late_evening_moves_to_tomorrow(user: TestUser):
+    _plan(user, None, title="Soupe")
+    _plan(user, None, PlanEntryType.lunch, title="Quiche", day=TODAY + timedelta(days=1))
+
+    out = _tonight(user, now=datetime(2026, 11, 11, 21, 30, tzinfo=UTC))
+
+    assert out.recipe is not None and out.recipe.name == "Quiche"
+    assert out.kicker == "DEMAIN MIDI · JEUDI 12 NOV."
+
+
+def test_later_this_week(user: TestUser):
+    _plan(user, None, title="Lasagnes", day=TODAY + timedelta(days=3))
+
+    out = _tonight(user)
+
+    assert out.recipe is not None and out.recipe.name == "Lasagnes"
+    assert out.kicker == "SAMEDI SOIR · 14 NOV."
+
+
+def test_earliest_meal_of_a_later_day(user: TestUser):
+    _plan(user, None, title="Lasagnes", day=TODAY + timedelta(days=2))
+    _plan(user, None, PlanEntryType.lunch, title="Wraps", day=TODAY + timedelta(days=2))
+
+    out = _tonight(user)
+
+    assert out.recipe is not None and out.recipe.name == "Wraps"
+
+
+def test_dinner_before_side(user: TestUser):
+    _plan(user, None, PlanEntryType.side, title="Salade verte")
+    _plan(user, None, title="Steak")
+
+    out = _tonight(user)
+
+    assert out.recipe is not None and out.recipe.name == "Steak"
