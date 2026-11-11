@@ -1,0 +1,81 @@
+{%- comment -%}
+  Mealie "Ce soir": full view. Paste into the private plugin's Full markup.
+  Data: GET /api/households/trmnl/tonight (polled by TRMNL); every string arrives formatted in French.
+  This template only shows and hides blocks. Keep the logic in Mealie.
+{%- endcomment -%}
+{%- assign to_buy_rows = toBuy.size | plus: toBuyMore -%}
+{%- assign all_good = false -%}
+{%- if state == "planned" and toBuy.size == 0 and toCheckCount == 0 -%}{%- assign all_good = true -%}{%- endif -%}
+<div class="layout layout--top layout--stretch-y">
+  <div class="columns" style="height: 100%; align-items: stretch;">
+
+    <div class="column" style="flex: 55; justify-content: flex-start;">
+      <span class="label">{{ kicker }}</span>
+      {%- if state == "nothing_planned" -%}
+        <span class="title title--xlarge" style="margin-top: 12px;">Rien de prévu</span>
+      {%- else -%}
+        <span class="title title--xlarge" data-clamp="3" style="margin-top: 12px;">{{ recipe.name }}</span>
+        {%- if recipe.facts != "" -%}
+          <span class="description description--large" style="margin-top: 8px;">{{ recipe.facts }}</span>
+        {%- endif -%}
+        {%- if recipe.imageUrl -%}
+          <img class="image image-dither" src="{{ recipe.imageUrl }}" alt="" style="margin-top: 12px; max-height: 190px; object-fit: cover;">
+        {%- endif -%}
+      {%- endif -%}
+    </div>
+
+    <div class="column" style="flex: 45; justify-content: flex-start; border-left: 2px solid black; padding-left: 16px;">
+      {%- if state == "nothing_planned" -%}
+        {%- if useSoon.size > 0 -%}
+          <span class="label label--underline">À FINIR VITE</span>
+          {%- for item in useSoon -%}
+            <div style="display: flex; justify-content: space-between; gap: 8px; margin-top: 6px;">
+              <span class="description description--large">{{ item.name }}</span>
+              <span class="description description--large" style="white-space: nowrap;">{{ item.when }}</span>
+            </div>
+          {%- endfor -%}
+        {%- endif -%}
+
+      {%- elsif state == "no_recipe" -%}
+        <span class="description description--large">Pas de recette liée</span>
+
+      {%- elsif all_good -%}
+        <div class="bg--black" style="padding: 16px; display: flex; flex-direction: column; gap: 8px;">
+          <span class="title text--white">✓ Rien à acheter</span>
+          <span class="description text--white">{{ atHome.size }} ingrédients sur {{ ingredientCount }} à la maison</span>
+        </div>
+
+      {%- else -%}
+        <span class="label label--underline">À ACHETER · {{ to_buy_rows }}</span>
+        {%- for item in toBuy -%}
+          <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 6px;">
+            <span class="description description--large" data-clamp="1">{{ item.name }}{% if item.onList %} <span class="label label--small label--gray">sur la liste</span>{% endif %}</span>
+            <span class="description description--large" style="white-space: nowrap;">{{ item.quantity }}{% if item.left %} ({{ item.left }}){% endif %}</span>
+          </div>
+        {%- endfor -%}
+        {%- if toBuyMore > 0 -%}
+          <span class="description description--large" style="margin-top: 6px;">+ {{ toBuyMore }} autres</span>
+        {%- endif -%}
+        {%- if toCheckCount > 0 -%}
+          <span class="description description--large" style="margin-top: 6px;">+ {{ toCheckCount }} à vérifier</span>
+        {%- endif -%}
+      {%- endif -%}
+
+      {%- if state == "planned" and all_good == false and atHome.size > 0 -%}
+        <span class="label label--underline" style="margin-top: 12px;">DÉJÀ LÀ · {{ atHome.size }}</span>
+        <span class="description description--large" data-clamp="3" style="margin-top: 6px;">
+          {%- for item in atHome -%}
+            {%- if item.useSoon -%}<b style="text-decoration: underline;">{{ item.name }}</b>{%- else -%}{{ item.name }}{%- endif -%}
+            {%- unless forloop.last -%}, {% endunless -%}
+          {%- endfor -%}
+        </span>
+      {%- endif -%}
+    </div>
+
+  </div>
+</div>
+
+<div class="title_bar">
+  <span class="title">Mealie</span>
+  <span class="instance">mis à jour {{ generatedAt }}</span>
+</div>

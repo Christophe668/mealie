@@ -1,0 +1,49 @@
+# TRMNL "Ce soir" screen
+
+Shows tonight's planned recipe and what is missing for it on the TRMNL ("Fridge"). Mealie does all the work
+(`GET /api/households/trmnl/tonight`); [`tonight-full.liquid`](tonight-full.liquid) only lays it out.
+Design: [`docs/superpowers/specs/2026-11-11-trmnl-tonight-design.md`](../superpowers/specs/2026-11-11-trmnl-tonight-design.md).
+
+## What the screen says
+
+| State | Left | Right |
+|---|---|---|
+| A recipe is planned | Recipe name, time, portions, last verdict, photo | `À ACHETER · N` rows (`400 ml (reste 50 ml)` when the pantry is short, `sur la liste` when already on a shopping list), `+ N à vérifier`, then `DÉJÀ LÀ` (foods to use soon underlined) |
+| Everything is at home | same | Black block `✓ Rien à acheter`. Never shown while something can't be checked (a line without a food, units that don't compare, a missing quantity). |
+| Free-text entry | The entry's title | `Pas de recette liée` |
+| Nothing planned (or tonight's meal already ticked done) | `Rien de prévu` | `À FINIR VITE`: pantry items to use soon |
+
+Tonight = today's dinner, else side, lunch, snack, breakfast; an entry with a recipe wins over a free-text one.
+
+## Setup
+
+1. **Mealie token.** In Mealie: Profile → API Tokens → create one named `TRMNL`. Keep it out of the repo.
+2. **TRMNL plugin.** trmnl.com → Plugins → Private Plugin → new:
+   - Strategy: **Polling**
+   - Polling URL: `https://mealie.christophepecsteen.site/api/households/trmnl/tonight`
+   - Polling verb: GET; Polling headers: `authorization=Bearer <token>`
+   - Refresh: every 60 minutes
+   - Markup → Full: paste [`tonight-full.liquid`](tonight-full.liquid). The JSON's top-level keys are the Liquid
+     variables (`kicker`, `recipe.name`, `toBuy`, …).
+3. Add the plugin to the **Fridge** playlist.
+
+## Letting TRMNL's servers reach Mealie
+
+TRMNL cloud fetches the URL from outside, but `mealie.christophepecsteen.site` sits behind Cloudflare Access and the
+"Block outside Belgium" WAF rule. Open only this path, as was done for `/mcp`:
+
+- **Access**: a Bypass application for `mealie.christophepecsteen.site/api/households/trmnl/tonight`, built like
+  the `/mcp` one in [`dev/cloudflare-access-bypass.sh`](../../dev/cloudflare-access-bypass.sh) (that script only
+  lists the MCP paths). The Mealie token still protects the endpoint.
+- **WAF**: add the same path to the exception of the "Block outside Belgium" rule.
+- **Photo**: the recipe photo is fetched by TRMNL from `/api/media/recipes/<id>/images/min-original.webp`. Either
+  open `/api/media/recipes/` the same way, or accept that the photo doesn't show (the rest of the screen works).
+
+## Checking it
+
+```sh
+curl -s -H "Authorization: Bearer $MEALIE_TOKEN" \
+  https://mealie.christophepecsteen.site/api/households/trmnl/tonight | jq
+```
+
+Then use "Force refresh" on the plugin in TRMNL and look at its preview.
