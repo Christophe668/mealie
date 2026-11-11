@@ -14,6 +14,7 @@ from . import (
     controller_pantry,
     controller_recipe_feedback,
     controller_shopping_lists,
+    controller_trmnl,
     controller_webhooks,
 )
 
@@ -32,6 +33,7 @@ router.include_router(controller_recipe_feedback.router)
 router.include_router(controller_household_profile.router)
 router.include_router(controller_shopping_lists.router)
 router.include_router(controller_shopping_lists.item_router)
+router.include_router(controller_trmnl.router)
 router.include_router(controller_webhooks.router)
 
 # mealplan_rules and mealplan_ical must be added before mealplan due to the way the routes are defined
