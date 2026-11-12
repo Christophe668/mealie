@@ -11,9 +11,9 @@ Top left, a black tab says when (`CE SOIR`, `DEMAIN MIDI`, `SAMEDI SOIR`) next t
 | State | Left | Right |
 |---|---|---|
 | A recipe is planned | Recipe name, time, portions, last verdict; the photo when the name fits on two lines; at the bottom `Déjà là :` (foods to use soon bold and underlined) | `À acheter`, `N sur M` ingredients: a tick-box row per food with the quantity; under the name `reste 50 ml` when the pantry is short and `déjà sur la liste` (dashed box) when already on a shopping list; then `+ N autres, N à vérifier dans la recette` |
-| Everything is at home | same, without `Déjà là` | `✓ Rien à acheter`. Never shown while something can't be checked (a line without a food, units that don't compare, a missing quantity). |
-| Free-text entry | The entry's title | Says no recipe is linked, so no list |
-| Nothing planned in the next 7 days | `Rien de prévu` and how to fix it | `À finir vite`: pantry items to use soon, `dépassé` in black |
+| Everything is at home | same, without `Déjà là` | `✓ Rien à acheter`, then `À sortir`: the ingredients to take out. Never shown while something can't be checked (a line without a food, units that don't compare, a missing quantity). |
+| Free-text entry | The entry's title | Says no recipe is linked, so no list, and how to link one |
+| Nothing planned in the next 7 days | Not shown: the template sets `window.TRMNL_SKIP_DISPLAY`, so the playlist moves on to the next plugin. (The `Rien de prévu` / `À finir vite` markup stays for the preview.) | |
 
 Next meal = the first meal still to come in the next 7 days, in the order breakfast, lunch, snack, dinner, side.
 A meal ticked cooked is done; today's meal is also done once its hour has passed (breakfast 10:00, lunch 14:00,

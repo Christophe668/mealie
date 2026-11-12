@@ -3,6 +3,8 @@
   Data: GET /api/households/trmnl/tonight (polled by TRMNL); every string arrives formatted in French.
   This template only shows and hides blocks. Keep the logic in Mealie.
 {%- endcomment -%}
+{%- comment -%} nothing planned: TRMNL skips this plugin in the playlist and shows the next one {%- endcomment -%}
+{%- if state == "nothing_planned" -%}<script>window.TRMNL_SKIP_DISPLAY = true;</script>{%- endif -%}
 {%- assign to_buy_rows = toBuy.size | plus: toBuyMore -%}
 {%- assign all_good = false -%}
 {%- if state == "planned" and toBuy.size == 0 and toCheckCount == 0 -%}{%- assign all_good = true -%}{%- endif -%}
@@ -87,6 +89,7 @@
       {%- elsif state == "no_recipe" -%}
         <div class="ms-head"><span class="ms-head-title">À acheter</span></div>
         <div class="ms-row">Pas de recette liée à ce repas : la liste ne peut pas être calculée.</div>
+        <div class="ms-more" style="padding-left: 0;">Lie une recette à ce repas dans le planning Mealie.</div>
 
       {%- elsif all_good -%}
         <div class="ms-done">
@@ -96,6 +99,12 @@
             <div class="ms-done-sub">Les {{ ingredientCount }} ingrédients sont à la maison.</div>
           </div>
         </div>
+        {%- if atHome.size > 0 -%}
+          <div class="ms-head" style="margin-top: 18px;"><span class="ms-head-title">À sortir</span></div>
+          {%- for item in atHome limit: 8 -%}
+            <div class="ms-row"><span class="ms-row-name">{% if item.useSoon %}<b>{{ item.name }}</b>{% else %}{{ item.name }}{% endif %}</span></div>
+          {%- endfor -%}
+        {%- endif -%}
 
       {%- else -%}
         <div class="ms-head">
