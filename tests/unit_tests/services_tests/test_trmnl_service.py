@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from mealie.schema.household.group_shopping_list import ShoppingListItemCreate, ShoppingListSave
-from mealie.schema.household.pantry import PantryItemCreate, PantryItemOut
+from mealie.schema.household.pantry import PantryItemCreate, PantryItemOut, PantryLocation
 from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedbackCreate
 from mealie.schema.household.trmnl import TrmnlState, TrmnlToBuy
 from mealie.schema.meal_plan.new_meal import PlanEntryType, ReadPlanEntry, SavePlanEntry
@@ -110,6 +110,29 @@ def test_use_soon_worst_first(user: TestUser):
     out = _tonight(user)
 
     assert [(u.name, u.when) for u in out.use_soon] == [("Crème", "dépassé"), ("Yaourt", "2 j")]
+
+
+def test_nothing_planned_shows_the_pantry_by_place(user: TestUser):
+    _item(user, "Pâtes")  # cupboard by default
+    _item(user, "Petits pois", location=PantryLocation.freezer)
+    _item(user, "Lait", location=PantryLocation.fridge, use_by=TODAY + timedelta(days=5))
+    _item(user, "Crème", location=PantryLocation.fridge, use_by=TODAY - timedelta(days=1))
+
+    out = _tonight(user)
+
+    assert [(p.name, p.count, p.items) for p in out.places] == [
+        ("Frigo", 2, ["Crème", "Lait"]),
+        ("Congélateur", 1, ["Petits pois"]),
+        ("Placard", 1, ["Pâtes"]),
+    ]
+    assert [(u.name, u.place) for u in out.use_soon] == [("Crème", "Frigo")]
+
+
+def test_places_only_when_nothing_planned(user: TestUser):
+    _item(user, "Lait", location=PantryLocation.fridge)
+    _plan(user, _recipe(user))
+
+    assert _tonight(user).places == []
 
 
 def test_lunch_past_shows_dinner(user: TestUser):

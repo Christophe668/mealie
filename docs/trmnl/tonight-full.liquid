@@ -2,9 +2,8 @@
   Mealie "Ce soir": full view. Paste into the private plugin's Full markup.
   Data: GET /api/households/trmnl/tonight (polled by TRMNL); every string arrives formatted in French.
   This template only shows and hides blocks. Keep the logic in Mealie.
+  Two screens: the next meal and what to buy; or, when nothing is planned this week, the pantry ("Au frigo").
 {%- endcomment -%}
-{%- comment -%} nothing planned: TRMNL skips this plugin in the playlist and shows the next one {%- endcomment -%}
-{%- if state == "nothing_planned" -%}<script>window.TRMNL_SKIP_DISPLAY = true;</script>{%- endif -%}
 {%- assign to_buy_rows = toBuy.size | plus: toBuyMore -%}
 {%- assign all_good = false -%}
 {%- if state == "planned" and toBuy.size == 0 and toCheckCount == 0 -%}{%- assign all_good = true -%}{%- endif -%}
@@ -18,7 +17,6 @@
   .ms-date { font-size: 18px; }
   .ms-name { font-size: 46px; line-height: 1.08; font-weight: 600; margin-top: 18px; }
   .ms-facts { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 14px; font-size: 22px; }
-  .ms-hint { font-size: 20px; margin-top: 14px; }
   .ms-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 3px solid #000; padding-bottom: 6px; }
   .ms-head-title { font-size: 24px; font-weight: 700; }
   .ms-head-count { font-size: 20px; }
@@ -37,9 +35,92 @@
   .ms-done-mark { flex: none; width: 34px; height: 34px; background: #000; color: #fff; border-radius: 6px; font-size: 26px; line-height: 34px; text-align: center; font-weight: 700; }
   .ms-done-title { font-size: 28px; font-weight: 700; }
   .ms-done-sub { font-size: 18px; margin-top: 4px; }
-  .ms-when-tag { white-space: nowrap; font-weight: 600; }
-  .ms-when-tag--past { background: #000; color: #fff; padding: 0 6px; border-radius: 4px; }
+  /* pantry screen */
+  .ms-top { display: flex; justify-content: space-between; align-items: center; padding-bottom: 14px; }
+  .ms-top-note { font-size: 18px; }
+  .ms-tag { flex: none; white-space: nowrap; font-size: 17px; font-weight: 600; padding: 1px 8px; border: 2px solid #000; border-radius: 5px; }
+  .ms-tag--past { background: #000; color: #fff; }
+  .ms-tag--check { border-style: dashed; }
+  .ms-tag--plain { border-color: transparent; }
+  .ms-place { margin-top: 16px; }
+  .ms-place-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #000; padding-bottom: 3px; }
+  .ms-place-name { font-size: 20px; font-weight: 700; }
+  .ms-place-count { font-size: 17px; }
+  .ms-place-line { font-size: 18px; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ms-place--main { margin-top: 0; }
+  .ms-place--main .ms-place-name { font-size: 24px; }
+  .ms-place--main .ms-place-head { border-bottom-width: 3px; padding-bottom: 6px; }
+  .ms-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; font-size: 19px; line-height: 1.2; }
+  .ms-grid span { margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ms-grid .ms-grid-more { font-size: 17px; }
 </style>
+
+{%- if state == "nothing_planned" -%}
+<div class="layout layout--top layout--stretch-y ms">
+  <div style="width: 100%; display: flex; flex-direction: column; height: 100%;">
+    <div class="ms-top">
+      <div class="ms-when">
+        <span class="ms-tab">AU FRIGO</span>
+        <span class="ms-date">{{ when[1] | capitalize }}</span>
+      </div>
+      <span class="ms-top-note">Aucun repas prévu cette semaine</span>
+    </div>
+
+    <div class="columns" style="flex: 1; align-items: stretch; gap: 0;">
+      <div class="column" style="flex: 47; justify-content: flex-start; padding-right: 22px; overflow: hidden;">
+        {%- if useSoon.size > 0 -%}
+          <div class="ms-head"><span class="ms-head-title">À finir vite</span><span class="ms-head-count">{{ useSoon.size }}</span></div>
+          {%- for item in useSoon -%}
+            {%- assign tag = "" -%}
+            {%- if item.when == "dépassé" -%}{%- assign tag = " ms-tag--past" -%}
+            {%- elsif item.when == "à vérifier" -%}{%- assign tag = " ms-tag--check" -%}
+            {%- elsif item.when != "aujourd'hui" -%}{%- assign tag = " ms-tag--plain" -%}{%- endif -%}
+            <div class="ms-row" style="align-items: center;">
+              <span class="ms-row-name">{{ item.name }}{% if item.place != "" and item.place != "Frigo" %}<span class="ms-row-sub">{{ item.place }}</span>{% endif %}</span>
+              <span class="ms-tag{{ tag }}">{{ item.when }}</span>
+            </div>
+          {%- endfor -%}
+        {%- else -%}
+          <div class="ms-done">
+            <span class="ms-done-mark">✓</span>
+            <div>
+              <div class="ms-done-title">Rien ne presse</div>
+              <div class="ms-done-sub">Aucun produit à finir dans les prochains jours.</div>
+            </div>
+          </div>
+        {%- endif -%}
+      </div>
+
+      <div class="column" style="flex: 53; justify-content: flex-start; border-left: 3px solid #000; padding-left: 22px; overflow: hidden;">
+        {%- if places.size == 0 -%}
+          <div class="ms-head"><span class="ms-head-title">Garde-manger</span></div>
+          <div class="ms-row">Rien d'enregistré dans le garde-manger de Mealie.</div>
+        {%- endif -%}
+        {%- for place in places -%}
+          {%- if forloop.first -%}
+            {%- comment -%} the first place (the fridge when it holds anything) gets a two-column list {%- endcomment -%}
+            {%- if place.count > 10 -%}{%- assign shown = 9 -%}{%- else -%}{%- assign shown = 10 -%}{%- endif -%}
+            {%- assign rest = place.count | minus: shown -%}
+            <div class="ms-place ms-place--main">
+              <div class="ms-place-head"><span class="ms-place-name">{{ place.name }}</span><span class="ms-place-count">{{ place.count }}</span></div>
+              <div class="ms-grid">
+                {%- for name in place.items limit: shown -%}<span>{{ name }}</span>{%- endfor -%}
+                {%- if rest > 0 -%}<span class="ms-grid-more">+ {{ rest }} autres</span>{%- endif -%}
+              </div>
+            </div>
+          {%- else -%}
+            <div class="ms-place">
+              <div class="ms-place-head"><span class="ms-place-name">{{ place.name }}</span><span class="ms-place-count">{{ place.count }}</span></div>
+              <div class="ms-place-line">{{ place.items | join: ", " }}</div>
+            </div>
+          {%- endif -%}
+        {%- endfor -%}
+      </div>
+    </div>
+  </div>
+</div>
+
+{%- else -%}
 <div class="layout layout--top layout--stretch-y ms">
   <div class="columns" style="height: 100%; align-items: stretch; gap: 0;">
 
@@ -48,45 +129,26 @@
         <span class="ms-tab">{{ when[0] }}</span>
         <span class="ms-date">{{ when[1] | capitalize }}</span>
       </div>
-      {%- if state == "nothing_planned" -%}
-        <span class="ms-name">Rien de prévu</span>
-        <span class="ms-hint">Ajoute un repas au planning dans Mealie pour voir ici quoi acheter.</span>
-      {%- else -%}
-        <span class="ms-name" data-clamp="3">{{ recipe.name }}</span>
-        {%- if facts.size > 0 -%}
-          <div class="ms-facts">{%- for fact in facts -%}<span>{{ fact }}</span>{%- endfor -%}</div>
-        {%- endif -%}
-        {%- comment -%} a three-line name leaves only a sliver for the photo: leave it out {%- endcomment -%}
-        {%- if recipe.imageUrl and recipe.name.size <= 30 -%}
-          <img class="image image-dither ms-photo" src="{{ recipe.imageUrl }}" alt="">
-        {%- endif -%}
-        {%- if state == "planned" and all_good == false and atHome.size > 0 -%}
-          <div class="ms-home" data-clamp="3">Déjà là :
-            {% for item in atHome -%}
-              {%- if item.useSoon -%}<b>{{ item.name }}</b>{%- else -%}{{ item.name }}{%- endif -%}
-              {%- unless forloop.last -%}, {% endunless -%}
-            {%- endfor -%}
-          </div>
-        {%- endif -%}
+      <span class="ms-name" data-clamp="3">{{ recipe.name }}</span>
+      {%- if facts.size > 0 -%}
+        <div class="ms-facts">{%- for fact in facts -%}<span>{{ fact }}</span>{%- endfor -%}</div>
+      {%- endif -%}
+      {%- comment -%} a three-line name leaves only a sliver for the photo: leave it out {%- endcomment -%}
+      {%- if recipe.imageUrl and recipe.name.size <= 30 -%}
+        <img class="image image-dither ms-photo" src="{{ recipe.imageUrl }}" alt="">
+      {%- endif -%}
+      {%- if state == "planned" and all_good == false and atHome.size > 0 -%}
+        <div class="ms-home" data-clamp="3">Déjà là :
+          {% for item in atHome -%}
+            {%- if item.useSoon -%}<b>{{ item.name }}</b>{%- else -%}{{ item.name }}{%- endif -%}
+            {%- unless forloop.last -%}, {% endunless -%}
+          {%- endfor -%}
+        </div>
       {%- endif -%}
     </div>
 
     <div class="column" style="flex: 46; justify-content: flex-start; border-left: 3px solid #000; padding-left: 22px; overflow: hidden;">
-      {%- if state == "nothing_planned" -%}
-        {%- if useSoon.size > 0 -%}
-          <div class="ms-head"><span class="ms-head-title">À finir vite</span><span class="ms-head-count">{{ useSoon.size }}</span></div>
-          {%- for item in useSoon -%}
-            <div class="ms-row">
-              <span class="ms-row-name">{{ item.name }}</span>
-              <span class="ms-when-tag{% if item.when == "dépassé" %} ms-when-tag--past{% endif %}">{{ item.when }}</span>
-            </div>
-          {%- endfor -%}
-        {%- else -%}
-          <div class="ms-head"><span class="ms-head-title">Garde-manger</span></div>
-          <div class="ms-row">Rien à finir en urgence.</div>
-        {%- endif -%}
-
-      {%- elsif state == "no_recipe" -%}
+      {%- if state == "no_recipe" -%}
         <div class="ms-head"><span class="ms-head-title">À acheter</span></div>
         <div class="ms-row">Pas de recette liée à ce repas : la liste ne peut pas être calculée.</div>
         <div class="ms-more" style="padding-left: 0;">Lie une recette à ce repas dans le planning Mealie.</div>
@@ -130,11 +192,11 @@
           </div>
         {%- endif -%}
       {%- endif -%}
-
     </div>
 
   </div>
 </div>
+{%- endif -%}
 
 <div class="title_bar">
   <span class="title">Mealie</span>

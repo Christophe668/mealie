@@ -3,6 +3,7 @@
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
+from mealie.schema.household.pantry import PantryLocation
 from mealie.schema.household.recipe_feedback import FeedbackVerdict
 from mealie.schema.meal_plan.new_meal import PlanEntryType
 from mealie.schema.recipe.recipe_ingredient import IngredientUnit
@@ -76,6 +77,14 @@ def quantity_text(quantity: float | None, unit: IngredientUnit | None) -> str | 
         return unit_text(unit) if unit else None
     amount = number(quantity)
     return f"{amount} {unit_text(unit)}" if unit else amount
+
+
+PLACE_NAMES = {
+    PantryLocation.fridge: "Frigo",
+    PantryLocation.freezer: "Congélateur",
+    PantryLocation.cupboard: "Placard",
+    PantryLocation.other: "Ailleurs",
+}
 
 
 def use_soon_text(f: Freshness) -> str:
