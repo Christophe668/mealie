@@ -60,7 +60,7 @@ MEAL_ENDS = {
 LOOK_AHEAD_DAYS = 7
 
 USE_SOON_ROWS = 8
-PLACE_ITEMS = 12
+PLACE_ITEMS = 30
 PLACE_ORDER = (PantryLocation.fridge, PantryLocation.freezer, PantryLocation.cupboard, PantryLocation.other)
 
 TO_BUY_ROWS = 8
