@@ -66,8 +66,10 @@
   Two arrangements. With items to finish: they on the left, the pantry on the right. Without: the pantry alone,
   full width. The first place (the fridge when it holds anything) gets a grid sized to the room left by the others.
 {%- endcomment -%}
-{%- assign urgent = useSoon.size | at_least: 0 -%}
-{%- assign others = places.size | minus: 1 -%}
+{%- comment -%} `| default: 0`: an older Mealie sends no `places`, and nil is neither 0 nor more {%- endcomment -%}
+{%- assign urgent = useSoon.size | default: 0 -%}
+{%- assign place_count = places.size | default: 0 -%}
+{%- assign others = place_count | minus: 1 -%}
 {%- if urgent > 0 -%}
   {%- assign cols = 2 -%}
   {%- if others <= 0 -%}{%- assign rows = 10 -%}{%- elsif others == 1 -%}{%- assign rows = 7 -%}{%- else -%}{%- assign rows = 5 -%}{%- endif -%}
@@ -79,7 +81,7 @@
   <div style="width: 100%; display: flex; flex-direction: column; height: 100%;">
     <div class="ms-top">
       <span class="ms-top-date">{{ when[1] | capitalize }}</span>
-      <span>{% if urgent == 0 and places.size > 0 %}<span class="ms-calm">✓ Rien à finir en urgence</span> · {% endif %}Aucun repas prévu cette semaine</span>
+      <span>{% if urgent == 0 and place_count > 0 %}<span class="ms-calm">✓ Rien à finir en urgence</span> · {% endif %}Aucun repas prévu cette semaine</span>
     </div>
 
     <div class="columns" style="flex: 1; align-items: stretch; gap: 0;">
@@ -103,7 +105,7 @@
 
       <div class="column" style="flex: 55; justify-content: flex-start; overflow: hidden;{% if urgent > 0 %} border-left: 3px solid #000; padding-left: 22px;{% endif %}">
         <div>
-        {%- if places.size == 0 -%}
+        {%- if place_count == 0 -%}
           <div class="ms-head"><span class="ms-head-title">Garde-manger</span></div>
           <div class="ms-row">Rien d'enregistré dans le garde-manger de Mealie.</div>
         {%- else -%}
