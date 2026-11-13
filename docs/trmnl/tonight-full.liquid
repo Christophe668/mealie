@@ -35,86 +35,103 @@
   .ms-done-mark { flex: none; width: 34px; height: 34px; background: #000; color: #fff; border-radius: 6px; font-size: 26px; line-height: 34px; text-align: center; font-weight: 700; }
   .ms-done-title { font-size: 28px; font-weight: 700; }
   .ms-done-sub { font-size: 18px; margin-top: 4px; }
-  /* pantry screen */
-  .ms-top { display: flex; justify-content: space-between; align-items: center; padding-bottom: 14px; }
-  .ms-top-note { font-size: 18px; }
+  /* pantry screen: adapts to what there is. Nothing urgent: the pantry takes the full width. */
+  .ms-top { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 12px; font-size: 18px; }
+  .ms-top-date { font-size: 22px; font-weight: 700; }
   .ms-tag { flex: none; white-space: nowrap; font-size: 17px; font-weight: 600; padding: 1px 8px; border: 2px solid #000; border-radius: 5px; }
   .ms-tag--past { background: #000; color: #fff; }
   .ms-tag--check { border-style: dashed; }
   .ms-tag--plain { border-color: transparent; }
-  .ms-place { margin-top: 16px; }
   .ms-place-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #000; padding-bottom: 3px; }
   .ms-place-name { font-size: 20px; font-weight: 700; }
   .ms-place-count { font-size: 17px; }
-  .ms-place-line { font-size: 18px; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ms-place--main { margin-top: 0; }
   .ms-place--main .ms-place-name { font-size: 24px; }
   .ms-place--main .ms-place-head { border-bottom-width: 3px; padding-bottom: 6px; }
-  .ms-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; font-size: 19px; line-height: 1.2; }
+  .ms-grid { display: grid; column-gap: 16px; font-size: 19px; line-height: 1.2; }
   .ms-grid span { margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ms-grid .ms-grid-more { font-size: 17px; }
+  .ms-others { display: flex; gap: 22px; margin-top: 16px; }
+  .ms-others > div { flex: 1; min-width: 0; }
+  .ms-others--stack { flex-direction: column; gap: 14px; }
+  .ms-place-line { font-size: 18px; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ms-calm { font-size: 18px; font-weight: 600; }
 </style>
 
 {%- if state == "nothing_planned" -%}
+{%- comment -%}
+  Two arrangements. With items to finish: they on the left, the pantry on the right. Without: the pantry alone,
+  full width. The first place (the fridge when it holds anything) gets a grid sized to the room left by the others.
+{%- endcomment -%}
+{%- assign urgent = useSoon.size | at_least: 0 -%}
+{%- assign others = places.size | minus: 1 -%}
+{%- if urgent > 0 -%}
+  {%- assign cols = 2 -%}
+  {%- if others <= 0 -%}{%- assign rows = 10 -%}{%- elsif others == 1 -%}{%- assign rows = 7 -%}{%- else -%}{%- assign rows = 5 -%}{%- endif -%}
+{%- else -%}
+  {%- assign cols = 3 -%}
+  {%- if others <= 0 -%}{%- assign rows = 10 -%}{%- else -%}{%- assign rows = 5 -%}{%- endif -%}
+{%- endif -%}
 <div class="layout layout--top layout--stretch-y ms">
   <div style="width: 100%; display: flex; flex-direction: column; height: 100%;">
     <div class="ms-top">
-      <div class="ms-when">
-        <span class="ms-tab">À LA MAISON</span>
-        <span class="ms-date">{{ when[1] | capitalize }}</span>
-      </div>
-      <span class="ms-top-note">Aucun repas prévu cette semaine</span>
+      <span class="ms-top-date">{{ when[1] | capitalize }}</span>
+      <span>{% if urgent == 0 and places.size > 0 %}<span class="ms-calm">✓ Rien à finir en urgence</span> · {% endif %}Aucun repas prévu cette semaine</span>
     </div>
 
     <div class="columns" style="flex: 1; align-items: stretch; gap: 0;">
-      <div class="column" style="flex: 47; justify-content: flex-start; padding-right: 22px; overflow: hidden;">
-        {%- if useSoon.size > 0 -%}
-          <div class="ms-head"><span class="ms-head-title">À finir vite</span><span class="ms-head-count">{{ useSoon.size }}</span></div>
-          {%- for item in useSoon -%}
-            {%- assign tag = "" -%}
-            {%- if item.when == "dépassé" -%}{%- assign tag = " ms-tag--past" -%}
-            {%- elsif item.when == "à vérifier" -%}{%- assign tag = " ms-tag--check" -%}
-            {%- elsif item.when != "aujourd'hui" -%}{%- assign tag = " ms-tag--plain" -%}{%- endif -%}
-            <div class="ms-row" style="align-items: center;">
-              <span class="ms-row-name">{{ item.name }}{% if item.place != "" and item.place != "Frigo" %}<span class="ms-row-sub">{{ item.place }}</span>{% endif %}</span>
-              <span class="ms-tag{{ tag }}">{{ item.when }}</span>
-            </div>
-          {%- endfor -%}
-        {%- else -%}
-          <div class="ms-done">
-            <span class="ms-done-mark">✓</span>
-            <div>
-              <div class="ms-done-title">Rien ne presse</div>
-              <div class="ms-done-sub">Aucun produit à finir dans les prochains jours.</div>
-            </div>
+      {%- if urgent > 0 -%}
+      <div class="column" style="flex: 45; justify-content: flex-start; padding-right: 22px; overflow: hidden;">
+        <div class="ms-head"><span class="ms-head-title">À finir vite</span><span class="ms-head-count">{{ urgent }}</span></div>
+        {%- for item in useSoon -%}
+          {%- assign tag = "" -%}
+          {%- if item.when == "dépassé" -%}{%- assign tag = " ms-tag--past" -%}
+          {%- elsif item.when == "à vérifier" -%}{%- assign tag = " ms-tag--check" -%}
+          {%- elsif item.when != "aujourd'hui" -%}{%- assign tag = " ms-tag--plain" -%}{%- endif -%}
+          <div class="ms-row" style="align-items: center;">
+            <span class="ms-row-name">{{ item.name }}{% if item.place != "" and item.place != "Frigo" %}<span class="ms-row-sub">{{ item.place }}</span>{% endif %}</span>
+            <span class="ms-tag{{ tag }}">{{ item.when }}</span>
           </div>
-        {%- endif -%}
+        {%- endfor -%}
       </div>
+      {%- endif -%}
 
-      <div class="column" style="flex: 53; justify-content: flex-start; border-left: 3px solid #000; padding-left: 22px; overflow: hidden;">
+      <div class="column" style="flex: 55; justify-content: flex-start; overflow: hidden;{% if urgent > 0 %} border-left: 3px solid #000; padding-left: 22px;{% endif %}">
         {%- if places.size == 0 -%}
           <div class="ms-head"><span class="ms-head-title">Garde-manger</span></div>
           <div class="ms-row">Rien d'enregistré dans le garde-manger de Mealie.</div>
-        {%- endif -%}
-        {%- for place in places -%}
-          {%- if forloop.first -%}
-            {%- comment -%} the first place (the fridge when it holds anything) gets a two-column list {%- endcomment -%}
-            {%- if place.count > 10 -%}{%- assign shown = 9 -%}{%- else -%}{%- assign shown = 10 -%}{%- endif -%}
-            {%- assign rest = place.count | minus: shown -%}
-            <div class="ms-place ms-place--main">
-              <div class="ms-place-head"><span class="ms-place-name">{{ place.name }}</span><span class="ms-place-count">{{ place.count }}</span></div>
-              <div class="ms-grid">
-                {%- for name in place.items limit: shown -%}<span>{{ name }}</span>{%- endfor -%}
-                {%- if rest > 0 -%}<span class="ms-grid-more">+ {{ rest }} autres</span>{%- endif -%}
-              </div>
+        {%- else -%}
+          {%- assign main = places.first -%}
+          {%- assign room = rows | times: cols -%}
+          {%- if main.count > room -%}{%- assign shown = room | minus: 1 -%}{%- else -%}{%- assign shown = room -%}{%- endif -%}
+          {%- assign rest = main.count | minus: shown -%}
+          <div class="ms-place--main">
+            <div class="ms-place-head"><span class="ms-place-name">{{ main.name }}</span><span class="ms-place-count">{{ main.count }}</span></div>
+            <div class="ms-grid" style="grid-template-columns: repeat({{ cols }}, 1fr);">
+              {%- for name in main.items limit: shown -%}<span>{{ name }}</span>{%- endfor -%}
+              {%- if rest > 0 -%}<span class="ms-grid-more">+ {{ rest }} autres</span>{%- endif -%}
             </div>
-          {%- else -%}
-            <div class="ms-place">
-              <div class="ms-place-head"><span class="ms-place-name">{{ place.name }}</span><span class="ms-place-count">{{ place.count }}</span></div>
-              <div class="ms-place-line">{{ place.items | join: ", " }}</div>
+          </div>
+          {%- if others > 0 -%}
+            {%- comment -%} beside the urgent list: one line per place; full width: side by side, a short list each {%- endcomment -%}
+            <div class="ms-others{% if urgent > 0 %} ms-others--stack{% endif %}">
+              {%- for place in places offset: 1 -%}
+                <div>
+                  <div class="ms-place-head"><span class="ms-place-name">{{ place.name }}</span><span class="ms-place-count">{{ place.count }}</span></div>
+                  {%- if urgent > 0 -%}
+                    <div class="ms-place-line">{{ place.items | join: ", " }}</div>
+                  {%- else -%}
+                    {%- if place.count > 4 -%}{%- assign few = 3 -%}{%- else -%}{%- assign few = 4 -%}{%- endif -%}
+                    {%- assign left = place.count | minus: few -%}
+                    <div class="ms-grid" style="grid-template-columns: 1fr;">
+                      {%- for name in place.items limit: few -%}<span>{{ name }}</span>{%- endfor -%}
+                      {%- if left > 0 -%}<span class="ms-grid-more">+ {{ left }} autres</span>{%- endif -%}
+                    </div>
+                  {%- endif -%}
+                </div>
+              {%- endfor -%}
             </div>
           {%- endif -%}
-        {%- endfor -%}
+        {%- endif -%}
       </div>
     </div>
   </div>
