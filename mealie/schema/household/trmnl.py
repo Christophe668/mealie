@@ -35,6 +35,18 @@ class TrmnlUseSoon(MealieModel):
     name: str
     when: str
     """"2 j", "aujourd'hui", "dépassé" or "à vérifier"."""
+    place: str = ""
+    """Where it is kept, in French: "Frigo", "Congélateur", "Placard" or "Ailleurs"."""
+
+
+class TrmnlPlace(MealieModel):
+    """One storage place of the pantry, for the screen shown when no meal is planned."""
+
+    name: str
+    """"Frigo", "Congélateur", "Placard" or "Ailleurs"."""
+    count: int
+    items: list[str] = []
+    """The first names, soonest use-by first; `count` says how many there are in all."""
 
 
 class TrmnlTonightOut(MealieModel):
@@ -53,3 +65,5 @@ class TrmnlTonightOut(MealieModel):
     to_check_count: int = 0
     """Ingredients the check can't judge; while above 0 the screen never says "Rien à acheter"."""
     use_soon: list[TrmnlUseSoon] = []
+    places: list[TrmnlPlace] = []
+    """Only when nothing is planned: the pantry by place, fridge first, empty places left out."""

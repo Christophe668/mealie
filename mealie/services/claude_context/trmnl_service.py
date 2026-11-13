@@ -11,9 +11,10 @@ from mealie.repos.all_repositories import get_repositories
 from mealie.repos.repository_factory import AllRepositories
 from mealie.schema.household.cooked_meal import UnmatchedIngredient
 from mealie.schema.household.household import HouseholdInDB
-from mealie.schema.household.pantry import PantryItemOut
+from mealie.schema.household.pantry import PantryItemOut, PantryLocation
 from mealie.schema.household.trmnl import (
     TrmnlAtHome,
+    TrmnlPlace,
     TrmnlRecipe,
     TrmnlState,
     TrmnlToBuy,
@@ -29,7 +30,14 @@ from mealie.services._base_service import BaseService
 from mealie.services.claude_context.cooked_meal_service import CookedMealService
 from mealie.services.claude_context.freshness import NEEDS_ATTENTION, freshness_of
 from mealie.services.claude_context.pantry_usage import uncovered_fraction
-from mealie.services.claude_context.trmnl_format import clock, facts_line, kicker, quantity_text, use_soon_text
+from mealie.services.claude_context.trmnl_format import (
+    PLACE_NAMES,
+    clock,
+    facts_line,
+    kicker,
+    quantity_text,
+    use_soon_text,
+)
 
 MEAL_ORDER = (
     PlanEntryType.breakfast,
@@ -51,7 +59,9 @@ MEAL_ENDS = {
 
 LOOK_AHEAD_DAYS = 7
 
-USE_SOON_ROWS = 6
+USE_SOON_ROWS = 8
+PLACE_ITEMS = 12
+PLACE_ORDER = (PantryLocation.fridge, PantryLocation.freezer, PantryLocation.cupboard, PantryLocation.other)
 
 TO_BUY_ROWS = 8
 """Rows that fit in the "À acheter" column; past that, the last row becomes "+ N autres"."""
@@ -73,11 +83,13 @@ class TrmnlTonightService(BaseService):
         today = today or now.date()
         entry = self._pick(today, now)
         if entry is None:
+            pantry = self.repos.pantry_items.ordered()
             return TrmnlTonightOut(
                 state=TrmnlState.nothing_planned,
                 kicker=kicker(today, today),
                 generated_at=clock(now),
-                use_soon=self._use_soon(today),
+                use_soon=self._use_soon(today, pantry),
+                places=self._places(pantry),
             )
         base = {"kicker": kicker(entry.date, today, entry.entry_type), "generated_at": clock(now)}
 
@@ -135,17 +147,27 @@ class TrmnlTonightService(BaseService):
             image_url=image_url,
         )
 
-    def _use_soon(self, today: date) -> list[TrmnlUseSoon]:
+    @staticmethod
+    def _use_soon(today: date, pantry: list[PantryItemOut]) -> list[TrmnlUseSoon]:
         """Pantry items needing attention, worst first, pantry order kept within a status."""
         rows = []
-        for index, item in enumerate(self.repos.pantry_items.ordered()):
+        for index, item in enumerate(pantry):
             f = freshness_of(item, today)
             if f.status in NEEDS_ATTENTION:
-                rows.append(
-                    (NEEDS_ATTENTION.index(f.status), index, TrmnlUseSoon(name=item.name, when=use_soon_text(f)))
-                )
+                use_soon = TrmnlUseSoon(name=item.name, when=use_soon_text(f), place=PLACE_NAMES[item.location])
+                rows.append((NEEDS_ATTENTION.index(f.status), index, use_soon))
         rows.sort(key=lambda row: (row[0], row[1]))
         return [row[2] for row in rows[:USE_SOON_ROWS]]
+
+    @staticmethod
+    def _places(pantry: list[PantryItemOut]) -> list[TrmnlPlace]:
+        """The pantry by place, in `PLACE_ORDER`, keeping the pantry's soonest-first order; empty places left out."""
+        places = []
+        for location in PLACE_ORDER:
+            names = [item.name for item in pantry if item.location == location]
+            if names:
+                places.append(TrmnlPlace(name=PLACE_NAMES[location], count=len(names), items=names[:PLACE_ITEMS]))
+        return places
 
     # ------------------------------------------------------------------ what to buy, what is at home
 
