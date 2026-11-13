@@ -2,7 +2,7 @@
   Mealie "Ce soir": full view. Paste into the private plugin's Full markup.
   Data: GET /api/households/trmnl/tonight (polled by TRMNL); every string arrives formatted in French.
   This template only shows and hides blocks. Keep the logic in Mealie.
-  Two screens: the next meal and what to buy; or, when nothing is planned this week, the pantry ("Au frigo").
+  Two screens: the next meal and what to buy; or, when nothing is planned this week, the pantry ("À la maison").
 {%- endcomment -%}
 {%- assign to_buy_rows = toBuy.size | plus: toBuyMore -%}
 {%- assign all_good = false -%}
@@ -60,7 +60,7 @@
   <div style="width: 100%; display: flex; flex-direction: column; height: 100%;">
     <div class="ms-top">
       <div class="ms-when">
-        <span class="ms-tab">AU FRIGO</span>
+        <span class="ms-tab">À LA MAISON</span>
         <span class="ms-date">{{ when[1] | capitalize }}</span>
       </div>
       <span class="ms-top-note">Aucun repas prévu cette semaine</span>
