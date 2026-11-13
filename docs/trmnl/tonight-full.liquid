@@ -41,14 +41,18 @@
   .ms-tag { flex: none; white-space: nowrap; font-size: 17px; font-weight: 600; padding: 1px 8px; border: 2px solid #000; border-radius: 5px; }
   .ms-tag--past { background: #000; color: #fff; }
   .ms-tag--check { border-style: dashed; }
-  .ms-tag--plain { border-color: transparent; }
+  .ms-tag--plain { border-color: transparent; padding-left: 0; padding-right: 0; }
   .ms-place-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #000; padding-bottom: 3px; }
   .ms-place-name { font-size: 20px; font-weight: 700; }
   .ms-place-count { font-size: 17px; }
   .ms-place--main .ms-place-name { font-size: 24px; }
   .ms-place--main .ms-place-head { border-bottom-width: 3px; padding-bottom: 6px; }
-  .ms-grid { display: grid; column-gap: 16px; font-size: 19px; line-height: 1.2; }
-  .ms-grid span { margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ms-grid { display: grid; column-gap: 16px; font-size: 19px; }
+  .ms-grid span { height: 32px; line-height: 32px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* one row height on both sides, so the urgent list and the pantry grid line up */
+  .ms-line { display: flex; align-items: center; gap: 10px; height: 32px; font-size: 19px; }
+  .ms-line-place { font-size: 15px; padding-left: 6px; }
+  .ms-head + .ms-line, .ms-place-head + .ms-grid { margin-top: 6px; }
   .ms-grid .ms-grid-more { font-size: 17px; }
   .ms-others { display: flex; gap: 22px; margin-top: 16px; }
   .ms-others > div { flex: 1; min-width: 0; }
@@ -81,26 +85,29 @@
     <div class="columns" style="flex: 1; align-items: stretch; gap: 0;">
       {%- if urgent > 0 -%}
       <div class="column" style="flex: 45; justify-content: flex-start; padding-right: 22px; overflow: hidden;">
+        <div>
         <div class="ms-head"><span class="ms-head-title">À finir vite</span><span class="ms-head-count">{{ urgent }}</span></div>
         {%- for item in useSoon -%}
           {%- assign tag = "" -%}
           {%- if item.when == "dépassé" -%}{%- assign tag = " ms-tag--past" -%}
           {%- elsif item.when == "à vérifier" -%}{%- assign tag = " ms-tag--check" -%}
           {%- elsif item.when != "aujourd'hui" -%}{%- assign tag = " ms-tag--plain" -%}{%- endif -%}
-          <div class="ms-row" style="align-items: center;">
-            <span class="ms-row-name">{{ item.name }}{% if item.place != "" and item.place != "Frigo" %}<span class="ms-row-sub">{{ item.place }}</span>{% endif %}</span>
+          <div class="ms-line">
+            <span class="ms-row-name">{{ item.name }}{% if item.place != "" and item.place != "Frigo" %}<span class="ms-line-place">{{ item.place | downcase }}</span>{% endif %}</span>
             <span class="ms-tag{{ tag }}">{{ item.when }}</span>
           </div>
         {%- endfor -%}
+        </div>
       </div>
       {%- endif -%}
 
       <div class="column" style="flex: 55; justify-content: flex-start; overflow: hidden;{% if urgent > 0 %} border-left: 3px solid #000; padding-left: 22px;{% endif %}">
+        <div>
         {%- if places.size == 0 -%}
           <div class="ms-head"><span class="ms-head-title">Garde-manger</span></div>
           <div class="ms-row">Rien d'enregistré dans le garde-manger de Mealie.</div>
         {%- else -%}
-          {%- assign main = places.first -%}
+          {%- assign main = places | first -%}
           {%- assign room = rows | times: cols -%}
           {%- if main.count > room -%}{%- assign shown = room | minus: 1 -%}{%- else -%}{%- assign shown = room -%}{%- endif -%}
           {%- assign rest = main.count | minus: shown -%}
@@ -120,7 +127,7 @@
                   {%- if urgent > 0 -%}
                     <div class="ms-place-line">{{ place.items | join: ", " }}</div>
                   {%- else -%}
-                    {%- if place.count > 4 -%}{%- assign few = 3 -%}{%- else -%}{%- assign few = 4 -%}{%- endif -%}
+                    {%- if place.count > 3 -%}{%- assign few = 2 -%}{%- else -%}{%- assign few = 3 -%}{%- endif -%}
                     {%- assign left = place.count | minus: few -%}
                     <div class="ms-grid" style="grid-template-columns: 1fr;">
                       {%- for name in place.items limit: few -%}<span>{{ name }}</span>{%- endfor -%}
@@ -132,6 +139,7 @@
             </div>
           {%- endif -%}
         {%- endif -%}
+        </div>
       </div>
     </div>
   </div>
