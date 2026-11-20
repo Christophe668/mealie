@@ -68,15 +68,19 @@ def facts_line(total_seconds: int | None, servings: float | None, verdict: Feedb
     return " · ".join(parts)
 
 
-def unit_text(unit: IngredientUnit) -> str:
-    return unit.abbreviation if unit.use_abbreviation and unit.abbreviation else unit.name
+def unit_text(unit: IngredientUnit, quantity: float | None = None) -> str:
+    """The unit's abbreviation when it uses one, else its name; the plural form above 1 when the unit has one."""
+    plural = quantity is not None and quantity > 1
+    if unit.use_abbreviation and unit.abbreviation:
+        return (unit.plural_abbreviation or unit.abbreviation) if plural else unit.abbreviation
+    return (unit.plural_name or unit.name) if plural else unit.name
 
 
 def quantity_text(quantity: float | None, unit: IngredientUnit | None) -> str | None:
     if not quantity:
         return unit_text(unit) if unit else None
     amount = number(quantity)
-    return f"{amount} {unit_text(unit)}" if unit else amount
+    return f"{amount} {unit_text(unit, quantity)}" if unit else amount
 
 
 PLACE_NAMES = {

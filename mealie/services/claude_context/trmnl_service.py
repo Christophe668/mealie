@@ -14,11 +14,13 @@ from mealie.schema.household.household import HouseholdInDB
 from mealie.schema.household.pantry import PantryItemOut, PantryLocation
 from mealie.schema.household.trmnl import (
     TrmnlAtHome,
+    TrmnlPantryLine,
     TrmnlPlace,
     TrmnlRecipe,
     TrmnlState,
     TrmnlToBuy,
     TrmnlTonightOut,
+    TrmnlTypeGroup,
     TrmnlUseSoon,
 )
 from mealie.schema.meal_plan.new_meal import PlanEntryType, ReadPlanEntry
@@ -28,6 +30,7 @@ from mealie.schema.response.pagination import PaginationQuery
 from mealie.schema.user.user import PrivateUser
 from mealie.services._base_service import BaseService
 from mealie.services.claude_context.cooked_meal_service import CookedMealService
+from mealie.services.claude_context.food_type import food_type, type_rank
 from mealie.services.claude_context.freshness import NEEDS_ATTENTION, freshness_of
 from mealie.services.claude_context.pantry_usage import uncovered_fraction
 from mealie.services.claude_context.trmnl_format import (
@@ -59,12 +62,23 @@ MEAL_ENDS = {
 
 LOOK_AHEAD_DAYS = 7
 
-USE_SOON_ROWS = 8
-PLACE_ITEMS = 30
 PLACE_ORDER = (PantryLocation.fridge, PantryLocation.freezer, PantryLocation.cupboard, PantryLocation.other)
 
-TO_BUY_ROWS = 8
-"""Rows that fit in the "À acheter" column; past that, the last row becomes "+ N autres"."""
+# No row caps: every row is sent, and the template wraps and shrinks the text to fit the screen.
+
+
+def _label(food: IngredientFood | None) -> str | None:
+    return food.label.name if food is not None and food.label is not None else None
+
+
+def _kind(item: PantryItemOut) -> str:
+    """The pantry item's kind of food: its food's label, else what its name says."""
+    return food_type(item.food.name if item.food else item.name, _label(item.food))
+
+
+def _counted(item: PantryItemOut) -> bool:
+    """Only items with a quantity are shown; staples kept without one ("farine", "sel") are left out."""
+    return bool(item.quantity)
 
 
 class TrmnlTonightService(BaseService):
@@ -95,8 +109,12 @@ class TrmnlTonightService(BaseService):
 
         recipe = self._recipe(entry)
         if recipe is None:
+            # no ingredients to check: the screen shows what needs using up instead
             return TrmnlTonightOut(
-                state=TrmnlState.no_recipe, recipe=TrmnlRecipe(name=entry.title or entry.text, facts=""), **base
+                state=TrmnlState.no_recipe,
+                recipe=TrmnlRecipe(name=entry.title or entry.text, facts=""),
+                use_soon=self._use_soon(today, self.repos.pantry_items.ordered()),
+                **base,
             )
 
         return TrmnlTonightOut(
@@ -152,21 +170,45 @@ class TrmnlTonightService(BaseService):
         """Pantry items needing attention, worst first, pantry order kept within a status."""
         rows = []
         for index, item in enumerate(pantry):
+            if not _counted(item):
+                continue
             f = freshness_of(item, today)
             if f.status in NEEDS_ATTENTION:
                 use_soon = TrmnlUseSoon(name=item.name, when=use_soon_text(f), place=PLACE_NAMES[item.location])
                 rows.append((NEEDS_ATTENTION.index(f.status), index, use_soon))
         rows.sort(key=lambda row: (row[0], row[1]))
-        return [row[2] for row in rows[:USE_SOON_ROWS]]
+        return [row[2] for row in rows]
 
     @staticmethod
     def _places(pantry: list[PantryItemOut]) -> list[TrmnlPlace]:
-        """The pantry by place, in `PLACE_ORDER`, keeping the pantry's soonest-first order; empty places left out."""
+        """The pantry by place, in `PLACE_ORDER`, then by kind of food, keeping the pantry's soonest-first order.
+
+        Items without a quantity are left out; items of one name and unit in a place are added up into one line.
+        Empty places are left out."""
         places = []
         for location in PLACE_ORDER:
-            names = [item.name for item in pantry if item.location == location]
-            if names:
-                places.append(TrmnlPlace(name=PLACE_NAMES[location], count=len(names), items=names[:PLACE_ITEMS]))
+            merged: dict[tuple[str, str], list[PantryItemOut]] = {}
+            for item in pantry:
+                if item.location == location and _counted(item):
+                    merged.setdefault((item.name.strip().casefold(), str(item.unit_id)), []).append(item)
+            if not merged:
+                continue
+            groups: dict[str, list[TrmnlPantryLine]] = {}
+            for items in merged.values():
+                first = items[0]
+                quantity = quantity_text(sum(item.quantity or 0 for item in items), first.unit) or ""
+                groups.setdefault(_kind(first), []).append(TrmnlPantryLine(name=first.name, quantity=quantity))
+            places.append(
+                TrmnlPlace(
+                    name=PLACE_NAMES[location],
+                    count=len(merged),
+                    items=[items[0].name for items in merged.values()],
+                    groups=[
+                        TrmnlTypeGroup(name=kind, items=lines)
+                        for kind, lines in sorted(groups.items(), key=lambda group: type_rank(group[0]))
+                    ],
+                )
+            )
         return places
 
     # ------------------------------------------------------------------ what to buy, what is at home
@@ -211,7 +253,14 @@ class TrmnlTonightService(BaseService):
                 if uncovered is None:
                     to_check += 1
                 if not uncovered:  # 0.0 covered, None can't tell: at home either way
-                    at_home.append(TrmnlAtHome(name=food.name, use_soon=self._use_soon_any(items, today)))
+                    if any(_counted(item) for item in items):
+                        at_home.append(
+                            TrmnlAtHome(
+                                name=food.name,
+                                use_soon=self._use_soon_any(items, today),
+                                type=food_type(food.name, _label(food)),
+                            )
+                        )
                     continue
                 to_buy.append(self._to_buy(food, lines, scale, on_list, left=self._left(items)))
                 continue
@@ -223,20 +272,22 @@ class TrmnlTonightService(BaseService):
                     to_check += 1
                 first = substitutes[0]
                 name = first.food.name if first.food else first.name
-                at_home.append(
-                    TrmnlAtHome(name=f"{name} (pour {food.name})", use_soon=self._use_soon_any(substitutes, today))
-                )
+                if any(_counted(item) for item in substitutes):
+                    at_home.append(
+                        TrmnlAtHome(
+                            name=f"{name} (pour {food.name})",
+                            use_soon=self._use_soon_any(substitutes, today),
+                            type=_kind(first),
+                        )
+                    )
                 continue
             to_buy.append(self._to_buy(food, lines, scale, on_list))
 
-        more = 0
-        if len(to_buy) > TO_BUY_ROWS:
-            more = len(to_buy) - (TO_BUY_ROWS - 1)
-            to_buy = to_buy[: TO_BUY_ROWS - 1]
+        # by kind of food, in shopping-aisle order; `sorted` is stable, so the recipe's order stays within a kind
         return {
-            "to_buy": to_buy,
-            "to_buy_more": more,
-            "at_home": at_home,
+            "to_buy": sorted(to_buy, key=lambda row: type_rank(row.type)),
+            "to_buy_more": 0,
+            "at_home": sorted(at_home, key=lambda row: type_rank(row.type)),
             "ingredient_count": len(lines_by_food),
             # a recipe without any ingredient line can't be judged: never "Rien à acheter" for it
             "to_check_count": to_check if recipe.recipe_ingredient else 1,
@@ -280,6 +331,7 @@ class TrmnlTonightService(BaseService):
             quantity=quantity_text(quantity, first.unit),
             left=left,
             on_list=str(food.id) in on_list,
+            type=food_type(food.name, _label(food)),
         )
 
     @staticmethod

@@ -10,10 +10,21 @@ Top left, a black tab says when (`CE SOIR`, `DEMAIN MIDI`, `SAMEDI SOIR`) next t
 
 | State | Left | Right |
 |---|---|---|
-| A recipe is planned | Recipe name, time, portions, last verdict; the photo when the name fits on two lines; at the bottom `Déjà là :` (foods to use soon bold and underlined) | `À acheter`, `N sur M` ingredients: a tick-box row per food with the quantity; under the name `reste 50 ml` when the pantry is short and `déjà sur la liste` (dashed box) when already on a shopping list; then `+ N autres, N à vérifier dans la recette` |
-| Everything is at home | same, without `Déjà là` | `✓ Rien à acheter`, then `À sortir`: the ingredients to take out. Never shown while something can't be checked (a line without a food, units that don't compare, a missing quantity). |
-| Free-text entry | The entry's title | Says no recipe is linked, so no list, and how to link one |
-| Nothing planned in the next 7 days | No title, just the date and `Aucun repas prévu cette semaine`. With items to finish: `À finir vite` on the left (worst first; `dépassé` black, `à vérifier` dashed, `aujourd'hui` outlined, `N j`; the place under the name when it isn't the fridge) | The pantry by place (`places`), fridge first, as a grid sized to the room the other places leave. Nothing to finish: the pantry takes the full width (three columns, other places side by side) and the header says `✓ Rien à finir en urgence` |
+| A recipe is planned | Recipe name, time, portions, last verdict, the photo when there is room; at the bottom `Déjà là :` (foods to use soon bold and underlined) | `À acheter`, `N sur M`: a tick-box row per food with the quantity, in shopping-aisle order (by kind of food); under the name `reste 50 ml` when the pantry is short and `déjà sur la liste` (dashed box) when already on a shopping list; then `+ N à vérifier dans la recette` |
+| Everything is at home | same, without `Déjà là` | `✓ Rien à acheter`, then `À sortir`: the ingredients to take out, one line per kind of food. Never shown while something can't be checked (a line without a food, units that don't compare, a missing quantity). |
+| Free-text entry (no recipe) | The entry's title and `Pas de recette liée dans le planning.` | `À finir vite`: what to use up, or `✓ Rien à finir` |
+| Nothing planned in the next 7 days | Just the date and `Aucun repas prévu cette semaine`. `À finir vite` (worst first; `dépassé` black, `à vérifier` dashed, `aujourd'hui` outlined, `N j`), then the fridge | The other places. Each place has one line per kind of food (`FÉCULENTS  pâtes 1 kg · riz 500 g`), with quantities. Nothing to finish: fridge and freezer left, cupboard right, and the header says `✓ Rien à finir en urgence` |
+
+**What is listed.** Only pantry items with a quantity. Staples kept without one (`farine`, `sel`) are left out of
+every list, but still count as at home: they never become "à acheter".
+
+**Kind of food.** The food's Mealie label when it has one (the shopping list aisle), else a built-in table of common
+French and English names (`mealie/services/claude_context/food_type.py`), else `Autres`. Order: Légumes, Fruits,
+Viandes, Poisson, Crèmerie, Fromages, Féculents, Conserves, Pâtisserie, Assaisonner, Condiments, Fruits secs, then
+your own labels, then Autres.
+
+**Nothing is cut off.** Text wraps, and a small script in the template shrinks each column's text until it fits, down
+to 12 px. Only past that does a column hide its last lines behind `+ N autres`.
 
 Next meal = the first meal still to come in the next 7 days, in the order breakfast, lunch, snack, dinner, side.
 A meal ticked cooked is done; today's meal is also done once its hour has passed (breakfast 10:00, lunch 14:00,

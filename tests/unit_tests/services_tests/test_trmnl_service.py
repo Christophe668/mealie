@@ -9,6 +9,7 @@ from mealie.schema.household.group_shopping_list import ShoppingListItemCreate, 
 from mealie.schema.household.pantry import PantryItemCreate, PantryItemOut, PantryLocation
 from mealie.schema.household.recipe_feedback import FeedbackVerdict, RecipeFeedbackCreate
 from mealie.schema.household.trmnl import TrmnlState, TrmnlToBuy
+from mealie.schema.labels.multi_purpose_label import MultiPurposeLabelSave
 from mealie.schema.meal_plan.new_meal import PlanEntryType, ReadPlanEntry, SavePlanEntry
 from mealie.schema.recipe.recipe import Recipe
 from mealie.schema.recipe.recipe_ingredient import (
@@ -90,8 +91,8 @@ def user(unique_user_fn_scoped: TestUser) -> TestUser:
 
 
 def test_nothing_planned_lists_use_soon(user: TestUser):
-    _item(user, "Épinards", use_by=TODAY + timedelta(days=1))
-    _item(user, "Riz", use_by=TODAY + timedelta(days=30))
+    _item(user, "Épinards", quantity=1, use_by=TODAY + timedelta(days=1))
+    _item(user, "Riz", quantity=1, use_by=TODAY + timedelta(days=30))
 
     out = _tonight(user)
 
@@ -104,8 +105,8 @@ def test_nothing_planned_lists_use_soon(user: TestUser):
 
 
 def test_use_soon_worst_first(user: TestUser):
-    _item(user, "Yaourt", use_by=TODAY + timedelta(days=2))
-    _item(user, "Crème", use_by=TODAY - timedelta(days=1))
+    _item(user, "Yaourt", quantity=1, use_by=TODAY + timedelta(days=2))
+    _item(user, "Crème", quantity=1, use_by=TODAY - timedelta(days=1))
 
     out = _tonight(user)
 
@@ -113,10 +114,10 @@ def test_use_soon_worst_first(user: TestUser):
 
 
 def test_nothing_planned_shows_the_pantry_by_place(user: TestUser):
-    _item(user, "Pâtes")  # cupboard by default
-    _item(user, "Petits pois", location=PantryLocation.freezer)
-    _item(user, "Lait", location=PantryLocation.fridge, use_by=TODAY + timedelta(days=5))
-    _item(user, "Crème", location=PantryLocation.fridge, use_by=TODAY - timedelta(days=1))
+    _item(user, "Pâtes", quantity=1)  # cupboard by default
+    _item(user, "Petits pois", quantity=1, location=PantryLocation.freezer)
+    _item(user, "Lait", quantity=1, location=PantryLocation.fridge, use_by=TODAY + timedelta(days=5))
+    _item(user, "Crème", quantity=1, location=PantryLocation.fridge, use_by=TODAY - timedelta(days=1))
 
     out = _tonight(user)
 
@@ -126,6 +127,41 @@ def test_nothing_planned_shows_the_pantry_by_place(user: TestUser):
         ("Placard", 1, ["Pâtes"]),
     ]
     assert [(u.name, u.place) for u in out.use_soon] == [("Crème", "Frigo")]
+
+
+def test_items_without_quantity_are_not_shown(user: TestUser):
+    _item(user, "Farine")  # a staple kept without a quantity
+    _item(user, "Sucre", quantity=1)
+    _item(user, "Crème", location=PantryLocation.fridge, use_by=TODAY - timedelta(days=1))
+
+    out = _tonight(user)
+
+    assert [(p.name, p.count, p.items) for p in out.places] == [("Placard", 1, ["Sucre"])]
+    assert out.use_soon == []
+
+
+def test_places_group_by_kind_of_food_with_quantities(user: TestUser):
+    g = _unit(user, "gramme", "g")
+    label = user.repos.group_multi_purpose_labels.create(
+        MultiPurposeLabelSave(name="Épicerie sucrée", group_id=user.group_id)
+    )
+    chocolat = _food(user, "Chocolat noir", label_id=label.id)
+    _item(user, "Riz", quantity=1000, unit_id=g.id)
+    _item(user, "Sel", quantity=500, unit_id=g.id)
+    _item(user, "Pâtes", quantity=500, unit_id=g.id)
+    _item(user, "Pâtes", quantity=250, unit_id=g.id)  # one line with the first: same name and unit
+    _item(user, "Tablette", chocolat, quantity=2)
+    _item(user, "Bidule", quantity=1)
+
+    (cupboard,) = _tonight(user).places
+
+    assert cupboard.count == 5
+    assert [(g.name, [(i.name, i.quantity) for i in g.items]) for g in cupboard.groups] == [
+        ("Féculents", [("Pâtes", "750 g"), ("Riz", "1000 g")]),  # the pantry's order: no dates, so by name
+        ("Assaisonner", [("Sel", "500 g")]),
+        ("Épicerie sucrée", [("Tablette", "2")]),
+        ("Autres", [("Bidule", "1")]),
+    ]
 
 
 def test_places_only_when_nothing_planned(user: TestUser):
@@ -247,7 +283,7 @@ def test_missing_food_to_buy(user: TestUser):
 
     out = _tonight(user)
 
-    assert out.to_buy == [TrmnlToBuy(name="Lait de coco", quantity="400 ml")]
+    assert out.to_buy == [TrmnlToBuy(name="Lait de coco", quantity="400 ml", type="Conserves")]
     assert out.at_home == [] and out.to_check_count == 0 and out.ingredient_count == 1
 
 
@@ -302,14 +338,15 @@ def test_units_differ_to_check(user: TestUser):
 
 
 def test_food_without_quantity_in_pantry(user: TestUser):
+    """At home, so not to buy; but kept without a quantity, so not listed, and the screen can't say all is there."""
     salt = _food(user, "Sel")
     _item(user, "Sel", salt)
     _dinner(user, [_line(salt)])
 
     out = _tonight(user)
 
-    assert out.to_buy == [] and [a.name for a in out.at_home] == ["Sel"]
-    assert out.to_check_count == 1
+    assert out.to_buy == [] and out.at_home == []
+    assert out.to_check_count == 1 and out.ingredient_count == 1
 
 
 def test_food_without_quantity_missing(user: TestUser):
@@ -317,7 +354,7 @@ def test_food_without_quantity_missing(user: TestUser):
 
     out = _tonight(user)
 
-    assert out.to_buy == [TrmnlToBuy(name="Sel", quantity=None)]
+    assert out.to_buy == [TrmnlToBuy(name="Sel", quantity=None, type="Assaisonner")]
 
 
 def test_unparsed_line_to_check(user: TestUser):
@@ -331,7 +368,7 @@ def test_unparsed_line_to_check(user: TestUser):
 def test_substitute_counts_at_home(user: TestUser):
     yaourt = _food(user, "Yaourt")
     creme = _food(user, "Crème", substitutions=[CreateIngredientFoodSubstitution(substitute_food_id=yaourt.id)])
-    _item(user, "Yaourt grec", yaourt, use_by=TODAY + timedelta(days=1))
+    _item(user, "Yaourt grec", yaourt, quantity=30, use_by=TODAY + timedelta(days=1))
     _dinner(user, [_line(creme, 20)])
 
     out = _tonight(user)
@@ -356,13 +393,30 @@ def test_on_list_mark(user: TestUser):
     assert [(b.name, b.on_list) for b in out.to_buy] == [("Oignon", True), ("Ail", False)]
 
 
-def test_cap(user: TestUser):
+def test_every_row_is_sent(user: TestUser):
     _dinner(user, [_line(_food(user, f"Aliment {i}"), 1) for i in range(10)])
 
     out = _tonight(user)
 
-    assert len(out.to_buy) == 7 and out.to_buy_more == 3
+    assert len(out.to_buy) == 10 and out.to_buy_more == 0
     assert out.to_buy[0].name == "Aliment 0" and out.ingredient_count == 10
+
+
+def test_rows_sorted_by_kind_of_food(user: TestUser):
+    _dinner(
+        user,
+        [_line(_food(user, name), 1) for name in ("Farine", "Carotte", "Bidule", "Poulet", "Oignon")],
+    )
+
+    out = _tonight(user)
+
+    assert [(b.name, b.type) for b in out.to_buy] == [
+        ("Carotte", "Légumes"),
+        ("Oignon", "Légumes"),
+        ("Poulet", "Viandes"),
+        ("Farine", "Pâtisserie"),
+        ("Bidule", "Autres"),
+    ]
 
 
 def test_scaled_quantity(user: TestUser):
@@ -384,7 +438,7 @@ def test_same_food_lines_summed(user: TestUser):
 
 def test_use_soon_flag(user: TestUser):
     epinards = _food(user, "Épinards")
-    _item(user, "Épinards", epinards, use_by=TODAY + timedelta(days=1))
+    _item(user, "Épinards", epinards, quantity=1, use_by=TODAY + timedelta(days=1))
     _dinner(user, [_line(epinards)])
 
     out = _tonight(user)
@@ -435,7 +489,8 @@ def test_substitute_unknown_amount_to_check(user: TestUser):
 
     out = _tonight(user)
 
-    assert [a.name for a in out.at_home] == ["Yaourt (pour Crème)"] and out.to_check_count == 1
+    # at home, but kept without a quantity: not listed, and never "Rien à acheter"
+    assert out.to_buy == [] and out.at_home == [] and out.to_check_count == 1
 
 
 def test_recipe_without_ingredients_is_to_check(user: TestUser):
@@ -513,3 +568,13 @@ def test_dinner_before_side(user: TestUser):
     out = _tonight(user)
 
     assert out.recipe is not None and out.recipe.name == "Steak"
+
+
+def test_free_text_meal_lists_use_soon(user: TestUser):
+    _item(user, "Crème", quantity=1, use_by=TODAY - timedelta(days=1))
+    _plan(user, None, title="Pizza chez Marco")
+
+    out = _tonight(user)
+
+    assert out.state == TrmnlState.no_recipe
+    assert [(u.name, u.when) for u in out.use_soon] == [("Crème", "dépassé")]
