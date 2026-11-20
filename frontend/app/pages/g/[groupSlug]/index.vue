@@ -23,7 +23,7 @@
         :open-list="openList"
         :loading="loading"
         :group-slug="groupSlug"
-        :planner-to="plannerTodayTo"
+        :planner-to="plannerTo"
       />
     </div>
 
@@ -118,7 +118,6 @@ const {
   toReview,
   lunch,
   week,
-  weekStart,
   openList,
   makeAgain,
   recent,
@@ -132,8 +131,8 @@ const {
 } = useToday();
 const { duration, lastMadeLabel } = useTodayFormat();
 
-const plannerTo = computed(() => `${PLANNER_PATH}?start=${format(weekStart.value, "yyyy-MM-dd")}`);
-const plannerTodayTo = computed(() => `${PLANNER_PATH}?start=${format(today.value, "yyyy-MM-dd")}`);
+// The planner opens on the week that holds today.
+const plannerTo = computed(() => `${PLANNER_PATH}?start=${format(today.value, "yyyy-MM-dd")}`);
 
 function makeAgainFact(recipe: RecipeSummary) {
   return recipe.slug ? lastMadeLabel(lastMade.value[recipe.slug], today.value) : "";

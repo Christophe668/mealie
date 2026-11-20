@@ -1,7 +1,7 @@
 <template>
-  <section :aria-label="$t('home-today.this-week')">
-    <DsSectionTitle :title="$t('home-today.this-week')" />
-    <ol ref="strip" class="home-week">
+  <section :aria-label="$t('home-today.next-days')">
+    <DsSectionTitle :title="$t('home-today.next-days')" />
+    <ol class="home-week">
       <li
         v-for="day in days"
         :key="day.date.getTime()"
@@ -22,7 +22,6 @@
 </template>
 
 <script setup lang="ts">
-import { useTemplateRef } from "vue";
 import { isSameDay } from "date-fns";
 import HomeDayCard from "./HomeDayCard.vue";
 import type { HomeDayMove } from "./HomeDayCard.vue";
@@ -43,20 +42,10 @@ const emit = defineEmits<{
   move: [move: HomeDayMove];
 }>();
 
-const strip = useTemplateRef<HTMLOListElement>("strip");
-
+// The strip starts with today, so it needs no scrolling to bring today into view.
 function isToday(date: Date) {
   return isSameDay(date, props.today);
 }
-
-// On the narrow snap strip, start with today in view rather than the first day of the week.
-onMounted(() => {
-  const el = strip.value;
-  const todayItem = el?.querySelector<HTMLElement>("[data-today]");
-  if (el && todayItem && el.scrollWidth > el.clientWidth) {
-    el.scrollLeft = todayItem.offsetLeft - el.offsetLeft;
-  }
-});
 </script>
 
 <style scoped>

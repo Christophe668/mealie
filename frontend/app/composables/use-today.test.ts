@@ -11,7 +11,6 @@ const api = vi.hoisted(() => ({
   connections: vi.fn(),
   summaries: vi.fn(),
   toastError: vi.fn(),
-  firstDayOfWeek: { value: 0 },
 }));
 
 vi.mock("~/composables/api", () => ({
@@ -31,13 +30,6 @@ vi.mock("vue-i18n", async importOriginal => ({
 }));
 
 vi.mock("~/composables/use-toast", () => ({ alert: { error: api.toastError } }));
-
-vi.mock("~/composables/use-households", () => ({
-  useHouseholdSelf: () => ({
-    household: ref({ preferences: { firstDayOfWeek: api.firstDayOfWeek.value } }),
-    actions: { refresh: vi.fn() },
-  }),
-}));
 
 function ok<T>(data: T) {
   return Promise.resolve({ data, error: null, response: { status: 200 } });
@@ -87,7 +79,6 @@ beforeEach(() => {
   // Saturday 24 October 2026, mid-afternoon local time.
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2026, 9, 24, 15, 30));
-  api.firstDayOfWeek.value = 0;
   mockPlan([]);
   api.lists.getAll.mockImplementation(() => ok(page([])));
   api.lists.getOne.mockImplementation(failed);
@@ -150,38 +141,35 @@ describe("useToday tonight and lunch", () => {
 });
 
 describe("useToday week", () => {
-  test("starts on Sunday when the household's first day of week is 0", async () => {
-    const { week } = await load();
-
-    expect(week.value).toHaveLength(7);
-    expect(ymd(week.value[0]!.date)).toBe("2026-10-18");
-    expect(ymd(week.value[6]!.date)).toBe("2026-10-24");
-  });
-
-  test("starts on Monday when the household's first day of week is 1, and fetches that range once", async () => {
-    api.firstDayOfWeek.value = 1;
+  test("is today and the next six days", async () => {
     mockPlan([
-      entry("2026-10-19", "dinner", "Pasta alla norma"),
-      entry("2026-10-25", "dinner", "Sunday roast"),
-      entry("2026-10-25", "dessert", "Tarte tatin"),
+      entry("2026-10-23", "dinner", "Pizza"),
+      entry("2026-10-24", "dinner", "Roast chicken"),
+      entry("2026-10-30", "dinner", "Fish pie"),
+      entry("2026-10-30", "dessert", "Tarte tatin"),
     ]);
 
     const { week } = await load();
 
     expect(week.value.map(day => ymd(day.date))).toEqual([
-      "2026-10-19",
-      "2026-10-20",
-      "2026-10-21",
-      "2026-10-22",
-      "2026-10-23",
       "2026-10-24",
       "2026-10-25",
+      "2026-10-26",
+      "2026-10-27",
+      "2026-10-28",
+      "2026-10-29",
+      "2026-10-30",
     ]);
-    expect(api.mealplans.getAll).toHaveBeenCalledTimes(1);
-    expect(api.mealplans.getAll).toHaveBeenCalledWith(1, -1, { start_date: "2026-10-19", end_date: "2026-10-25" });
-    expect(week.value[0]!.entries.map(e => e.recipe?.name)).toEqual(["Pasta alla norma"]);
-    expect(week.value[6]!.entries.map(e => e.recipe?.name)).toEqual(["Sunday roast", "Tarte tatin"]);
+    expect(week.value[0]!.entries.map(e => e.recipe?.name)).toEqual(["Roast chicken"]);
+    expect(week.value[6]!.entries.map(e => e.recipe?.name)).toEqual(["Fish pie", "Tarte tatin"]);
     expect(week.value[3]!.entries).toEqual([]);
+  });
+
+  test("fetches from yesterday, for the meals still to review, to the last day shown, once", async () => {
+    await load();
+
+    expect(api.mealplans.getAll).toHaveBeenCalledTimes(1);
+    expect(api.mealplans.getAll).toHaveBeenCalledWith(1, -1, { start_date: "2026-10-23", end_date: "2026-10-30" });
   });
 });
 
@@ -485,12 +473,12 @@ describe("useToday midnight rollover", () => {
     await today.refresh();
     expect(today.tonight.value?.recipe?.name).toBe("Roast chicken");
 
-    // Sunday morning: a new week too, since the household week starts on Sunday.
+    // Sunday morning: the seven days move on by one.
     vi.setSystemTime(new Date(2026, 9, 25, 8, 0));
     document.dispatchEvent(new Event("visibilitychange"));
 
     await vi.waitFor(() => expect(today.tonight.value?.recipe?.name).toBe("Sunday soup"));
-    // From yesterday: the week starts today, and yesterday's meals can still be reviewed.
+    // From yesterday, so yesterday's meals can still be reviewed.
     expect(api.mealplans.getAll).toHaveBeenLastCalledWith(1, -1, { start_date: "2026-10-24", end_date: "2026-10-31" });
   });
 

@@ -2,9 +2,11 @@ import { addDays, differenceInCalendarDays, differenceInCalendarMonths, format, 
 import { useDayRollover } from "~/composables/use-day-rollover";
 import { useUserApi } from "~/composables/api";
 import { alert } from "~/composables/use-toast";
-import { useHouseholdSelf } from "~/composables/use-households";
 import type { CreatePlanEntry, ReadPlanEntry, UpdatePlanEntry } from "~/lib/api/types/meal-plan";
 import type { RecipeSummary } from "~/lib/api/types/recipe";
+
+/** How many days the Home strip shows, today first. */
+export const HOME_DAYS = 7;
 
 export interface TodayDay {
   date: Date;
@@ -63,11 +65,9 @@ export function leadEntry(entries: ReadPlanEntry[]): ReadPlanEntry | null {
 export function useToday() {
   const api = useUserApi();
   const i18n = useI18n();
-  const { household, actions: householdActions } = useHouseholdSelf();
 
   // Moves on by itself when a tab is left open past midnight; the watcher below reloads the new day.
   const today = useDayRollover();
-  const firstDayOfWeek = computed(() => household.value?.preferences?.firstDayOfWeek ?? 0);
 
   const plan = ref<ReadPlanEntry[]>([]);
   const openList = ref<TodayList | null>(null);
@@ -82,11 +82,10 @@ export function useToday() {
   /** Which loads failed outright (as opposed to coming back empty). */
   const failed = reactive({ plan: false, list: false, shelves: false });
 
-  const weekStart = computed(() => startOfHouseholdWeek(today.value, firstDayOfWeek.value));
-
+  // Today and the days after it, not the calendar week: on a Saturday the strip shows the coming week.
   const week = computed<TodayDay[]>(() =>
-    Array.from({ length: 7 }, (_, i) => {
-      const date = addDays(weekStart.value, i);
+    Array.from({ length: HOME_DAYS }, (_, i) => {
+      const date = addDays(startOfDay(today.value), i);
       const key = ymd(date);
       return { date, entries: plan.value.filter(e => e.date === key) };
     }),
@@ -120,11 +119,10 @@ export function useToday() {
    */
   async function loadPlan(): Promise<() => Promise<void>> {
     const stamp = ++seq.plan;
-    // From yesterday when the week starts today, for the meals still to review.
-    const yesterday = subDays(today.value, 1);
+    // From yesterday, for the meals still to review, to the last day of the strip.
     const { data, error } = await api.mealplans.getAll(1, -1, {
-      start_date: ymd(yesterday < weekStart.value ? yesterday : weekStart.value),
-      end_date: ymd(addDays(weekStart.value, 6)),
+      start_date: ymd(subDays(today.value, 1)),
+      end_date: ymd(addDays(today.value, HOME_DAYS - 1)),
     });
     if (stamp !== seq.plan) {
       return async () => {};
@@ -243,10 +241,6 @@ export function useToday() {
 
   async function refresh() {
     loading.value = true;
-    if (!household.value) {
-      // The week cannot be framed before the household's first day of week is known.
-      await householdActions.refresh();
-    }
     const [planFollowUp, , shelvesFollowUp] = await Promise.all([loadPlan(), loadList(), loadShelves(), loadConnections()]);
     loading.value = false;
     await Promise.all([planFollowUp(), shelvesFollowUp()]);
@@ -286,13 +280,6 @@ export function useToday() {
     return saved;
   }
 
-  // Household preferences can arrive (or change) after the first load; reframe the week when they do.
-  watch(firstDayOfWeek, () => {
-    if (!loading.value) {
-      reloadPlan();
-    }
-  });
-
   // A tab left open past midnight moves on to the new day (see useDayRollover): reload everything for it.
   watch(today, () => {
     refresh();
@@ -307,7 +294,6 @@ export function useToday() {
     toReview,
     lunch,
     week,
-    weekStart,
     openList,
     makeAgain,
     recent,
