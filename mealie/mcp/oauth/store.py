@@ -234,8 +234,9 @@ class OAuthStore:
 
         Until then, the client may simply never have received the token it was rotated into (the reply was lost
         to a tunnel outage, a timeout or a restart), or a parallel refresh won the race. Accepting the rotated
-        token again keeps the connection alive in those cases; it costs the theft signal only while the stolen
-        token's successor stays unused.
+        token again keeps the connection alive in those cases. The cost: whoever presents it gets a branch of
+        fresh tokens of their own, and branches are not detected afterwards (only a superseded token coming back
+        revokes the grant), so a stolen token can live on until the grant is revoked in Mealie's Connections.
         """
         return bool(
             self.session.scalar(
