@@ -46,6 +46,7 @@
   .ms-type:last-child { border-bottom: 0; }
   .ms-type-name { font-size: .74em; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding-top: .2em; }
   .ms-q { font-weight: 600; white-space: nowrap; }
+  .ms-in { font-size: .8em; border: 1.5px solid #000; border-radius: 4px; padding: 0 .25em; white-space: nowrap; }
   .ms-soon { font-weight: 700; text-decoration: underline; }
   .ms-line { display: flex; align-items: center; gap: .5em; margin-top: .35em; }
   .ms-line-place { font-size: .75em; padding-left: .3em; }
@@ -60,6 +61,8 @@
 
 {%- if state == "nothing_planned" -%}
 {%- comment -%}
+  Only what expires soon: "À finir vite" (2 days or less, past, to check), then by place what reaches its use-by
+  date within two weeks, with the days left. The rest of the pantry is not shown.
   Left: what to finish soon, then the first place (the fridge when it holds anything). Right: the other places.
   With nothing to finish, the first two places go left. One place and nothing to finish: one full-width column.
 {%- endcomment -%}
@@ -92,14 +95,14 @@
           {%- endfor -%}
         {%- endif -%}
         {%- if place_count == 0 -%}
-          <div class="ms-head{% if urgent > 0 %} ms-head--next{% endif %}"><span class="ms-head-title">Garde-manger</span></div>
-          <div class="ms-note">Rien d'enregistré dans le garde-manger de Mealie.</div>
+          <div class="ms-head{% if urgent > 0 %} ms-head--next{% endif %}"><span class="ms-head-title">D'ici 2 semaines</span></div>
+          <div class="ms-note">{% if urgent == 0 %}✓ {% endif %}Rien d'autre ne périme dans les 2 semaines.</div>
         {%- endif -%}
         {%- for place in places limit: split -%}
           <div class="ms-head{% if urgent > 0 or forloop.index > 1 %} ms-head--next{% endif %}"><span class="ms-head-title">{{ place.name }}</span><span class="ms-head-count">{{ place.count }}</span></div>
           {%- if place.groups.size > 0 -%}
             {%- for group in place.groups -%}
-              <div class="ms-type" data-fit-item="{{ group.items.size }}"><span class="ms-type-name">{{ group.name }}</span><span>{% for line in group.items %}{{ line.name }} <span class="ms-q">{{ line.quantity }}</span>{% unless forloop.last %} · {% endunless %}{% endfor %}</span></div>
+              <div class="ms-type" data-fit-item="{{ group.items.size }}"><span class="ms-type-name">{{ group.name }}</span><span>{% for line in group.items %}{{ line.name }} <span class="ms-q">{{ line.quantity }}</span>{% if line.when and line.when != "" %} <span class="ms-in">{{ line.when }}</span>{% endif %}{% unless forloop.last %} · {% endunless %}{% endfor %}</span></div>
             {%- endfor -%}
           {%- else -%}
             <div class="ms-note" style="margin-top: .35em;">{{ place.items | join: ", " }}</div>
@@ -114,7 +117,7 @@
           <div class="ms-head{% if forloop.index > 1 %} ms-head--next{% endif %}"><span class="ms-head-title">{{ place.name }}</span><span class="ms-head-count">{{ place.count }}</span></div>
           {%- if place.groups.size > 0 -%}
             {%- for group in place.groups -%}
-              <div class="ms-type" data-fit-item="{{ group.items.size }}"><span class="ms-type-name">{{ group.name }}</span><span>{% for line in group.items %}{{ line.name }} <span class="ms-q">{{ line.quantity }}</span>{% unless forloop.last %} · {% endunless %}{% endfor %}</span></div>
+              <div class="ms-type" data-fit-item="{{ group.items.size }}"><span class="ms-type-name">{{ group.name }}</span><span>{% for line in group.items %}{{ line.name }} <span class="ms-q">{{ line.quantity }}</span>{% if line.when and line.when != "" %} <span class="ms-in">{{ line.when }}</span>{% endif %}{% unless forloop.last %} · {% endunless %}{% endfor %}</span></div>
             {%- endfor -%}
           {%- else -%}
             <div class="ms-note" style="margin-top: .35em;">{{ place.items | join: ", " }}</div>

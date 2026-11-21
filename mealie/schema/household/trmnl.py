@@ -47,6 +47,8 @@ class TrmnlPantryLine(MealieModel):
     name: str
     quantity: str
     """What there is, e.g. "500 g" or "2 paquets"."""
+    when: str = ""
+    """Days left before its use-by date, e.g. "9 j"."""
 
 
 class TrmnlTypeGroup(MealieModel):
@@ -59,7 +61,8 @@ class TrmnlTypeGroup(MealieModel):
 class TrmnlPlace(MealieModel):
     """One storage place of the pantry, for the screen shown when no meal is planned.
 
-    Only items with a quantity are shown; staples kept without one are left out."""
+    Only what reaches its use-by date within two weeks and isn't already under "À finir vite"; items without a
+    quantity or a date are left out."""
 
     name: str
     """"Frigo", "Congélateur", "Placard" or "Ailleurs"."""
@@ -89,4 +92,4 @@ class TrmnlTonightOut(MealieModel):
     use_soon: list[TrmnlUseSoon] = []
     """Pantry items to use up, worst first: when nothing is planned, and beside a meal without a recipe."""
     places: list[TrmnlPlace] = []
-    """Only when nothing is planned: the pantry by place, fridge first, empty places left out."""
+    """Only when nothing is planned: what expires within two weeks by place, fridge first, empty places left out."""

@@ -113,25 +113,38 @@ def test_use_soon_worst_first(user: TestUser):
     assert [(u.name, u.when) for u in out.use_soon] == [("Crème", "dépassé"), ("Yaourt", "2 j")]
 
 
-def test_nothing_planned_shows_the_pantry_by_place(user: TestUser):
-    _item(user, "Pâtes", quantity=1)  # cupboard by default
-    _item(user, "Petits pois", quantity=1, location=PantryLocation.freezer)
+def test_nothing_planned_shows_only_what_expires_within_two_weeks(user: TestUser):
+    _item(user, "Pâtes", quantity=1)  # cupboard, no date: not shown
+    _item(user, "Riz", quantity=1, use_by=TODAY + timedelta(days=60))  # far off: not shown
+    _item(user, "Petits pois", quantity=1, location=PantryLocation.freezer, use_by=TODAY + timedelta(days=14))
     _item(user, "Lait", quantity=1, location=PantryLocation.fridge, use_by=TODAY + timedelta(days=5))
     _item(user, "Crème", quantity=1, location=PantryLocation.fridge, use_by=TODAY - timedelta(days=1))
 
     out = _tonight(user)
 
-    assert [(p.name, p.count, p.items) for p in out.places] == [
-        ("Frigo", 2, ["Crème", "Lait"]),
-        ("Congélateur", 1, ["Petits pois"]),
-        ("Placard", 1, ["Pâtes"]),
-    ]
+    # Crème is urgent: under "À finir vite" only, not again under its place
     assert [(u.name, u.place) for u in out.use_soon] == [("Crème", "Frigo")]
+    assert [(p.name, p.count, p.items) for p in out.places] == [
+        ("Frigo", 1, ["Lait"]),
+        ("Congélateur", 1, ["Petits pois"]),
+    ]
+    assert [line.when for p in out.places for g in p.groups for line in g.items] == ["5 j", "14 j"]
+
+
+def test_estimated_dates_count_too(user: TestUser):
+    jambon = _food(user, "Jambon", extras={"shelf_life_days_unopened": "10"})
+    conserve = _food(user, "Conserve", extras={"shelf_life_days_unopened": "700"})
+    _item(user, "Jambon", jambon, quantity=1, location=PantryLocation.fridge, bought_on=TODAY - timedelta(days=2))
+    _item(user, "Conserve", conserve, quantity=1, bought_on=TODAY)
+
+    (fridge,) = _tonight(user).places
+
+    assert [(line.name, line.when) for g in fridge.groups for line in g.items] == [("Jambon", "8 j")]
 
 
 def test_items_without_quantity_are_not_shown(user: TestUser):
-    _item(user, "Farine")  # a staple kept without a quantity
-    _item(user, "Sucre", quantity=1)
+    _item(user, "Farine", use_by=TODAY + timedelta(days=5))  # a staple kept without a quantity
+    _item(user, "Sucre", quantity=1, use_by=TODAY + timedelta(days=5))
     _item(user, "Crème", location=PantryLocation.fridge, use_by=TODAY - timedelta(days=1))
 
     out = _tonight(user)
@@ -146,21 +159,22 @@ def test_places_group_by_kind_of_food_with_quantities(user: TestUser):
         MultiPurposeLabelSave(name="Épicerie sucrée", group_id=user.group_id)
     )
     chocolat = _food(user, "Chocolat noir", label_id=label.id)
-    _item(user, "Riz", quantity=1000, unit_id=g.id)
-    _item(user, "Sel", quantity=500, unit_id=g.id)
-    _item(user, "Pâtes", quantity=500, unit_id=g.id)
-    _item(user, "Pâtes", quantity=250, unit_id=g.id)  # one line with the first: same name and unit
-    _item(user, "Tablette", chocolat, quantity=2)
-    _item(user, "Bidule", quantity=1)
+    soon = TODAY + timedelta(days=10)
+    _item(user, "Riz", quantity=1000, unit_id=g.id, use_by=soon)
+    _item(user, "Sel", quantity=500, unit_id=g.id, use_by=soon)
+    _item(user, "Pâtes", quantity=500, unit_id=g.id, use_by=TODAY + timedelta(days=12))
+    _item(user, "Pâtes", quantity=250, unit_id=g.id, use_by=TODAY + timedelta(days=9))  # merged, soonest date
+    _item(user, "Tablette", chocolat, quantity=2, use_by=soon)
+    _item(user, "Bidule", quantity=1, use_by=soon)
 
     (cupboard,) = _tonight(user).places
 
     assert cupboard.count == 5
-    assert [(g.name, [(i.name, i.quantity) for i in g.items]) for g in cupboard.groups] == [
-        ("Féculents", [("Pâtes", "750 g"), ("Riz", "1000 g")]),  # the pantry's order: no dates, so by name
-        ("Assaisonner", [("Sel", "500 g")]),
-        ("Épicerie sucrée", [("Tablette", "2")]),
-        ("Autres", [("Bidule", "1")]),
+    assert [(g.name, [(i.name, i.quantity, i.when) for i in g.items]) for g in cupboard.groups] == [
+        ("Féculents", [("Pâtes", "750 g", "9 j"), ("Riz", "1000 g", "10 j")]),
+        ("Assaisonner", [("Sel", "500 g", "10 j")]),
+        ("Épicerie sucrée", [("Tablette", "2", "10 j")]),
+        ("Autres", [("Bidule", "1", "10 j")]),
     ]
 
 

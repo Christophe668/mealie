@@ -62,6 +62,10 @@ MEAL_ENDS = {
 
 LOOK_AHEAD_DAYS = 7
 
+EXPIRING_WITHIN_DAYS = 14
+"""When nothing is planned, the places list only what reaches its use-by date (real or estimated) within this many
+days; the rest of the pantry stays off the screen."""
+
 PLACE_ORDER = (PantryLocation.fridge, PantryLocation.freezer, PantryLocation.cupboard, PantryLocation.other)
 
 # No row caps: every row is sent, and the template wraps and shrinks the text to fit the screen.
@@ -79,6 +83,15 @@ def _kind(item: PantryItemOut) -> str:
 def _counted(item: PantryItemOut) -> bool:
     """Only items with a quantity are shown; staples kept without one ("farine", "sel") are left out."""
     return bool(item.quantity)
+
+
+def _expiring_later(item: PantryItemOut, today: date) -> int | None:
+    """Days left when the item reaches its use-by date within `EXPIRING_WITHIN_DAYS` but isn't urgent yet (urgent
+    items are under "À finir vite"); None otherwise, and for items with no date to go by."""
+    f = freshness_of(item, today)
+    if f.status in NEEDS_ATTENTION or f.days_left is None or f.days_left > EXPIRING_WITHIN_DAYS:
+        return None
+    return f.days_left
 
 
 class TrmnlTonightService(BaseService):
@@ -103,7 +116,7 @@ class TrmnlTonightService(BaseService):
                 kicker=kicker(today, today),
                 generated_at=clock(now),
                 use_soon=self._use_soon(today, pantry),
-                places=self._places(pantry),
+                places=self._places(today, pantry),
             )
         base = {"kicker": kicker(entry.date, today, entry.entry_type), "generated_at": clock(now)}
 
@@ -180,29 +193,36 @@ class TrmnlTonightService(BaseService):
         return [row[2] for row in rows]
 
     @staticmethod
-    def _places(pantry: list[PantryItemOut]) -> list[TrmnlPlace]:
-        """The pantry by place, in `PLACE_ORDER`, then by kind of food, keeping the pantry's soonest-first order.
+    def _places(today: date, pantry: list[PantryItemOut]) -> list[TrmnlPlace]:
+        """What reaches its use-by date within `EXPIRING_WITHIN_DAYS`, urgent items aside, by place in `PLACE_ORDER`,
+        then by kind of food, keeping the pantry's soonest-first order.
 
-        Items without a quantity are left out; items of one name and unit in a place are added up into one line.
-        Empty places are left out."""
+        Items without a quantity or without a date to go by are left out; items of one name and unit in a place are
+        added up into one line, dated by the soonest of them. Empty places are left out."""
         places = []
         for location in PLACE_ORDER:
-            merged: dict[tuple[str, str], list[PantryItemOut]] = {}
+            merged: dict[tuple[str, str], list[tuple[PantryItemOut, int]]] = {}
             for item in pantry:
-                if item.location == location and _counted(item):
-                    merged.setdefault((item.name.strip().casefold(), str(item.unit_id)), []).append(item)
+                if item.location != location or not _counted(item):
+                    continue
+                days_left = _expiring_later(item, today)
+                if days_left is not None:
+                    merged.setdefault((item.name.strip().casefold(), str(item.unit_id)), []).append((item, days_left))
             if not merged:
                 continue
             groups: dict[str, list[TrmnlPantryLine]] = {}
-            for items in merged.values():
-                first = items[0]
-                quantity = quantity_text(sum(item.quantity or 0 for item in items), first.unit) or ""
-                groups.setdefault(_kind(first), []).append(TrmnlPantryLine(name=first.name, quantity=quantity))
+            for rows in merged.values():
+                first = rows[0][0]
+                quantity = quantity_text(sum(item.quantity or 0 for item, _ in rows), first.unit) or ""
+                when = f"{min(days for _, days in rows)} j"
+                groups.setdefault(_kind(first), []).append(
+                    TrmnlPantryLine(name=first.name, quantity=quantity, when=when)
+                )
             places.append(
                 TrmnlPlace(
                     name=PLACE_NAMES[location],
                     count=len(merged),
-                    items=[items[0].name for items in merged.values()],
+                    items=[rows[0][0].name for rows in merged.values()],
                     groups=[
                         TrmnlTypeGroup(name=kind, items=lines)
                         for kind, lines in sorted(groups.items(), key=lambda group: type_rank(group[0]))
