@@ -92,13 +92,15 @@ def test_code_pop_single_use(session: Session, unique_user):
 
 def test_refresh_reuse_revokes_grant(session: Session, unique_user, monkeypatch):
     store = OAuthStore(session)
-    grant = store.create_grant(user_id=unique_user.user_id, client_id="c1", scopes=["recipes:read"])
-    raw = store.create_refresh_token(grant_id=grant.grant_id, client_id="c1", scopes=["recipes:read"], resource=None)
-
+    grant_id, raw = _grant_and_token(store, unique_user)
     assert store.consume_refresh_token(raw) is not None
+    successor = store.create_refresh_token(grant_id=grant_id, client_id="c1", scopes=["recipes:read"], resource=None)
+    assert store.consume_refresh_token(successor) is not None
+
+    # the chain moved on, so the old token coming back is a replay
     _advance_clock(monkeypatch, tokens.REFRESH_REUSE_GRACE + timedelta(seconds=1))
     assert store.consume_refresh_token(raw) is None
-    assert store.get_grant(grant.grant_id) is None
+    assert store.get_grant(grant_id) is None
 
 
 def test_refresh_reuse_within_grace_window_keeps_grant(session: Session, unique_user, monkeypatch):
@@ -106,13 +108,36 @@ def test_refresh_reuse_within_grace_window_keeps_grant(session: Session, unique_
     grant_id, raw = _grant_and_token(store, unique_user)
     assert store.consume_refresh_token(raw) is not None
     successor = store.create_refresh_token(grant_id=grant_id, client_id="c1", scopes=["recipes:read"], resource=None)
+    assert store.consume_refresh_token(successor) is not None
+    latest = store.create_refresh_token(grant_id=grant_id, client_id="c1", scopes=["recipes:read"], resource=None)
 
-    # a retry just inside the window is refused, but nothing is revoked
+    # a superseded token just inside the window is refused, but nothing is revoked
     _advance_clock(monkeypatch, tokens.REFRESH_REUSE_GRACE - timedelta(seconds=1))
     assert store.consume_refresh_token(raw) is None
     assert store.get_grant(grant_id) is not None
-    assert store.peek_refresh_token(successor) is not None
+    assert store.peek_refresh_token(latest) is not None
+    assert store.consume_refresh_token(latest) is not None
+
+
+def test_rotated_token_accepted_again_until_its_successor_is_used(session: Session, unique_user, monkeypatch):
+    store = OAuthStore(session)
+    grant_id, raw = _grant_and_token(store, unique_user)
+    assert store.consume_refresh_token(raw) is not None
+    successor = store.create_refresh_token(grant_id=grant_id, client_id="c1", scopes=["recipes:read"], resource=None)
+
+    # the reply carrying the successor was lost: hours later the client still holds the old token
+    _advance_clock(monkeypatch, timedelta(hours=3))
+    assert store.peek_refresh_token(raw) is not None
+    assert store.consume_refresh_token(raw) is not None
+    assert store.consume_refresh_token(raw) is not None
+    assert store.get_grant(grant_id) is not None
+
+    # once a successor is used the old token is superseded
     assert store.consume_refresh_token(successor) is not None
+    assert store.peek_refresh_token(raw) is None
+    _advance_clock(monkeypatch, timedelta(hours=3, minutes=5))
+    assert store.consume_refresh_token(raw) is None
+    assert store.get_grant(grant_id) is None
 
 
 def test_revoke_grant_only_by_owner(session: Session, unique_user, h2_user):
@@ -146,9 +171,11 @@ def test_refresh_token_stored_hashed(session: Session, unique_user):
 def test_refresh_replay_deletes_family_tokens(session: Session, unique_user, monkeypatch):
     store = OAuthStore(session)
     grant_id, raw = _grant_and_token(store, unique_user)
+    successor = store.create_refresh_token(grant_id=grant_id, client_id="c1", scopes=["recipes:read"], resource=None)
     other = store.create_refresh_token(grant_id=grant_id, client_id="c1", scopes=["recipes:read"], resource=None)
 
     assert store.consume_refresh_token(raw) is not None
+    assert store.consume_refresh_token(successor) is not None
     _advance_clock(monkeypatch, tokens.REFRESH_REUSE_GRACE + timedelta(seconds=1))
     assert store.consume_refresh_token(raw) is None
 
@@ -254,11 +281,16 @@ def test_peek_code_does_not_consume(session: Session, unique_user):
 
 def test_peek_refresh_token_is_read_only(session: Session, unique_user):
     store = OAuthStore(session)
-    _, raw = _grant_and_token(store, unique_user)
+    grant_id, raw = _grant_and_token(store, unique_user)
 
     assert store.peek_refresh_token(raw) is not None
+    assert store.peek_refresh_token(raw) is not None
     assert store.peek_refresh_token("nope") is None
+    assert _token_row(session, raw).used_at is None
+
     assert store.consume_refresh_token(raw) is not None
+    successor = store.create_refresh_token(grant_id=grant_id, client_id="c1", scopes=["recipes:read"], resource=None)
+    assert store.consume_refresh_token(successor) is not None
     assert store.peek_refresh_token(raw) is None
 
 
@@ -311,6 +343,25 @@ def test_purge_refresh_tokens(session: Session, unique_user, monkeypatch):
     assert _token_row(session, recently_used) is not None
     assert _token_row(session, long_used) is None
     assert _token_row(session, expired) is None
+
+
+def test_purge_keeps_the_newest_used_refresh_token(session: Session, unique_user):
+    store = OAuthStore(session)
+    _, raw = _grant_and_token(store, unique_user)
+    store.consume_refresh_token(raw)
+    old = get_utc_now() - store_module.STALE_ROW_RETENTION - timedelta(days=5)
+    session.execute(
+        update(McpOAuthRefreshToken)
+        .where(McpOAuthRefreshToken.token_hash == tokens.hash_token(raw))
+        .values(used_at=old)
+    )
+    session.commit()
+
+    store.purge_expired()
+
+    # its successor was never used, so the client may still hold this one (lost reply)
+    assert _token_row(session, raw) is not None
+    assert store.consume_refresh_token(raw) is not None
 
 
 def test_purge_unused_clients(session: Session, unique_user):

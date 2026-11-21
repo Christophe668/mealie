@@ -3,8 +3,8 @@ from datetime import datetime, timedelta
 
 from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull
-from sqlalchemy import delete, exists, or_, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, delete, exists, or_, select, update
+from sqlalchemy.orm import Session, aliased
 
 from mealie.db.models._model_base import SqlAlchemyBase
 from mealie.db.models._model_utils.datetime import get_utc_now
@@ -18,7 +18,7 @@ from mealie.db.models.mcp.oauth import (
 from mealie.db.models.users.users import User
 from mealie.mcp.oauth import tokens
 
-# how long rotated refresh tokens and never-used clients are kept before purge_expired removes them
+# how long superseded refresh tokens and never-used clients are kept before purge_expired removes them
 STALE_ROW_RETENTION = timedelta(days=1)
 
 
@@ -218,13 +218,44 @@ class OAuthStore:
         return raw
 
     def peek_refresh_token(self, raw: str) -> McpOAuthRefreshToken | None:
-        """Read-only lookup of a refresh token that is still usable (unused and unexpired)."""
+        """Read-only lookup of a refresh token that can still be exchanged: unexpired, and either unused or
+        rotated but not yet superseded (see `_superseded`)."""
         row = self.session.scalars(
             select(McpOAuthRefreshToken).where(McpOAuthRefreshToken.token_hash == tokens.hash_token(raw))
         ).first()
-        return row if row and row.used_at is None and row.expires_at > _now() else None
+        if row is None or row.expires_at <= _now():
+            return None
+        if row.used_at is not None and self._superseded(row):
+            return None
+        return row
+
+    def _superseded(self, row: McpOAuthRefreshToken) -> bool:
+        """Whether a rotated token's chain has moved on: another token of its grant was used since.
+
+        Until then, the client may simply never have received the token it was rotated into (the reply was lost
+        to a tunnel outage, a timeout or a restart), or a parallel refresh won the race. Accepting the rotated
+        token again keeps the connection alive in those cases; it costs the theft signal only while the stolen
+        token's successor stays unused.
+        """
+        return bool(
+            self.session.scalar(
+                select(
+                    exists().where(
+                        McpOAuthRefreshToken.grant_id == row.grant_id,
+                        McpOAuthRefreshToken.id != row.id,
+                        McpOAuthRefreshToken.used_at >= row.used_at,
+                    )
+                )
+            )
+        )
 
     def consume_refresh_token(self, raw: str) -> McpOAuthRefreshToken | None:
+        """Claims a refresh token for one exchange; returns None when it cannot be exchanged.
+
+        An unused token is claimed atomically. A rotated token whose chain has not moved on is accepted again
+        (lost reply, parallel refresh). A superseded token is refused; outside `REFRESH_REUSE_GRACE` it is taken
+        as a replay of a stolen token and its whole grant is revoked.
+        """
         token_hash = tokens.hash_token(raw)
         now = _now()
         # atomic claim: only one concurrent caller can flip used_at from NULL
@@ -246,16 +277,19 @@ class OAuthStore:
             return None
         if claimed:
             return row
+        if row.used_at is None or row.expires_at <= now:
+            return None
+        if not self._superseded(row):
+            # used_at stays as it was, so the token is superseded as soon as any successor is used
+            return row
 
-        if row.used_at is not None and row.expires_at > now:
-            if now - row.used_at <= tokens.REFRESH_REUSE_GRACE:
-                # a retry or a concurrent refresh right after rotation: refuse it but keep the grant,
-                # so the successor token the other request received keeps working
-                return None
-            # reuse of a rotated token after the grace window: assume theft and kill the whole family
-            grant = self.get_grant(row.grant_id)
-            if grant is not None:
-                self._revoke(grant)
+        if now - row.used_at <= tokens.REFRESH_REUSE_GRACE:
+            # a retry right after the chain moved on: refuse it but keep the grant
+            return None
+        # reuse of a superseded token after the grace window: assume theft and kill the whole family
+        grant = self.get_grant(row.grant_id)
+        if grant is not None:
+            self._revoke(grant)
         return None
 
     # housekeeping
@@ -265,17 +299,27 @@ class OAuthStore:
         what keeps anonymous callers from growing the tables without bound.
 
         Removes expired pending requests and codes (used codes are already deleted on exchange), refresh tokens
-        that expired or were rotated more than `STALE_ROW_RETENTION` ago, and clients older than that with no
-        active grant and no live pending request or code.
+        that expired or were used more than `STALE_ROW_RETENTION` ago and superseded since (see `_superseded`),
+        and clients older than that with no active grant and no live pending request or code.
         """
         now = _now()
         cutoff = now - STALE_ROW_RETENTION
         for model in (McpOAuthPendingAuth, McpOAuthCode):
             self.session.execute(delete(model).where(model.expires_at <= now))
 
+        # the newest used token of a grant is kept: its client may still hold it (see `_superseded`)
+        later = aliased(McpOAuthRefreshToken)
+        superseded = exists().where(
+            later.grant_id == McpOAuthRefreshToken.grant_id,
+            later.id != McpOAuthRefreshToken.id,
+            later.used_at >= McpOAuthRefreshToken.used_at,
+        )
         self.session.execute(
             delete(McpOAuthRefreshToken).where(
-                or_(McpOAuthRefreshToken.expires_at <= now, McpOAuthRefreshToken.used_at <= cutoff)
+                or_(
+                    McpOAuthRefreshToken.expires_at <= now,
+                    and_(McpOAuthRefreshToken.used_at <= cutoff, superseded),
+                )
             )
         )
 

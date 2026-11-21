@@ -166,12 +166,16 @@ def test_refresh_rotation_and_replay_revokes(session: Session, unique_user, monk
         assert second.scope == "recipes:read recipes:write"
         assert await provider.load_access_token(second.access_token) is not None
 
-        # the SDK handler loads before exchanging: a rotated token reused after the grace window kills the grant
+        successor = await provider.load_refresh_token(client, second.refresh_token)
+        assert successor is not None
+        third = await provider.exchange_refresh_token(client, successor, [])
+
+        # the SDK handler loads before exchanging: a superseded token reused after the grace window kills the grant
         frozen = get_utc_now() + tokens.REFRESH_REUSE_GRACE + timedelta(seconds=1)
         monkeypatch.setattr(store_module, "_now", lambda: frozen)
         assert await provider.load_refresh_token(client, first.refresh_token) is None
-        assert await provider.load_access_token(second.access_token) is None
-        assert await provider.load_refresh_token(client, second.refresh_token) is None
+        assert await provider.load_access_token(third.access_token) is None
+        assert await provider.load_refresh_token(client, third.refresh_token) is None
 
     asyncio.run(run())
 
@@ -255,7 +259,7 @@ def test_code_client_mismatch_does_not_burn_code(session: Session, unique_user):
     asyncio.run(run())
 
 
-def test_refresh_retry_within_grace_window_keeps_connection(session: Session, unique_user):
+def test_refresh_retry_after_lost_reply_keeps_connection(session: Session, unique_user, monkeypatch):
     provider = _provider(session)
     client = _client()
 
@@ -263,16 +267,17 @@ def test_refresh_retry_within_grace_window_keeps_connection(session: Session, un
         first = await _issue_tokens(provider, client, str(unique_user.user_id), ["recipes:read"])
         old = await provider.load_refresh_token(client, first.refresh_token)
         assert old is not None
-        second = await provider.exchange_refresh_token(client, old, [])
+        await provider.exchange_refresh_token(client, old, [])
 
-        # the same token again right away (lost response, parallel refresh): refused, grant kept
-        assert await provider.load_refresh_token(client, first.refresh_token) is None
-        with pytest.raises(TokenError) as exc:
-            await provider.exchange_refresh_token(client, old, [])
-        assert exc.value.error == "invalid_grant"
+        # the reply never reached the client (tunnel outage, timeout): an hour later it retries with the old token
+        later = get_utc_now() + timedelta(hours=1)
+        monkeypatch.setattr(store_module, "_now", lambda: later)
+        retried = await provider.load_refresh_token(client, first.refresh_token)
+        assert retried is not None
+        recovered = await provider.exchange_refresh_token(client, retried, [])
+        assert await provider.load_access_token(recovered.access_token) is not None
 
-        assert await provider.load_access_token(second.access_token) is not None
-        successor = await provider.load_refresh_token(client, second.refresh_token)
+        successor = await provider.load_refresh_token(client, recovered.refresh_token)
         assert successor is not None
         assert (await provider.exchange_refresh_token(client, successor, [])).access_token
 

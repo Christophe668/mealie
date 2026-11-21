@@ -190,7 +190,7 @@ class MealieOAuthProvider(OAuthAuthorizationServerProvider[McpAuthCode, RefreshT
             row = store.peek_refresh_token(refresh_token)
             if row is None:
                 # the SDK never calls exchange for a token we return None for, so replay of a
-                # rotated token has to be caught here: consuming a used token revokes its grant
+                # superseded token has to be caught here: consuming it revokes its grant
                 store.consume_refresh_token(refresh_token)
                 return None
             if row.client_id != client.client_id:
